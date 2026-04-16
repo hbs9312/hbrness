@@ -27,6 +27,8 @@
     "tools: sub-agent": "tools: spawn_agent"
   },
 
+  "inline_agents": true,
+
   "hooks_source": "adapters/hooks/codex.hooks.json",
 
   "mcp": {

@@ -274,13 +274,94 @@ def handle_hooks(plugin_dir, output_dir, adapter, repo_root):
     shutil.copy2(src, os.path.join(dst_hooks_dir, "hooks.json"))
 
 
+def load_agent_definitions(plugin_dir):
+    """Load all agent .common.md files into a dict keyed by agent ref name."""
+    agents = {}
+    agents_dir = os.path.join(plugin_dir, "agents")
+    if not os.path.isdir(agents_dir):
+        return agents
+
+    plugin_name = os.path.basename(plugin_dir.rstrip("/"))
+    for root, dirs, files in os.walk(agents_dir):
+        for fname in files:
+            if not fname.endswith(".common.md"):
+                continue
+            fpath = os.path.join(root, fname)
+            with open(fpath, "r") as f:
+                content = f.read()
+            # Extract name from frontmatter
+            fm_str, body = parse_frontmatter(content)
+            agent_name = None
+            if fm_str:
+                for line in fm_str.split("\n"):
+                    if line.strip().startswith("name:"):
+                        agent_name = line.split(":", 1)[1].strip()
+                        break
+            if agent_name:
+                ref = f"{plugin_name}:{agent_name}"
+                # Store body only (strip frontmatter for inlining)
+                agents[ref] = body.strip()
+    return agents
+
+
+def inline_agent_into_skill(skill_content, agent_defs, adapter):
+    """For harnesses that need inline agents (like Codex), append referenced agent
+    definitions to the skill body so spawn_agent has full instructions."""
+    # Find agent references: `plugin:agent-name` pattern
+    refs_found = re.findall(r'`([a-z][-a-z]+:[a-z][-a-z]+)`', skill_content)
+    # Also check harness_spawn / spawn_agent agent_ref patterns
+    refs_found += re.findall(r'agent_ref:\s*"([^"]+)"', skill_content)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_refs = []
+    for ref in refs_found:
+        if ref not in seen and ref in agent_defs:
+            seen.add(ref)
+            unique_refs.append(ref)
+
+    inlined = []
+    for ref in unique_refs:
+        agent_body = agent_defs[ref]
+        agent_body = transform_body(agent_body, adapter)
+        inlined.append((ref, agent_body))
+
+    if not inlined:
+        return skill_content
+
+    # Append agent definitions section
+    parts = [skill_content.rstrip()]
+    parts.append("\n\n---\n")
+    parts.append("## 참조 에이전트 정의\n")
+    parts.append("아래는 이 스킬이 spawn_agent로 호출하는 에이전트의 전체 지침입니다.\n")
+    parts.append("spawn_agent 호출 시 이 내용을 프롬프트로 전달하세요.\n")
+    for ref, body in inlined:
+        parts.append(f"\n### `{ref}`\n")
+        parts.append(body)
+        parts.append("\n")
+
+    return "\n".join(parts)
+
+
 def build_plugin(harness, plugin_dir, adapter_path, output_dir):
     """Build a harness-specific plugin from common sources."""
     adapter = load_adapter(adapter_path)
     repo_root = os.path.dirname(os.path.dirname(adapter_path))
-    plugin_name = os.path.basename(plugin_dir)
+    plugin_name = os.path.basename(plugin_dir.rstrip("/"))
+    should_inline_agents = adapter.get("inline_agents", False)
 
     print(f"  Building {plugin_name} for {harness}...")
+
+    # Pre-load agent definitions if inlining is needed
+    agent_defs = {}
+    if should_inline_agents:
+        agent_defs = load_agent_definitions(plugin_dir)
+        # Also load agents from other plugins (for cross-plugin refs like xreview)
+        plugins_root = os.path.dirname(plugin_dir.rstrip("/"))
+        for entry in os.listdir(plugins_root):
+            other_dir = os.path.join(plugins_root, entry)
+            if os.path.isdir(other_dir) and entry != plugin_name:
+                agent_defs.update(load_agent_definitions(other_dir))
 
     # Clean output
     if os.path.exists(output_dir):
@@ -307,6 +388,13 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
                 dst_name = "SKILL.md"
                 dst_path = os.path.join(output_dir, rel_root, dst_name) if rel_root != "." else os.path.join(output_dir, dst_name)
                 transform_file(src_path, dst_path, adapter, is_agent=False)
+                # Inline agents if needed
+                if should_inline_agents and agent_defs:
+                    with open(dst_path, "r") as f:
+                        content = f.read()
+                    content = inline_agent_into_skill(content, agent_defs, adapter)
+                    with open(dst_path, "w") as f:
+                        f.write(content)
                 continue
 
             # Transform agent .common.md → .md
