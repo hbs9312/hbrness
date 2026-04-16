@@ -1,0 +1,36 @@
+{
+  "harness": "codex",
+  "manifest_dir": ".codex-plugin",
+
+  "frontmatter": {
+    "strip": ["allowed-tools", "disable-model-invocation", "argument-hint", "effort", "skills"],
+    "add": {},
+    "transform_tools_to": null,
+    "tool_map": {
+      "sub-agent": "spawn_agent",
+      "file:read": "shell",
+      "file:write": "apply_patch",
+      "file:edit": "apply_patch",
+      "search:grep": "shell",
+      "search:glob": "shell",
+      "shell": "shell",
+      "invoke-skill": "Skill"
+    },
+    "keep": ["user-invocable"]
+  },
+
+  "body_replacements": {
+    "${SKILL_DIR}": "${CODEX_SKILL_DIR}",
+    "${PLUGIN_ROOT}": "${CODEX_PLUGIN_ROOT}",
+    "서브에이전트로": "spawn_agent로",
+    "harness_spawn({": "spawn_agent({",
+    "tools: sub-agent": "tools: spawn_agent"
+  },
+
+  "hooks_source": "adapters/hooks/codex.hooks.json",
+
+  "mcp": {
+    "format": "toml",
+    "output_file": "mcp-servers.toml"
+  }
+}

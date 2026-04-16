@@ -1,0 +1,38 @@
+{
+  "harness": "claude",
+  "manifest_dir": ".claude-plugin",
+
+  "frontmatter": {
+    "strip": [],
+    "add": {
+      "model": "claude-opus-4-6"
+    },
+    "transform_tools_to": "allowed-tools",
+    "tool_map": {
+      "sub-agent": "Agent",
+      "file:read": "Read",
+      "file:write": "Write",
+      "file:edit": "Edit",
+      "search:grep": "Grep",
+      "search:glob": "Glob",
+      "shell": "Bash",
+      "invoke-skill": "Skill"
+    },
+    "keep": ["effort", "disable-model-invocation", "argument-hint", "skills", "user-invocable"]
+  },
+
+  "body_replacements": {
+    "${SKILL_DIR}": "${CLAUDE_SKILL_DIR}",
+    "${PLUGIN_ROOT}": "${CLAUDE_PLUGIN_ROOT}",
+    "서브에이전트로": "Agent 도구로",
+    "harness_spawn({": "Agent({",
+    "tools: sub-agent": "tools: Agent"
+  },
+
+  "hooks_source": "adapters/hooks/claude.hooks.json",
+
+  "mcp": {
+    "format": "json",
+    "output_file": ".mcp.json"
+  }
+}

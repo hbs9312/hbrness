@@ -1,0 +1,9 @@
+{
+  "name": "meeting-prep",
+  "version": "0.1.0",
+  "description": "기획서 분석과 구현 현황을 병렬 분석하여 회의 준비 문서를 자동 생성하는 플러그인",
+  "author": {
+    "name": "hbs9312",
+    "url": "https://github.com/hbs9312"
+  }
+}

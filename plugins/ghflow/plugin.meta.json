@@ -1,0 +1,8 @@
+{
+  "name": "ghflow",
+  "version": "0.3.0",
+  "description": "GitHub 이슈·PR·리뷰를 잇는 워크플로우 스킬 모음. pick-issue → draft-pr → create-pr → review-pr → clear-issue 흐름과 create-issue, list-work까지 7개 스킬을 제공합니다. SessionStart 훅으로 현재 레포와 조직 .github 레포의 이슈/PR 템플릿을 미리 받아두고 스킬에서 재사용합니다.",
+  "author": {
+    "name": "hbs9312"
+  }
+}
