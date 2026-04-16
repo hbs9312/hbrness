@@ -30,14 +30,25 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 
 ## Install
 
-After building:
+```bash
+# Build + install all plugins to Codex CLI
+./scripts/install.sh codex
+
+# Build + install a single plugin
+./scripts/install.sh codex specflow
+
+# List installed plugins
+./scripts/install.sh list codex
+
+# Uninstall
+./scripts/install.sh uninstall codex specflow
+./scripts/install.sh uninstall codex          # all
+```
+
+For Claude Code, use `--plugin-dir` per session:
 
 ```bash
-# Claude Code
 claude --plugin-dir dist/claude/specflow
-
-# Codex CLI
-codex --plugin dist/codex/specflow
 ```
 
 ## Architecture
