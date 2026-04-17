@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { parseJsonc } = require('./jsonc.js');
 
 const PLUGINS_DIR = path.join(os.homedir(), '.claude', 'plugins');
 const INSTALLED_PATH = path.join(PLUGINS_DIR, 'installed_plugins.json');
@@ -16,7 +17,7 @@ function readJson(p, fallback) {
   const raw = fs.readFileSync(p, 'utf8');
   if (!raw.trim()) return fallback;
   try {
-    return JSON.parse(raw);
+    return parseJsonc(raw);
   } catch (err) {
     throw new Error(`failed to parse ${p}: ${err.message}`);
   }
