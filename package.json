@@ -1,0 +1,39 @@
+{
+  "name": "hbrness",
+  "version": "0.1.0",
+  "description": "Multi-harness AI coding plugin repository. Install hbrness skills, agents, and hooks into Claude Code and Codex CLI.",
+  "bin": {
+    "hbrness": "./bin/hbrness.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "scripts/install/",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bash scripts/build.sh all",
+    "validate": "bash scripts/validate.sh",
+    "prepublishOnly": "bash scripts/build.sh all && bash scripts/validate.sh"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hbs9312/hbrness.git"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "ai",
+    "skills",
+    "agents",
+    "plugin",
+    "spec",
+    "workflow"
+  ],
+  "author": "hbs9312",
+  "license": "MIT"
+}

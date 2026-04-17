@@ -13,7 +13,50 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 | meeting-prep | 0.1.0 | 3 | Meeting preparation automation |
 | xreview | 0.1.1 | 1 | External LLM code review |
 
-## Quick Start
+## Install
+
+Skills and agents are symlinked into the harness's user-level directories (`~/.claude/skills/`, `~/.codex/skills/`). Each item is namespaced as `<plugin>-<name>`.
+
+### Via npm (recommended)
+
+```bash
+# One-off — no global install
+npx hbrness install claude               # all plugins
+npx hbrness install claude ghflow        # single plugin
+npx hbrness install codex specflow
+
+# Or install globally
+npm install -g hbrness
+hbrness install claude
+```
+
+### From a local clone (development)
+
+```bash
+git clone https://github.com/hbs9312/hbrness.git
+cd hbrness
+npm run build
+./scripts/install.sh claude            # legacy shorthand
+# or: node bin/hbrness.js install claude
+```
+
+### CLI commands
+
+```bash
+hbrness install   <harness> [plugin]    # link into user-level config
+hbrness uninstall <harness> [plugin]    # remove hbrness-owned symlinks
+hbrness list      <harness>             # show what's installed
+hbrness plugins   <harness>             # show what's built in dist/
+hbrness --help
+```
+
+Options:
+- `--dry-run` — print the plan without touching the filesystem
+- `--json` — machine-readable output
+
+Restart the harness (Claude Code / Codex) after install or uninstall so it picks up new skills.
+
+## Build
 
 ```bash
 # Build for a specific harness
@@ -28,35 +71,18 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 ./scripts/validate.sh
 ```
 
-## Install
-
-```bash
-# Build + install all plugins to Codex CLI
-./scripts/install.sh codex
-
-# Build + install a single plugin
-./scripts/install.sh codex specflow
-
-# List installed plugins
-./scripts/install.sh list codex
-
-# Uninstall
-./scripts/install.sh uninstall codex specflow
-./scripts/install.sh uninstall codex          # all
-```
-
-For Claude Code, use `--plugin-dir` per session:
-
-```bash
-claude --plugin-dir dist/claude/specflow
-```
-
 ## Architecture
 
 ```
 plugins/           # Harness-neutral source (.common.md)
 adapters/          # Transformation rules per harness
-scripts/           # Build & validation tooling
+scripts/           # Build, validation, install tooling
+  build.sh            # Shell entry to build
+  install.sh          # Legacy shorthand → delegates to bin/hbrness.js
+  install/            # Node installer modules
+  build-plugin.py     # Python build logic
+bin/
+  hbrness.js       # npm bin — CLI entry
 dist/              # Build output (gitignored)
   claude/          # Claude Code plugin packages
   codex/           # Codex CLI plugin packages
@@ -68,7 +94,8 @@ dist/              # Build output (gitignored)
 
 1. Create `adapters/<harness>.adapter.json` with tool mappings and body replacements
 2. Add hook config to `adapters/hooks/` if needed
-3. Run `./scripts/build.sh <harness>`
+3. Extend `scripts/install/paths.js#harnessTargets` with the new harness's skill/agent roots
+4. Run `./scripts/build.sh <harness>`
 
 ## Development
 
@@ -76,6 +103,8 @@ Edit files in `plugins/` (`.common.md` format only). Never edit `dist/` directly
 
 ```bash
 # After editing a common source:
-./scripts/build.sh all
-./scripts/validate.sh
+npm run build
+npm run validate
 ```
+
+Iterate on the installer itself with `node bin/hbrness.js ...`. Use `--dry-run` to preview changes.
