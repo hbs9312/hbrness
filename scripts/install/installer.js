@@ -7,17 +7,40 @@ const {
   requirePluginBuilt,
 } = require('./paths.js');
 const hooksModule = require('./hooks.js');
+const registry = require('./plugin-registry.js');
 
 /**
- * Install plan item shape:
- *   { action: 'link' | 'unlink' | 'mkdir' | 'skip',
- *     target: string, source?: string, reason?: string }
+ * Install modes:
+ *  - "plugin"      : Claude only. Populates ~/.claude/plugins/cache/hbrness/<plugin>/<version>/
+ *                    and registers in installed_plugins.json so /plugin list picks it up.
+ *                    Namespaced invocation (`/ghflow:skill-name`).
+ *  - "user-level"  : Symlink each skill/agent into ~/.<harness>/skills/<plugin>-<name>.
+ *                    Hooks merged into settings.json for claude.
+ *                    Hyphen-prefixed invocation (`/ghflow-skill-name`).
+ *
+ * Default: "plugin" for claude, "user-level" for codex.
  */
 
 const MARKER_FILE = '.hbrness-origin';
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
+}
+
+function defaultMode(harness) {
+  return harness === 'claude' ? 'plugin' : 'user-level';
+}
+
+function readPluginManifest(pluginDir) {
+  const manifestPath = path.join(pluginDir, '.claude-plugin', 'plugin.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`plugin manifest missing: ${manifestPath}`);
+  }
+  const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  if (!raw.name || !raw.version) {
+    throw new Error(`plugin manifest ${manifestPath} missing name/version`);
+  }
+  return raw;
 }
 
 function scanSkillsAndAgents(pluginDir) {
@@ -44,34 +67,126 @@ function scanSkillsAndAgents(pluginDir) {
   return items;
 }
 
-/**
- * Build an install plan for a single plugin. Plan is a list of operations;
- * no filesystem mutation happens here.
- */
-function planInstall({ harness, plugin }) {
-  const pluginDir = requirePluginBuilt(harness, plugin);
+// ---------------------------------------------------------------------------
+// Plugin mode (Claude only)
+// ---------------------------------------------------------------------------
+
+function planInstallClaudePlugin({ plugin, pluginDir }) {
+  const manifest = readPluginManifest(pluginDir);
+  const version = manifest.version;
+  const target = registry.pluginCacheDir(plugin, version);
+
+  const ops = [
+    { action: 'ensure-marketplace', target: registry.MARKETPLACES_PATH },
+    { action: 'copy-plugin', target, source: pluginDir, version },
+    {
+      action: 'register-plugin',
+      target: registry.INSTALLED_PATH,
+      plugin,
+      version,
+      installPath: target,
+    },
+  ];
+  return { ops, mode: 'plugin', targetDir: target, version };
+}
+
+function applyInstallClaudePlugin({ plan, results, dryRun }) {
+  for (const op of plan.ops) {
+    if (dryRun) {
+      results.push({ ...op, status: 'planned' });
+      continue;
+    }
+    try {
+      if (op.action === 'ensure-marketplace') {
+        const created = registry.ensureMarketplace();
+        results.push({ ...op, status: created ? 'created' : 'exists' });
+      } else if (op.action === 'copy-plugin') {
+        copyPluginContents(op.source, op.target);
+        results.push({ ...op, status: 'copied' });
+      } else if (op.action === 'register-plugin') {
+        registry.registerPlugin({
+          plugin: op.plugin,
+          version: op.version,
+          installPath: op.installPath,
+        });
+        results.push({ ...op, status: 'registered' });
+      }
+    } catch (err) {
+      results.push({ ...op, status: 'error', error: err.message });
+    }
+  }
+}
+
+function copyPluginContents(source, target) {
+  // Ensure clean target — remove existing to avoid mixing versions' leftovers.
+  if (fs.existsSync(target)) {
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+  fs.mkdirSync(target, { recursive: true });
+  fs.cpSync(source, target, { recursive: true, dereference: true });
+}
+
+function planUninstallClaudePlugin({ plugin }) {
+  const ops = [];
+  if (registry.isPluginRegistered({ plugin })) {
+    ops.push({
+      action: 'unregister-plugin',
+      target: registry.INSTALLED_PATH,
+      plugin,
+    });
+  }
+  // Find any cached versions of this plugin under our marketplace and remove them.
+  const pluginRoot = path.join(registry.marketplaceCacheDir(), plugin);
+  if (fs.existsSync(pluginRoot)) {
+    ops.push({
+      action: 'remove-cache',
+      target: pluginRoot,
+    });
+  }
+  return { ops };
+}
+
+function applyUninstallClaudePlugin({ plan, results, dryRun }) {
+  for (const op of plan.ops) {
+    if (dryRun) {
+      results.push({ ...op, status: 'planned' });
+      continue;
+    }
+    try {
+      if (op.action === 'unregister-plugin') {
+        const ok = registry.unregisterPlugin({ plugin: op.plugin });
+        results.push({ ...op, status: ok ? 'unregistered' : 'already-clean' });
+      } else if (op.action === 'remove-cache') {
+        fs.rmSync(op.target, { recursive: true, force: true });
+        results.push({ ...op, status: 'removed' });
+      }
+    } catch (err) {
+      results.push({ ...op, status: 'error', error: err.message });
+    }
+  }
+  // If no plugin left under our marketplace, drop the marketplace entry too.
+  if (!dryRun) registry.removeMarketplaceIfEmpty();
+}
+
+// ---------------------------------------------------------------------------
+// User-level mode (symlinks + hook merge)
+// ---------------------------------------------------------------------------
+
+function planInstallUserLevel({ harness, plugin, pluginDir }) {
   const targets = harnessTargets(harness);
   const ops = [];
 
   const items = scanSkillsAndAgents(pluginDir);
   if (items.length === 0) {
-    return {
-      harness,
-      plugin,
-      pluginDir,
-      ops: [
-        {
-          action: 'skip',
-          target: pluginDir,
-          reason: 'no skills or agents found',
-        },
-      ],
-    };
+    ops.push({
+      action: 'skip',
+      target: pluginDir,
+      reason: 'no skills or agents found',
+    });
   }
 
   for (const item of items) {
-    const targetRoot =
-      item.kind === 'skill' ? targets.skills : targets.agents;
+    const targetRoot = item.kind === 'skill' ? targets.skills : targets.agents;
     if (!targetRoot) {
       ops.push({
         action: 'skip',
@@ -93,14 +208,10 @@ function planInstall({ harness, plugin }) {
   }
 
   const hooksPlan = hooksModule.planHooksInstall({ harness, plugin, pluginDir });
-  return { harness, plugin, pluginDir, ops, hooksPlan };
+  return { ops, mode: 'user-level', hooksPlan };
 }
 
-/**
- * Apply a plan to the filesystem. Idempotent: re-linking is safe.
- */
-function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
-  const results = [];
+function applyInstallUserLevel({ plan, results, dryRun, skipHooks, harness, plugin, pluginDir }) {
   for (const op of plan.ops) {
     if (dryRun) {
       results.push({ ...op, status: 'planned' });
@@ -125,17 +236,13 @@ function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
     if (plan.hooksPlan.events.length > 0) {
       try {
         const hookRes = hooksModule.applyHooksInstall(
-          {
-            harness: plan.harness,
-            plugin: plan.plugin,
-            pluginDir: plan.pluginDir,
-          },
+          { harness, plugin, pluginDir },
           { dryRun },
         );
         results.push({
           action: 'hooks',
           target: '~/.claude/settings.json',
-          plugin: plan.plugin,
+          plugin,
           events: hookRes.events,
           backup: hookRes.backup,
           status: mapHookStatus(hookRes.status, dryRun),
@@ -150,11 +257,82 @@ function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
       }
     }
   }
-
-  return results;
 }
 
-function mapHookStatus(status, dryRun) {
+function planUninstallUserLevel({ harness, plugin }) {
+  const targets = harnessTargets(harness);
+  const pluginDir = path.join(distDir(harness), plugin);
+  const ops = [];
+
+  const roots = new Set();
+  if (targets.skills) roots.add(targets.skills);
+  if (targets.agents) roots.add(targets.agents);
+
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    for (const name of fs.readdirSync(root)) {
+      if (!name.startsWith(`${plugin}-`)) continue;
+      const linkPath = path.join(root, name);
+      try {
+        const stat = fs.lstatSync(linkPath);
+        if (!stat.isSymbolicLink()) continue;
+        const resolved = fs.readlinkSync(linkPath);
+        const absResolved = path.isAbsolute(resolved)
+          ? resolved
+          : path.resolve(path.dirname(linkPath), resolved);
+        if (absResolved.startsWith(pluginDir)) {
+          ops.push({ action: 'unlink', target: linkPath });
+        }
+      } catch (_e) {
+        // broken or inaccessible link — skip
+      }
+    }
+  }
+
+  const hooksPlan =
+    harness === 'claude' ? hooksModule.planHooksUninstall({ plugin }) : { events: [] };
+
+  return { ops, mode: 'user-level', hooksPlan };
+}
+
+function applyUninstallUserLevel({ plan, results, dryRun, skipHooks, harness, plugin }) {
+  for (const op of plan.ops) {
+    if (dryRun) {
+      results.push({ ...op, status: 'planned' });
+      continue;
+    }
+    try {
+      if (op.action === 'unlink') {
+        fs.unlinkSync(op.target);
+        results.push({ ...op, status: 'removed' });
+      }
+    } catch (err) {
+      results.push({ ...op, status: 'error', error: err.message });
+    }
+  }
+  if (!skipHooks && harness === 'claude' && plan.hooksPlan && plan.hooksPlan.events.length > 0) {
+    try {
+      const hookRes = hooksModule.applyHooksUninstall({ plugin }, { dryRun });
+      results.push({
+        action: 'hooks',
+        target: '~/.claude/settings.json',
+        plugin,
+        events: hookRes.events,
+        backup: hookRes.backup,
+        status: mapHookStatus(hookRes.status, dryRun),
+      });
+    } catch (err) {
+      results.push({
+        action: 'hooks',
+        target: '~/.claude/settings.json',
+        status: 'error',
+        error: err.message,
+      });
+    }
+  }
+}
+
+function mapHookStatus(status, _dryRun) {
   if (status === 'planned') return 'planned';
   if (status === 'installed') return 'merged';
   if (status === 'removed') return 'removed';
@@ -174,7 +352,6 @@ function replaceWithSymlink(target, source) {
     if (prior.isSymbolicLink()) {
       fs.unlinkSync(target);
     } else if (prior.isDirectory()) {
-      // Only remove if it looks like one of ours (has marker) or is empty
       const marker = path.join(target, MARKER_FILE);
       if (fs.existsSync(marker)) {
         fs.rmSync(target, { recursive: true, force: true });
@@ -190,113 +367,170 @@ function replaceWithSymlink(target, source) {
   fs.symlinkSync(source, target, 'dir');
 }
 
-/**
- * Build an uninstall plan: remove our symlinks for a given plugin.
- */
-function planUninstall({ harness, plugin }) {
-  const targets = harnessTargets(harness);
-  const pluginDir = path.join(distDir(harness), plugin);
-  const ops = [];
+// ---------------------------------------------------------------------------
+// Public API (dispatching on mode)
+// ---------------------------------------------------------------------------
 
-  const roots = new Set();
-  if (targets.skills) roots.add(targets.skills);
-  if (targets.agents) roots.add(targets.agents);
+function planInstall({ harness, plugin, mode }) {
+  const pluginDir = requirePluginBuilt(harness, plugin);
+  const resolvedMode = mode || defaultMode(harness);
+  // Codex does not have a plugin system we target; force user-level.
+  const effectiveMode = harness === 'codex' ? 'user-level' : resolvedMode;
 
-  for (const root of roots) {
-    if (!fs.existsSync(root)) continue;
-    for (const name of fs.readdirSync(root)) {
-      if (!name.startsWith(`${plugin}-`)) continue;
-      const linkPath = path.join(root, name);
-      try {
-        const stat = fs.lstatSync(linkPath);
-        if (!stat.isSymbolicLink()) continue;
-        const resolved = fs.readlinkSync(linkPath);
-        // Only remove if it points inside our dist for this plugin
-        const absResolved = path.isAbsolute(resolved)
-          ? resolved
-          : path.resolve(path.dirname(linkPath), resolved);
-        if (absResolved.startsWith(pluginDir)) {
-          ops.push({ action: 'unlink', target: linkPath });
-        }
-      } catch (_e) {
-        // broken or inaccessible link — skip
-      }
-    }
+  if (effectiveMode === 'plugin') {
+    const inner = planInstallClaudePlugin({ plugin, pluginDir });
+    return {
+      harness,
+      plugin,
+      pluginDir,
+      mode: 'plugin',
+      ops: inner.ops,
+      targetDir: inner.targetDir,
+      version: inner.version,
+    };
   }
 
-  const hooksPlan =
-    harness === 'claude' ? hooksModule.planHooksUninstall({ plugin }) : { events: [] };
-
-  if (ops.length === 0 && hooksPlan.events.length === 0) {
-    ops.push({
-      action: 'skip',
-      target: pluginDir,
-      reason: 'no hbrness symlinks or hooks found',
-    });
-  }
-
-  return { harness, plugin, ops, hooksPlan };
+  const inner = planInstallUserLevel({ harness, plugin, pluginDir });
+  return {
+    harness,
+    plugin,
+    pluginDir,
+    mode: 'user-level',
+    ops: inner.ops,
+    hooksPlan: inner.hooksPlan,
+  };
 }
 
-function applyUninstall(plan, { dryRun = false, skipHooks = false } = {}) {
+function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
   const results = [];
-  for (const op of plan.ops) {
-    if (dryRun) {
-      results.push({ ...op, status: 'planned' });
-      continue;
-    }
-    try {
-      if (op.action === 'unlink') {
-        fs.unlinkSync(op.target);
-        results.push({ ...op, status: 'removed' });
-      } else if (op.action === 'skip') {
-        results.push({ ...op, status: 'skipped' });
+
+  // Migration: if the opposite mode has leftovers for this plugin, clean them
+  // before applying the new install. Keeps /plugin list and ~/.claude/skills/
+  // from drifting into an inconsistent duplicate state.
+  if (plan.harness === 'claude') {
+    if (plan.mode === 'plugin') {
+      const ulPlan = planUninstallUserLevel({ harness: 'claude', plugin: plan.plugin });
+      const hasUlWork =
+        ulPlan.ops.length > 0 || (ulPlan.hooksPlan?.events?.length || 0) > 0;
+      if (hasUlWork) {
+        applyUninstallUserLevel({
+          plan: ulPlan,
+          results,
+          dryRun,
+          skipHooks: false,
+          harness: 'claude',
+          plugin: plan.plugin,
+        });
       }
-    } catch (err) {
-      results.push({ ...op, status: 'error', error: err.message });
+    } else if (plan.mode === 'user-level') {
+      const pPlan = planUninstallClaudePlugin({ plugin: plan.plugin });
+      if (pPlan.ops.length > 0) {
+        applyUninstallClaudePlugin({ plan: pPlan, results, dryRun });
+      }
     }
   }
 
-  if (!skipHooks && plan.harness === 'claude' && plan.hooksPlan && plan.hooksPlan.events.length > 0) {
-    try {
-      const hookRes = hooksModule.applyHooksUninstall(
-        { plugin: plan.plugin },
-        { dryRun },
-      );
-      results.push({
-        action: 'hooks',
-        target: '~/.claude/settings.json',
-        plugin: plan.plugin,
-        events: hookRes.events,
-        backup: hookRes.backup,
-        status: mapHookStatus(hookRes.status, dryRun),
-      });
-    } catch (err) {
-      results.push({
-        action: 'hooks',
-        target: '~/.claude/settings.json',
-        status: 'error',
-        error: err.message,
-      });
-    }
+  if (plan.mode === 'plugin') {
+    applyInstallClaudePlugin({ plan, results, dryRun });
+  } else {
+    applyInstallUserLevel({
+      plan,
+      results,
+      dryRun,
+      skipHooks,
+      harness: plan.harness,
+      plugin: plan.plugin,
+      pluginDir: plan.pluginDir,
+    });
   }
-
   return results;
 }
 
 /**
- * List installed hbrness items for a harness by scanning symlink targets.
- * Plugin/name is inferred from the symlink's resolved target path
- * (dist/<harness>/<plugin>/skills|agents/<name>), not from the link's own name.
+ * Uninstall always cleans both modes so migration and legacy removal Just Work.
  */
+function planUninstall({ harness, plugin }) {
+  const userLevel = planUninstallUserLevel({ harness, plugin });
+  const plugin_ =
+    harness === 'claude' ? planUninstallClaudePlugin({ plugin }) : { ops: [] };
+
+  const hasWork = userLevel.ops.length + plugin_.ops.length + (userLevel.hooksPlan?.events?.length || 0) > 0;
+  if (!hasWork) {
+    return {
+      harness,
+      plugin,
+      mode: 'cleanup',
+      ops: [
+        {
+          action: 'skip',
+          target: plugin,
+          reason: 'no hbrness installation found',
+        },
+      ],
+      hooksPlan: userLevel.hooksPlan,
+      pluginRegistryOps: plugin_.ops,
+    };
+  }
+
+  return {
+    harness,
+    plugin,
+    mode: 'cleanup',
+    ops: userLevel.ops,
+    hooksPlan: userLevel.hooksPlan,
+    pluginRegistryOps: plugin_.ops,
+  };
+}
+
+function applyUninstall(plan, { dryRun = false, skipHooks = false } = {}) {
+  const results = [];
+  applyUninstallUserLevel({
+    plan,
+    results,
+    dryRun,
+    skipHooks,
+    harness: plan.harness,
+    plugin: plan.plugin,
+  });
+
+  if (plan.harness === 'claude' && plan.pluginRegistryOps && plan.pluginRegistryOps.length > 0) {
+    applyUninstallClaudePlugin({
+      plan: { ops: plan.pluginRegistryOps },
+      results,
+      dryRun,
+    });
+  }
+  return results;
+}
+
 function listInstalled(harness) {
+  const found = [];
+
+  // Plugin-mode (Claude only): read from installed_plugins.json
+  if (harness === 'claude') {
+    for (const entry of registry.listRegisteredPlugins()) {
+      if (!entry.installPath) continue;
+      const rel = entry.installPath.startsWith(registry.marketplaceCacheDir())
+        ? entry.installPath.slice(registry.marketplaceCacheDir().length + 1)
+        : entry.installPath;
+      found.push({
+        harness,
+        plugin: entry.plugin,
+        name: `@${entry.version}`,
+        kind: 'plugin',
+        linkPath: entry.installPath,
+        source: rel,
+        mode: 'plugin',
+      });
+    }
+  }
+
+  // User-level mode: scan symlinks
   const targets = harnessTargets(harness);
   const dist = distDir(harness);
-  const found = [];
   const roots = new Set();
   if (targets.skills) roots.add(targets.skills);
   if (targets.agents) roots.add(targets.agents);
-
   const distWithSep = dist.endsWith(path.sep) ? dist : dist + path.sep;
 
   for (const root of roots) {
@@ -323,7 +557,6 @@ function listInstalled(harness) {
 
       const tail = absResolved.slice(distWithSep.length);
       const parts = tail.split(path.sep).filter(Boolean);
-      // Expect: <plugin>/skills|agents/<name>
       if (parts.length < 3) continue;
       const plugin = parts[0];
       const kindSegment = parts[1];
@@ -342,6 +575,7 @@ function listInstalled(harness) {
         kind,
         linkPath: full,
         source: absResolved,
+        mode: 'user-level',
       });
     }
   }
@@ -355,4 +589,5 @@ module.exports = {
   applyUninstall,
   listInstalled,
   listBuiltPlugins,
+  defaultMode,
 };

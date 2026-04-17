@@ -16,7 +16,10 @@ function help() {
 
 Usage:
   hbrness install <harness> [plugin]       Install (default: all plugins)
-  hbrness uninstall <harness> [plugin]     Remove installed hbrness symlinks
+                                           Claude default mode: "plugin" (registers in installed_plugins.json)
+                                           Codex default mode: "user-level" (symlink into ~/.codex/skills)
+                                           Override with --mode <plugin|user-level>
+  hbrness uninstall <harness> [plugin]     Remove installed hbrness plugin + user-level symlinks
   hbrness list <harness>                   List currently installed items
   hbrness plugins <harness>                List built plugins in dist/
   hbrness doctor [harness]                 Scan for dangling links and stale hooks
@@ -30,7 +33,8 @@ Harnesses: ${SUPPORTED_HARNESSES.join(', ')}
 Options:
   --dry-run                                Show the plan; do not modify the filesystem
   --json                                   Machine-readable output
-  --no-hooks                               Skip merging plugin hooks into ~/.claude/settings.json
+  --mode <plugin|user-level>               Override the default install mode for this command
+  --no-hooks                               (user-level mode) Skip merging plugin hooks into settings.json
   --yes, -y                                Skip confirmation prompts (reserved, future use)
 
 Examples:
@@ -43,7 +47,13 @@ Examples:
 }
 
 function parseArgs(argv) {
-  const flags = { dryRun: false, json: false, yes: false, skipHooks: false };
+  const flags = {
+    dryRun: false,
+    json: false,
+    yes: false,
+    skipHooks: false,
+    mode: null,
+  };
   const positional = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -51,7 +61,17 @@ function parseArgs(argv) {
     else if (a === '--json') flags.json = true;
     else if (a === '--yes' || a === '-y') flags.yes = true;
     else if (a === '--no-hooks') flags.skipHooks = true;
-    else if (a === '--help' || a === '-h') flags.help = true;
+    else if (a === '--mode') {
+      flags.mode = argv[++i];
+      if (!['plugin', 'user-level'].includes(flags.mode)) {
+        throw new Error(`--mode must be "plugin" or "user-level" (got "${flags.mode}")`);
+      }
+    } else if (a.startsWith('--mode=')) {
+      flags.mode = a.slice('--mode='.length);
+      if (!['plugin', 'user-level'].includes(flags.mode)) {
+        throw new Error(`--mode must be "plugin" or "user-level" (got "${flags.mode}")`);
+      }
+    } else if (a === '--help' || a === '-h') flags.help = true;
     else if (a === '--version' || a === '-v') flags.version = true;
     else if (a.startsWith('--')) throw new Error(`unknown flag: ${a}`);
     else positional.push(a);
@@ -84,7 +104,7 @@ async function cmdInstall(positional, flags) {
   const plugins = pluginsToOperate(harness, plugin);
 
   const runs = plugins.map((p) => {
-    const plan = planInstall({ harness, plugin: p });
+    const plan = planInstall({ harness, plugin: p, mode: flags.mode });
     const results = applyPlan(plan, {
       dryRun: flags.dryRun,
       skipHooks: flags.skipHooks,
@@ -263,8 +283,14 @@ function printRuns(title, runs, flags) {
         linked: '✓',
         removed: '✓',
         merged: '✓',
+        copied: '✓',
+        registered: '✓',
+        unregistered: '✓',
+        created: '✓',
+        exists: '·',
         ok: '·',
         skipped: '·',
+        'already-clean': '·',
         planned: '…',
         error: '✗',
       }[r.status] || '?';
@@ -286,6 +312,11 @@ function formatOpDetail(r) {
     const backup = r.backup ? ` · backup: ${relPath(r.backup)}` : '';
     return `${relPath(r.target)}  [${events || 'no events'}]${backup}`;
   }
+  if (r.action === 'copy-plugin') return `${relPath(r.source)}  →  ${relPath(r.target)}`;
+  if (r.action === 'register-plugin') return `${r.plugin}@hbrness v${r.version}`;
+  if (r.action === 'unregister-plugin') return r.plugin;
+  if (r.action === 'ensure-marketplace') return 'hbrness marketplace entry';
+  if (r.action === 'remove-cache') return relPath(r.target);
   return relPath(r.target);
 }
 
