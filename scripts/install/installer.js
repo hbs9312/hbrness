@@ -6,6 +6,7 @@ const {
   listBuiltPlugins,
   requirePluginBuilt,
 } = require('./paths.js');
+const hooksModule = require('./hooks.js');
 
 /**
  * Install plan item shape:
@@ -91,13 +92,14 @@ function planInstall({ harness, plugin }) {
     });
   }
 
-  return { harness, plugin, pluginDir, ops };
+  const hooksPlan = hooksModule.planHooksInstall({ harness, plugin, pluginDir });
+  return { harness, plugin, pluginDir, ops, hooksPlan };
 }
 
 /**
  * Apply a plan to the filesystem. Idempotent: re-linking is safe.
  */
-function applyPlan(plan, { dryRun = false } = {}) {
+function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
   const results = [];
   for (const op of plan.ops) {
     if (dryRun) {
@@ -118,7 +120,47 @@ function applyPlan(plan, { dryRun = false } = {}) {
       results.push({ ...op, status: 'error', error: err.message });
     }
   }
+
+  if (!skipHooks && plan.hooksPlan && plan.hooksPlan.supported) {
+    if (plan.hooksPlan.events.length > 0) {
+      try {
+        const hookRes = hooksModule.applyHooksInstall(
+          {
+            harness: plan.harness,
+            plugin: plan.plugin,
+            pluginDir: plan.pluginDir,
+          },
+          { dryRun },
+        );
+        results.push({
+          action: 'hooks',
+          target: '~/.claude/settings.json',
+          plugin: plan.plugin,
+          events: hookRes.events,
+          backup: hookRes.backup,
+          status: mapHookStatus(hookRes.status, dryRun),
+        });
+      } catch (err) {
+        results.push({
+          action: 'hooks',
+          target: '~/.claude/settings.json',
+          status: 'error',
+          error: err.message,
+        });
+      }
+    }
+  }
+
   return results;
+}
+
+function mapHookStatus(status, dryRun) {
+  if (status === 'planned') return 'planned';
+  if (status === 'installed') return 'merged';
+  if (status === 'removed') return 'removed';
+  if (status === 'no-hooks' || status === 'no-match') return 'skipped';
+  if (status === 'unsupported') return 'skipped';
+  return status;
 }
 
 function replaceWithSymlink(target, source) {
@@ -182,18 +224,21 @@ function planUninstall({ harness, plugin }) {
     }
   }
 
-  if (ops.length === 0) {
+  const hooksPlan =
+    harness === 'claude' ? hooksModule.planHooksUninstall({ plugin }) : { events: [] };
+
+  if (ops.length === 0 && hooksPlan.events.length === 0) {
     ops.push({
       action: 'skip',
       target: pluginDir,
-      reason: 'no hbrness symlinks found',
+      reason: 'no hbrness symlinks or hooks found',
     });
   }
 
-  return { harness, plugin, ops };
+  return { harness, plugin, ops, hooksPlan };
 }
 
-function applyUninstall(plan, { dryRun = false } = {}) {
+function applyUninstall(plan, { dryRun = false, skipHooks = false } = {}) {
   const results = [];
   for (const op of plan.ops) {
     if (dryRun) {
@@ -211,6 +256,31 @@ function applyUninstall(plan, { dryRun = false } = {}) {
       results.push({ ...op, status: 'error', error: err.message });
     }
   }
+
+  if (!skipHooks && plan.harness === 'claude' && plan.hooksPlan && plan.hooksPlan.events.length > 0) {
+    try {
+      const hookRes = hooksModule.applyHooksUninstall(
+        { plugin: plan.plugin },
+        { dryRun },
+      );
+      results.push({
+        action: 'hooks',
+        target: '~/.claude/settings.json',
+        plugin: plan.plugin,
+        events: hookRes.events,
+        backup: hookRes.backup,
+        status: mapHookStatus(hookRes.status, dryRun),
+      });
+    } catch (err) {
+      results.push({
+        action: 'hooks',
+        target: '~/.claude/settings.json',
+        status: 'error',
+        error: err.message,
+      });
+    }
+  }
+
   return results;
 }
 

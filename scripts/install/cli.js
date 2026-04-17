@@ -25,6 +25,7 @@ Harnesses: ${SUPPORTED_HARNESSES.join(', ')}
 Options:
   --dry-run                                Show the plan; do not modify the filesystem
   --json                                   Machine-readable output
+  --no-hooks                               Skip merging plugin hooks into ~/.claude/settings.json
   --yes, -y                                Skip confirmation prompts (reserved, future use)
 
 Examples:
@@ -37,13 +38,14 @@ Examples:
 }
 
 function parseArgs(argv) {
-  const flags = { dryRun: false, json: false, yes: false };
+  const flags = { dryRun: false, json: false, yes: false, skipHooks: false };
   const positional = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--dry-run') flags.dryRun = true;
     else if (a === '--json') flags.json = true;
     else if (a === '--yes' || a === '-y') flags.yes = true;
+    else if (a === '--no-hooks') flags.skipHooks = true;
     else if (a === '--help' || a === '-h') flags.help = true;
     else if (a === '--version' || a === '-v') flags.version = true;
     else if (a.startsWith('--')) throw new Error(`unknown flag: ${a}`);
@@ -78,7 +80,10 @@ async function cmdInstall(positional, flags) {
 
   const runs = plugins.map((p) => {
     const plan = planInstall({ harness, plugin: p });
-    const results = applyPlan(plan, { dryRun: flags.dryRun });
+    const results = applyPlan(plan, {
+      dryRun: flags.dryRun,
+      skipHooks: flags.skipHooks,
+    });
     return { plan, results };
   });
 
@@ -96,7 +101,10 @@ async function cmdUninstall(positional, flags) {
 
   const runs = plugins.map((p) => {
     const plan = planUninstall({ harness, plugin: p });
-    const results = applyUninstall(plan, { dryRun: flags.dryRun });
+    const results = applyUninstall(plan, {
+      dryRun: flags.dryRun,
+      skipHooks: flags.skipHooks,
+    });
     return { plan, results };
   });
 
@@ -161,24 +169,31 @@ function printRuns(title, runs, flags) {
       const marker = {
         linked: '✓',
         removed: '✓',
+        merged: '✓',
         ok: '·',
         skipped: '·',
         planned: '…',
         error: '✗',
       }[r.status] || '?';
-      const detail = r.action === 'link'
-        ? `${r.linkName}  →  ${relPath(r.source)}`
-        : r.action === 'unlink'
-        ? relPath(r.target)
-        : r.action === 'skip'
-        ? `(skipped: ${r.reason || ''})`
-        : relPath(r.target);
+      const detail = formatOpDetail(r);
       const err = r.error ? ` — ${r.error}` : '';
       console.log(`    ${marker} ${r.action.padEnd(6)} ${detail}${err}`);
     }
   }
   console.log(`\n${total} operation(s)${errors ? `, ${errors} error(s)` : ''}.`);
   if (errors) process.exitCode = 1;
+}
+
+function formatOpDetail(r) {
+  if (r.action === 'link') return `${r.linkName}  →  ${relPath(r.source)}`;
+  if (r.action === 'unlink') return relPath(r.target);
+  if (r.action === 'skip') return `(skipped: ${r.reason || ''})`;
+  if (r.action === 'hooks') {
+    const events = (r.events || []).map((e) => `${e.event}(${e.groupCount})`).join(', ');
+    const backup = r.backup ? ` · backup: ${relPath(r.backup)}` : '';
+    return `${relPath(r.target)}  [${events || 'no events'}]${backup}`;
+  }
+  return relPath(r.target);
 }
 
 function relPath(p) {

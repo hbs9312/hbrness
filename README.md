@@ -58,6 +58,13 @@ hbrness --help
 Options:
 - `--dry-run` — print the plan without touching the filesystem
 - `--json` — machine-readable output
+- `--no-hooks` — skip merging plugin hooks into `~/.claude/settings.json`
+
+### Hooks
+
+When a Claude plugin ships a `hooks/hooks.json`, `hbrness install claude <plugin>` also merges its entries into `~/.claude/settings.json` under the matching event (e.g. `SessionStart`). Each injected entry is tagged with an `_hbrness` sentinel so uninstall removes only hbrness-owned entries and leaves the rest of your hook configuration untouched. A timestamped backup (`settings.json.hbrness-bak.<ts>`) is written before every modification. Use `--no-hooks` to opt out.
+
+Codex hook merging is not supported yet.
 
 Restart the harness (Claude Code / Codex) after install or uninstall so it picks up new skills.
 
