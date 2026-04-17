@@ -1,5 +1,10 @@
 # hbrness
 
+[![npm version](https://img.shields.io/npm/v/hbrness.svg)](https://www.npmjs.com/package/hbrness)
+[![npm downloads](https://img.shields.io/npm/dm/hbrness.svg)](https://www.npmjs.com/package/hbrness)
+[![license](https://img.shields.io/npm/l/hbrness.svg)](./LICENSE)
+[![node](https://img.shields.io/node/v/hbrness.svg)](https://www.npmjs.com/package/hbrness)
+
 Multi-harness AI coding plugin repository. Harness-neutral common sources build into Claude Code and Codex CLI plugin packages.
 
 ## Plugins
