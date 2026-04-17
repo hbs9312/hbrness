@@ -7,6 +7,7 @@ const {
   listBuiltPlugins,
 } = require('./installer.js');
 const { diagnose, repair } = require('./doctor.js');
+const { update, detectMode } = require('./update.js');
 
 const SUPPORTED_HARNESSES = ['claude', 'codex'];
 
@@ -20,6 +21,7 @@ Usage:
   hbrness plugins <harness>                List built plugins in dist/
   hbrness doctor [harness]                 Scan for dangling links and stale hooks
   hbrness repair [harness]                 Apply fixes for issues doctor finds
+  hbrness update                           Pull latest (git clone) or show upgrade hint (npm)
   hbrness --help                           Show this help
   hbrness --version                        Print package version
 
@@ -208,6 +210,18 @@ async function cmdRepair(positional, flags) {
   if (errors > 0) process.exitCode = 1;
 }
 
+async function cmdUpdate(positional, flags) {
+  if (flags.json) {
+    const mode = detectMode();
+    const result = update({ dryRun: flags.dryRun });
+    process.stdout.write(
+      JSON.stringify({ action: 'update', mode, result }, null, 2) + '\n',
+    );
+    return;
+  }
+  update({ dryRun: flags.dryRun });
+}
+
 function printIssues(issues) {
   const bySeverity = { error: [], warn: [], info: [] };
   for (const i of issues) (bySeverity[i.severity] || bySeverity.info).push(i);
@@ -311,6 +325,8 @@ async function main(argv) {
       return cmdDoctor(rest, flags);
     case 'repair':
       return cmdRepair(rest, flags);
+    case 'update':
+      return cmdUpdate(rest, flags);
     default:
       throw new Error(`unknown command "${cmd}" (try "hbrness --help")`);
   }
