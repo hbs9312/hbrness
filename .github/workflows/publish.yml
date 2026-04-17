@@ -1,0 +1,45 @@
+name: Publish to npm
+
+# Triggered when a GitHub Release is published. To release:
+#   1. git tag vX.Y.Z && git push origin vX.Y.Z
+#   2. Create a GitHub Release from that tag (web UI or `gh release create`)
+#
+# Requires a Trusted Publisher configured on npm for this package:
+#   npmjs.com → Packages → hbrness → Trusted Publishers → Add
+#   Publisher: GitHub Actions
+#   Owner: hbs9312  Repository: hbrness  Workflow: publish.yml
+#
+# Once configured, publishing happens with no npm token — the job exchanges
+# a short-lived GitHub OIDC token for a one-time npm publish credential.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC → npm trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build all harnesses
+        run: bash scripts/build.sh all
+
+      - name: Validate build output
+        run: bash scripts/validate.sh
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
