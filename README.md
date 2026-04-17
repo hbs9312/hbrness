@@ -20,7 +20,12 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 
 ## Install
 
-Skills and agents are symlinked into the harness's user-level directories (`~/.claude/skills/`, `~/.codex/skills/`). Each item is namespaced as `<plugin>-<name>`.
+| Harness | Default mode | Install location | Invocation |
+|---|---|---|---|
+| Claude | `plugin` | `~/.claude/plugins/cache/hbrness/<plugin>/<version>/` | `/ghflow:review-pr` (plugin namespace) |
+| Codex  | `user-level` | `~/.codex/skills/<plugin>-<name>` (symlink) | `/ghflow-review-pr` (hyphen prefix) |
+
+Claude installs register the plugin in `installed_plugins.json` and appear in `/plugin list`. Pass `--mode user-level` to fall back to per-skill symlinks in `~/.claude/skills/` (hyphen-prefixed invocation, hooks merged into `settings.json`). Installing in one mode auto-migrates any leftovers from the other mode.
 
 ### Via npm (recommended)
 
@@ -48,17 +53,21 @@ npm run build
 ### CLI commands
 
 ```bash
-hbrness install   <harness> [plugin]    # link into user-level config
-hbrness uninstall <harness> [plugin]    # remove hbrness-owned symlinks
+hbrness install   <harness> [plugin]    # register plugin (claude) or symlink (codex)
+hbrness uninstall <harness> [plugin]    # clean both plugin and user-level installs
 hbrness list      <harness>             # show what's installed
 hbrness plugins   <harness>             # show what's built in dist/
+hbrness doctor    [harness]             # scan for dangling links, stale hooks
+hbrness repair    [harness]             # apply auto-fixes for issues doctor finds
+hbrness update                          # git pull + rebuild + refresh (clone), or upgrade hint (npm)
 hbrness --help
 ```
 
 Options:
 - `--dry-run` — print the plan without touching the filesystem
 - `--json` — machine-readable output
-- `--no-hooks` — skip merging plugin hooks into `~/.claude/settings.json`
+- `--mode <plugin|user-level>` — override the default install mode
+- `--no-hooks` — (user-level mode) skip merging plugin hooks into `~/.claude/settings.json`
 
 ### Hooks
 
