@@ -20,12 +20,36 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 
 ## Install
 
-| Harness | Default mode | Install location | Invocation |
-|---|---|---|---|
-| Claude | `plugin` | `~/.claude/plugins/cache/hbrness/<plugin>/<version>/` | `/ghflow:review-pr` (plugin namespace) |
-| Codex  | `user-level` | `~/.codex/skills/<plugin>-<name>` (symlink) | `/ghflow-review-pr` (hyphen prefix) |
+```bash
+npm install -g hbrness
+hbrness install claude             # writes ~/.claude/plugins/marketplaces/hbrness/
+```
 
-Claude installs register the plugin in `installed_plugins.json` and appear in `/plugin list`. Pass `--mode user-level` to fall back to per-skill symlinks in `~/.claude/skills/` (hyphen-prefixed invocation, hooks merged into `settings.json`). Installing in one mode auto-migrates any leftovers from the other mode.
+Then inside Claude Code, paste the commands the installer prints — something like:
+
+```
+/plugin marketplace add ~/.claude/plugins/marketplaces/hbrness
+/plugin install ghflow@hbrness
+/plugin install specflow@hbrness
+```
+
+Claude Code owns the final registration — it writes its own `known_marketplaces.json` and `installed_plugins.json` entries, which means hbrness never drifts out of sync with Claude's plugin-config schema.
+
+Invocation afterwards: `/ghflow:review-pr`, `/specflow:generate-fs`, etc.
+
+### Modes
+
+| Harness | Default | What hbrness does | What you do |
+|---|---|---|---|
+| Claude | marketplace-only | builds `~/.claude/plugins/marketplaces/hbrness/` | `/plugin marketplace add <path>` + `/plugin install <name>@hbrness` |
+| Codex  | user-level | symlinks into `~/.codex/skills/<plugin>-<name>` | nothing — already live after restart |
+
+### Flags
+
+- `--auto-register` (Claude, plugin mode): also writes Claude's registry files directly. Removes the manual `/plugin` step but relies on hbrness shipping an up-to-date schema. Not recommended — Claude Code's schema may change between versions.
+- `--mode user-level` (Claude): skip the plugin system, symlink each skill into `~/.claude/skills/<plugin>-<name>/` and merge hooks into `settings.json`. Invocation becomes `/ghflow-review-pr` (hyphen).
+- `--dry-run`: show the plan without touching the filesystem.
+- `--json`: machine-readable output.
 
 ### Via npm (recommended)
 

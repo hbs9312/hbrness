@@ -89,13 +89,10 @@ function collectAllBuiltPluginManifests(harness) {
   return out;
 }
 
-function planInstallClaudePlugin({ plugin, pluginDir }) {
+function planInstallClaudePlugin({ plugin, pluginDir, autoRegister = false }) {
   const manifest = readPluginManifest(pluginDir);
   const version = manifest.version;
   const cacheTarget = registry.pluginCacheDir(plugin, version);
-
-  // The marketplace manifest must list every plugin we ship so that installing
-  // a single plugin still leaves a valid marketplace behind.
   const allPlugins = collectAllBuiltPluginManifests('claude');
 
   const ops = [
@@ -105,25 +102,30 @@ function planInstallClaudePlugin({ plugin, pluginDir }) {
       count: allPlugins.length,
       plugins: allPlugins,
     },
-    {
-      action: 'register-marketplace',
-      target: registry.MARKETPLACES_PATH,
-    },
-    {
-      action: 'copy-plugin',
-      target: cacheTarget,
-      source: pluginDir,
-      version,
-    },
-    {
-      action: 'register-plugin',
-      target: registry.INSTALLED_PATH,
-      plugin,
-      version,
-      installPath: cacheTarget,
-    },
   ];
-  return { ops, mode: 'plugin', targetDir: cacheTarget, version };
+
+  if (autoRegister) {
+    ops.push(
+      { action: 'register-marketplace', target: registry.MARKETPLACES_PATH },
+      { action: 'copy-plugin', target: cacheTarget, source: pluginDir, version },
+      {
+        action: 'register-plugin',
+        target: registry.INSTALLED_PATH,
+        plugin,
+        version,
+        installPath: cacheTarget,
+      },
+    );
+  }
+
+  return {
+    ops,
+    mode: 'plugin',
+    targetDir: cacheTarget,
+    version,
+    autoRegister,
+    marketplaceDir: registry.marketplaceDir(),
+  };
 }
 
 function applyInstallClaudePlugin({ plan, results, dryRun }) {
@@ -405,14 +407,14 @@ function replaceWithSymlink(target, source) {
 // Public API (dispatching on mode)
 // ---------------------------------------------------------------------------
 
-function planInstall({ harness, plugin, mode }) {
+function planInstall({ harness, plugin, mode, autoRegister = false }) {
   const pluginDir = requirePluginBuilt(harness, plugin);
   const resolvedMode = mode || defaultMode(harness);
   // Codex does not have a plugin system we target; force user-level.
   const effectiveMode = harness === 'codex' ? 'user-level' : resolvedMode;
 
   if (effectiveMode === 'plugin') {
-    const inner = planInstallClaudePlugin({ plugin, pluginDir });
+    const inner = planInstallClaudePlugin({ plugin, pluginDir, autoRegister });
     return {
       harness,
       plugin,
@@ -421,6 +423,8 @@ function planInstall({ harness, plugin, mode }) {
       ops: inner.ops,
       targetDir: inner.targetDir,
       version: inner.version,
+      autoRegister: inner.autoRegister,
+      marketplaceDir: inner.marketplaceDir,
     };
   }
 

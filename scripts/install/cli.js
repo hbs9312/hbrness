@@ -15,10 +15,11 @@ function help() {
   return `hbrness — multi-harness plugin installer
 
 Usage:
-  hbrness install <harness> [plugin]       Install (default: all plugins)
-                                           Claude default mode: "plugin" (registers in installed_plugins.json)
-                                           Codex default mode: "user-level" (symlink into ~/.codex/skills)
-                                           Override with --mode <plugin|user-level>
+  hbrness install <harness> [plugin]       Set up hbrness plugins
+                                           Claude default: write marketplace dir only, print /plugin commands to run inside Claude
+                                           Codex default: symlink into ~/.codex/skills
+                                           --auto-register (claude): also edit known_marketplaces.json and installed_plugins.json
+                                           --mode user-level (claude): symlink fallback instead of plugin mode
   hbrness uninstall <harness> [plugin]     Remove installed hbrness plugin + user-level symlinks
   hbrness list <harness>                   List currently installed items
   hbrness plugins <harness>                List built plugins in dist/
@@ -34,6 +35,7 @@ Options:
   --dry-run                                Show the plan; do not modify the filesystem
   --json                                   Machine-readable output
   --mode <plugin|user-level>               Override the default install mode for this command
+  --auto-register                          (plugin mode) also write Claude's registry files directly
   --no-hooks                               (user-level mode) Skip merging plugin hooks into settings.json
   --yes, -y                                Skip confirmation prompts (reserved, future use)
 
@@ -53,6 +55,7 @@ function parseArgs(argv) {
     yes: false,
     skipHooks: false,
     mode: null,
+    autoRegister: false,
   };
   const positional = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -61,6 +64,7 @@ function parseArgs(argv) {
     else if (a === '--json') flags.json = true;
     else if (a === '--yes' || a === '-y') flags.yes = true;
     else if (a === '--no-hooks') flags.skipHooks = true;
+    else if (a === '--auto-register') flags.autoRegister = true;
     else if (a === '--mode') {
       flags.mode = argv[++i];
       if (!['plugin', 'user-level'].includes(flags.mode)) {
@@ -104,7 +108,12 @@ async function cmdInstall(positional, flags) {
   const plugins = pluginsToOperate(harness, plugin);
 
   const runs = plugins.map((p) => {
-    const plan = planInstall({ harness, plugin: p, mode: flags.mode });
+    const plan = planInstall({
+      harness,
+      plugin: p,
+      mode: flags.mode,
+      autoRegister: flags.autoRegister,
+    });
     const results = applyPlan(plan, {
       dryRun: flags.dryRun,
       skipHooks: flags.skipHooks,
@@ -117,6 +126,26 @@ async function cmdInstall(positional, flags) {
     return;
   }
   printRuns('Install', runs, flags);
+
+  // Print next-steps for marketplace-only installs (plugin mode without --auto-register)
+  if (harness === 'claude' && !flags.dryRun && !flags.autoRegister) {
+    const pluginRuns = runs.filter((r) => r.plan.mode === 'plugin');
+    if (pluginRuns.length > 0) {
+      const marketplaceDir = pluginRuns[0].plan.marketplaceDir;
+      const pluginNames = pluginRuns.map((r) => r.plan.plugin);
+      console.log('');
+      console.log('Next: paste the following into Claude Code to complete installation.');
+      console.log('Claude will register the marketplace with its own schema, avoiding format drift.');
+      console.log('');
+      console.log(`  /plugin marketplace add ${relPath(marketplaceDir)}`);
+      for (const p of pluginNames) {
+        console.log(`  /plugin install ${p}@hbrness`);
+      }
+      console.log('');
+      console.log('(To skip this step and let hbrness write Claude config files directly,');
+      console.log(' rerun with --auto-register. Not recommended — Claude schema may drift.)');
+    }
+  }
 }
 
 async function cmdUninstall(positional, flags) {
