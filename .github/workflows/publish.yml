@@ -28,12 +28,17 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      # npm >=11.5.1 is required for OIDC-based trusted publishing to work end to end.
+      # Node 22 ships with an older npm, so force an upgrade before publish.
+      - name: Upgrade npm
+        run: npm install --global npm@latest
 
       - name: Build all harnesses
         run: bash scripts/build.sh all
