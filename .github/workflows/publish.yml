@@ -28,17 +28,21 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Node 24 ships npm >= 11.x, which is required for OIDC-based
+          # trusted publishing. Older Node versions ship with npm 10.x whose
+          # publish path fails the OIDC token exchange with a misleading
+          # 404 at the registry.
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # npm >=11.5.1 is required for OIDC-based trusted publishing to work end to end.
-      # Node 22 ships with an older npm, so force an upgrade before publish.
-      - name: Upgrade npm
-        run: npm install --global npm@latest
+      - name: Print tool versions
+        run: |
+          node --version
+          npm --version
 
       - name: Build all harnesses
         run: bash scripts/build.sh all
