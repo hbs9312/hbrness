@@ -6,6 +6,7 @@ const {
   listInstalled,
   listBuiltPlugins,
 } = require('./installer.js');
+const { diagnose, repair } = require('./doctor.js');
 
 const SUPPORTED_HARNESSES = ['claude', 'codex'];
 
@@ -17,6 +18,8 @@ Usage:
   hbrness uninstall <harness> [plugin]     Remove installed hbrness symlinks
   hbrness list <harness>                   List currently installed items
   hbrness plugins <harness>                List built plugins in dist/
+  hbrness doctor [harness]                 Scan for dangling links and stale hooks
+  hbrness repair [harness]                 Apply fixes for issues doctor finds
   hbrness --help                           Show this help
   hbrness --version                        Print package version
 
@@ -140,6 +143,82 @@ async function cmdList(positional, flags) {
   }
 }
 
+async function cmdDoctor(positional, flags) {
+  const [harness] = positional;
+  const harnesses = harness ? [harness] : SUPPORTED_HARNESSES;
+  for (const h of harnesses) requireHarness(h);
+  const issues = diagnose({ harnesses });
+
+  if (flags.json) {
+    process.stdout.write(JSON.stringify({ action: 'doctor', harnesses, issues }, null, 2) + '\n');
+    if (issues.some((i) => i.severity === 'error')) process.exitCode = 1;
+    return;
+  }
+
+  if (issues.length === 0) {
+    console.log('No issues found.');
+    return;
+  }
+
+  printIssues(issues);
+  const errorCount = issues.filter((i) => i.severity === 'error').length;
+  if (errorCount > 0) process.exitCode = 1;
+}
+
+async function cmdRepair(positional, flags) {
+  const [harness] = positional;
+  const harnesses = harness ? [harness] : SUPPORTED_HARNESSES;
+  for (const h of harnesses) requireHarness(h);
+  const issues = diagnose({ harnesses });
+  const fixable = issues.filter((i) => i.fix);
+
+  if (flags.json) {
+    const { results, backup } = repair(fixable, { dryRun: flags.dryRun });
+    process.stdout.write(
+      JSON.stringify({ action: 'repair', issues, results, backup }, null, 2) + '\n',
+    );
+    return;
+  }
+
+  if (issues.length === 0) {
+    console.log('No issues found.');
+    return;
+  }
+  if (fixable.length === 0) {
+    console.log('Issues found but none are auto-fixable:');
+    printIssues(issues);
+    return;
+  }
+
+  const { results, backup } = repair(fixable, { dryRun: flags.dryRun });
+  const dry = flags.dryRun ? ' (dry-run)' : '';
+  console.log(`Repair${dry}:`);
+  for (const r of results) {
+    const marker = { fixed: '✓', planned: '…', 'already-clean': '·', 'no-fix': '·', error: '✗' }[r.status] || '?';
+    const err = r.error ? ` — ${r.error}` : '';
+    console.log(`  ${marker} ${r.status.padEnd(14)} ${r.issue.detail}${err}`);
+  }
+  if (backup) console.log(`\nSettings backup: ${relPath(backup)}`);
+  const nonFixable = issues.filter((i) => !i.fix);
+  if (nonFixable.length > 0) {
+    console.log('\nUnfixable issues (informational):');
+    printIssues(nonFixable);
+  }
+  const errors = results.filter((r) => r.status === 'error').length;
+  if (errors > 0) process.exitCode = 1;
+}
+
+function printIssues(issues) {
+  const bySeverity = { error: [], warn: [], info: [] };
+  for (const i of issues) (bySeverity[i.severity] || bySeverity.info).push(i);
+  for (const [sev, list] of Object.entries(bySeverity)) {
+    if (list.length === 0) continue;
+    const label = { error: '🔴', warn: '🟡', info: 'ℹ' }[sev];
+    console.log(`${label} ${sev} (${list.length})`);
+    for (const i of list) console.log(`    [${i.type}] ${i.detail}`);
+  }
+}
+
 async function cmdPlugins(positional, flags) {
   const [harness] = positional;
   requireHarness(harness);
@@ -228,6 +307,10 @@ async function main(argv) {
       return cmdList(rest, flags);
     case 'plugins':
       return cmdPlugins(rest, flags);
+    case 'doctor':
+      return cmdDoctor(rest, flags);
+    case 'repair':
+      return cmdRepair(rest, flags);
     default:
       throw new Error(`unknown command "${cmd}" (try "hbrness --help")`);
   }
