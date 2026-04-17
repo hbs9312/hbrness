@@ -284,6 +284,7 @@ function printRuns(title, runs, flags) {
         removed: '✓',
         merged: '✓',
         copied: '✓',
+        refreshed: '✓',
         registered: '✓',
         unregistered: '✓',
         created: '✓',
@@ -315,7 +316,9 @@ function formatOpDetail(r) {
   if (r.action === 'copy-plugin') return `${relPath(r.source)}  →  ${relPath(r.target)}`;
   if (r.action === 'register-plugin') return `${r.plugin}@hbrness v${r.version}`;
   if (r.action === 'unregister-plugin') return r.plugin;
-  if (r.action === 'ensure-marketplace') return 'hbrness marketplace entry';
+  if (r.action === 'setup-marketplace')
+    return `${relPath(r.target)}  [${r.count} plugins]`;
+  if (r.action === 'register-marketplace') return relPath(r.target);
   if (r.action === 'remove-cache') return relPath(r.target);
   return relPath(r.target);
 }

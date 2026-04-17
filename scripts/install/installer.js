@@ -71,23 +71,59 @@ function scanSkillsAndAgents(pluginDir) {
 // Plugin mode (Claude only)
 // ---------------------------------------------------------------------------
 
+function collectAllBuiltPluginManifests(harness) {
+  const out = [];
+  for (const name of listBuiltPlugins(harness)) {
+    const dir = path.join(distDir(harness), name);
+    try {
+      const manifest = readPluginManifest(dir);
+      out.push({
+        name,
+        description: manifest.description || `${name} plugin`,
+        sourceDir: dir,
+      });
+    } catch (_e) {
+      // skip plugins missing a manifest
+    }
+  }
+  return out;
+}
+
 function planInstallClaudePlugin({ plugin, pluginDir }) {
   const manifest = readPluginManifest(pluginDir);
   const version = manifest.version;
-  const target = registry.pluginCacheDir(plugin, version);
+  const cacheTarget = registry.pluginCacheDir(plugin, version);
+
+  // The marketplace manifest must list every plugin we ship so that installing
+  // a single plugin still leaves a valid marketplace behind.
+  const allPlugins = collectAllBuiltPluginManifests('claude');
 
   const ops = [
-    { action: 'ensure-marketplace', target: registry.MARKETPLACES_PATH },
-    { action: 'copy-plugin', target, source: pluginDir, version },
+    {
+      action: 'setup-marketplace',
+      target: registry.marketplaceDir(),
+      count: allPlugins.length,
+      plugins: allPlugins,
+    },
+    {
+      action: 'register-marketplace',
+      target: registry.MARKETPLACES_PATH,
+    },
+    {
+      action: 'copy-plugin',
+      target: cacheTarget,
+      source: pluginDir,
+      version,
+    },
     {
       action: 'register-plugin',
       target: registry.INSTALLED_PATH,
       plugin,
       version,
-      installPath: target,
+      installPath: cacheTarget,
     },
   ];
-  return { ops, mode: 'plugin', targetDir: target, version };
+  return { ops, mode: 'plugin', targetDir: cacheTarget, version };
 }
 
 function applyInstallClaudePlugin({ plan, results, dryRun }) {
@@ -97,9 +133,12 @@ function applyInstallClaudePlugin({ plan, results, dryRun }) {
       continue;
     }
     try {
-      if (op.action === 'ensure-marketplace') {
-        const created = registry.ensureMarketplace();
-        results.push({ ...op, status: created ? 'created' : 'exists' });
+      if (op.action === 'setup-marketplace') {
+        registry.setupMarketplaceContents(op.plugins);
+        results.push({ ...op, status: 'refreshed' });
+      } else if (op.action === 'register-marketplace') {
+        const changed = registry.ensureMarketplaceEntry();
+        results.push({ ...op, status: changed ? 'created' : 'exists' });
       } else if (op.action === 'copy-plugin') {
         copyPluginContents(op.source, op.target);
         results.push({ ...op, status: 'copied' });
@@ -118,7 +157,6 @@ function applyInstallClaudePlugin({ plan, results, dryRun }) {
 }
 
 function copyPluginContents(source, target) {
-  // Ensure clean target — remove existing to avoid mixing versions' leftovers.
   if (fs.existsSync(target)) {
     fs.rmSync(target, { recursive: true, force: true });
   }
@@ -135,13 +173,10 @@ function planUninstallClaudePlugin({ plugin }) {
       plugin,
     });
   }
-  // Find any cached versions of this plugin under our marketplace and remove them.
-  const pluginRoot = path.join(registry.marketplaceCacheDir(), plugin);
-  if (fs.existsSync(pluginRoot)) {
-    ops.push({
-      action: 'remove-cache',
-      target: pluginRoot,
-    });
+  // Remove the plugin's cache contents (all versions) from our marketplace.
+  const pluginCacheRoot = path.join(registry.CACHE_ROOT, registry.DEFAULT_MARKETPLACE, plugin);
+  if (fs.existsSync(pluginCacheRoot)) {
+    ops.push({ action: 'remove-cache', target: pluginCacheRoot });
   }
   return { ops };
 }
@@ -164,7 +199,6 @@ function applyUninstallClaudePlugin({ plan, results, dryRun }) {
       results.push({ ...op, status: 'error', error: err.message });
     }
   }
-  // If no plugin left under our marketplace, drop the marketplace entry too.
   if (!dryRun) registry.removeMarketplaceIfEmpty();
 }
 
@@ -508,10 +542,11 @@ function listInstalled(harness) {
 
   // Plugin-mode (Claude only): read from installed_plugins.json
   if (harness === 'claude') {
+    const cacheRoot = path.join(registry.CACHE_ROOT, registry.DEFAULT_MARKETPLACE);
     for (const entry of registry.listRegisteredPlugins()) {
       if (!entry.installPath) continue;
-      const rel = entry.installPath.startsWith(registry.marketplaceCacheDir())
-        ? entry.installPath.slice(registry.marketplaceCacheDir().length + 1)
+      const rel = entry.installPath.startsWith(cacheRoot)
+        ? entry.installPath.slice(cacheRoot.length + 1)
         : entry.installPath;
       found.push({
         harness,
