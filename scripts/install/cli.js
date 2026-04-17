@@ -16,9 +16,10 @@ function help() {
 
 Usage:
   hbrness install <harness> [plugin]       Set up hbrness plugins
-                                           Claude default: write marketplace dir only, print /plugin commands to run inside Claude
+                                           Claude default: build marketplace dir, then invoke "claude plugin
+                                             marketplace add" and "claude plugin install" automatically
                                            Codex default: symlink into ~/.codex/skills
-                                           --auto-register (claude): also edit known_marketplaces.json and installed_plugins.json
+                                           --print-only (claude): skip running claude CLI; print commands to paste manually
                                            --mode user-level (claude): symlink fallback instead of plugin mode
   hbrness uninstall <harness> [plugin]     Remove installed hbrness plugin + user-level symlinks
   hbrness list <harness>                   List currently installed items
@@ -35,7 +36,7 @@ Options:
   --dry-run                                Show the plan; do not modify the filesystem
   --json                                   Machine-readable output
   --mode <plugin|user-level>               Override the default install mode for this command
-  --auto-register                          (plugin mode) also write Claude's registry files directly
+  --print-only                             (plugin mode) Don't invoke the claude CLI; just print the commands
   --no-hooks                               (user-level mode) Skip merging plugin hooks into settings.json
   --yes, -y                                Skip confirmation prompts (reserved, future use)
 
@@ -55,7 +56,7 @@ function parseArgs(argv) {
     yes: false,
     skipHooks: false,
     mode: null,
-    autoRegister: false,
+    printOnly: false,
   };
   const positional = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -64,7 +65,7 @@ function parseArgs(argv) {
     else if (a === '--json') flags.json = true;
     else if (a === '--yes' || a === '-y') flags.yes = true;
     else if (a === '--no-hooks') flags.skipHooks = true;
-    else if (a === '--auto-register') flags.autoRegister = true;
+    else if (a === '--print-only') flags.printOnly = true;
     else if (a === '--mode') {
       flags.mode = argv[++i];
       if (!['plugin', 'user-level'].includes(flags.mode)) {
@@ -112,7 +113,7 @@ async function cmdInstall(positional, flags) {
       harness,
       plugin: p,
       mode: flags.mode,
-      autoRegister: flags.autoRegister,
+      printOnly: flags.printOnly,
     });
     const results = applyPlan(plan, {
       dryRun: flags.dryRun,
@@ -126,25 +127,26 @@ async function cmdInstall(positional, flags) {
     return;
   }
   printRuns('Install', runs, flags);
+  printDeferredHints(runs);
+}
 
-  // Print next-steps for marketplace-only installs (plugin mode without --auto-register)
-  if (harness === 'claude' && !flags.dryRun && !flags.autoRegister) {
-    const pluginRuns = runs.filter((r) => r.plan.mode === 'plugin');
-    if (pluginRuns.length > 0) {
-      const marketplaceDir = pluginRuns[0].plan.marketplaceDir;
-      const pluginNames = pluginRuns.map((r) => r.plan.plugin);
-      console.log('');
-      console.log('Next: paste the following into Claude Code to complete installation.');
-      console.log('Claude will register the marketplace with its own schema, avoiding format drift.');
-      console.log('');
-      console.log(`  /plugin marketplace add ${relPath(marketplaceDir)}`);
-      for (const p of pluginNames) {
-        console.log(`  /plugin install ${p}@hbrness`);
-      }
-      console.log('');
-      console.log('(To skip this step and let hbrness write Claude config files directly,');
-      console.log(' rerun with --auto-register. Not recommended — Claude schema may drift.)');
+function printDeferredHints(runs) {
+  const deferred = [];
+  for (const run of runs) {
+    for (const r of run.results) {
+      if (r.status === 'deferred' && r.hint) deferred.push(r.hint);
     }
+  }
+  if (deferred.length === 0) return;
+  console.log('');
+  console.log('The `claude` CLI was unavailable or --print-only was set.');
+  console.log('Run the following commands to finish wiring the plugins into Claude Code:');
+  console.log('');
+  const seen = new Set();
+  for (const cmd of deferred) {
+    if (seen.has(cmd)) continue;
+    seen.add(cmd);
+    console.log(`  ${cmd}`);
   }
 }
 
@@ -154,7 +156,7 @@ async function cmdUninstall(positional, flags) {
   const plugins = pluginsToOperate(harness, plugin);
 
   const runs = plugins.map((p) => {
-    const plan = planUninstall({ harness, plugin: p });
+    const plan = planUninstall({ harness, plugin: p, printOnly: flags.printOnly });
     const results = applyUninstall(plan, {
       dryRun: flags.dryRun,
       skipHooks: flags.skipHooks,
@@ -167,6 +169,7 @@ async function cmdUninstall(positional, flags) {
     return;
   }
   printRuns('Uninstall', runs, flags);
+  printDeferredHints(runs);
 }
 
 async function cmdList(positional, flags) {
@@ -312,15 +315,15 @@ function printRuns(title, runs, flags) {
         linked: '✓',
         removed: '✓',
         merged: '✓',
-        copied: '✓',
         refreshed: '✓',
-        registered: '✓',
-        unregistered: '✓',
+        added: '✓',
+        installed: '✓',
         created: '✓',
         exists: '·',
         ok: '·',
         skipped: '·',
         'already-clean': '·',
+        deferred: '➜',
         planned: '…',
         error: '✗',
       }[r.status] || '?';
@@ -342,13 +345,14 @@ function formatOpDetail(r) {
     const backup = r.backup ? ` · backup: ${relPath(r.backup)}` : '';
     return `${relPath(r.target)}  [${events || 'no events'}]${backup}`;
   }
-  if (r.action === 'copy-plugin') return `${relPath(r.source)}  →  ${relPath(r.target)}`;
-  if (r.action === 'register-plugin') return `${r.plugin}@hbrness v${r.version}`;
-  if (r.action === 'unregister-plugin') return r.plugin;
   if (r.action === 'setup-marketplace')
     return `${relPath(r.target)}  [${r.count} plugins]`;
-  if (r.action === 'register-marketplace') return relPath(r.target);
-  if (r.action === 'remove-cache') return relPath(r.target);
+  if (r.action === 'claude-marketplace-add')
+    return `claude plugin marketplace add ${relPath(r.target)}`;
+  if (r.action === 'claude-plugin-install')
+    return `claude plugin install ${r.target}`;
+  if (r.action === 'claude-plugin-uninstall')
+    return `claude plugin uninstall ${r.target}`;
   return relPath(r.target);
 }
 

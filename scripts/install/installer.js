@@ -8,6 +8,7 @@ const {
 } = require('./paths.js');
 const hooksModule = require('./hooks.js');
 const registry = require('./plugin-registry.js');
+const claudeCli = require('./claude-cli.js');
 
 /**
  * Install modes:
@@ -89,10 +90,9 @@ function collectAllBuiltPluginManifests(harness) {
   return out;
 }
 
-function planInstallClaudePlugin({ plugin, pluginDir, autoRegister = false }) {
+function planInstallClaudePlugin({ plugin, pluginDir, printOnly = false }) {
   const manifest = readPluginManifest(pluginDir);
   const version = manifest.version;
-  const cacheTarget = registry.pluginCacheDir(plugin, version);
   const allPlugins = collectAllBuiltPluginManifests('claude');
 
   const ops = [
@@ -102,33 +102,28 @@ function planInstallClaudePlugin({ plugin, pluginDir, autoRegister = false }) {
       count: allPlugins.length,
       plugins: allPlugins,
     },
+    {
+      action: 'claude-marketplace-add',
+      target: registry.marketplaceDir(),
+    },
+    {
+      action: 'claude-plugin-install',
+      plugin,
+      target: `${plugin}@${registry.DEFAULT_MARKETPLACE}`,
+    },
   ];
-
-  if (autoRegister) {
-    ops.push(
-      { action: 'register-marketplace', target: registry.MARKETPLACES_PATH },
-      { action: 'copy-plugin', target: cacheTarget, source: pluginDir, version },
-      {
-        action: 'register-plugin',
-        target: registry.INSTALLED_PATH,
-        plugin,
-        version,
-        installPath: cacheTarget,
-      },
-    );
-  }
 
   return {
     ops,
     mode: 'plugin',
-    targetDir: cacheTarget,
     version,
-    autoRegister,
+    printOnly,
     marketplaceDir: registry.marketplaceDir(),
   };
 }
 
 function applyInstallClaudePlugin({ plan, results, dryRun }) {
+  const printOnly = plan.printOnly || !claudeCli.claudeAvailable();
   for (const op of plan.ops) {
     if (dryRun) {
       results.push({ ...op, status: 'planned' });
@@ -138,19 +133,48 @@ function applyInstallClaudePlugin({ plan, results, dryRun }) {
       if (op.action === 'setup-marketplace') {
         registry.setupMarketplaceContents(op.plugins);
         results.push({ ...op, status: 'refreshed' });
-      } else if (op.action === 'register-marketplace') {
-        const changed = registry.ensureMarketplaceEntry();
-        results.push({ ...op, status: changed ? 'created' : 'exists' });
-      } else if (op.action === 'copy-plugin') {
-        copyPluginContents(op.source, op.target);
-        results.push({ ...op, status: 'copied' });
-      } else if (op.action === 'register-plugin') {
-        registry.registerPlugin({
-          plugin: op.plugin,
-          version: op.version,
-          installPath: op.installPath,
-        });
-        results.push({ ...op, status: 'registered' });
+      } else if (op.action === 'claude-marketplace-add') {
+        if (printOnly) {
+          results.push({
+            ...op,
+            status: 'deferred',
+            hint: `claude plugin marketplace add ${op.target}`,
+          });
+        } else {
+          const r = claudeCli.marketplaceAdd(op.target);
+          if (r.ok) {
+            results.push({ ...op, status: 'added', output: r.stdout });
+          } else if (claudeCli.isIdempotentFailure(r)) {
+            results.push({ ...op, status: 'exists', output: r.stderr || r.stdout });
+          } else {
+            results.push({
+              ...op,
+              status: 'error',
+              error: r.stderr || r.error || `exit ${r.status}`,
+            });
+          }
+        }
+      } else if (op.action === 'claude-plugin-install') {
+        if (printOnly) {
+          results.push({
+            ...op,
+            status: 'deferred',
+            hint: `claude plugin install ${op.target}`,
+          });
+        } else {
+          const r = claudeCli.pluginInstall(op.target);
+          if (r.ok) {
+            results.push({ ...op, status: 'installed', output: r.stdout });
+          } else if (claudeCli.isIdempotentFailure(r)) {
+            results.push({ ...op, status: 'exists', output: r.stderr || r.stdout });
+          } else {
+            results.push({
+              ...op,
+              status: 'error',
+              error: r.stderr || r.error || `exit ${r.status}`,
+            });
+          }
+        }
       }
     } catch (err) {
       results.push({ ...op, status: 'error', error: err.message });
@@ -166,42 +190,57 @@ function copyPluginContents(source, target) {
   fs.cpSync(source, target, { recursive: true, dereference: true });
 }
 
-function planUninstallClaudePlugin({ plugin }) {
-  const ops = [];
-  if (registry.isPluginRegistered({ plugin })) {
-    ops.push({
-      action: 'unregister-plugin',
-      target: registry.INSTALLED_PATH,
+function planUninstallClaudePlugin({ plugin, printOnly = false }) {
+  const ops = [
+    {
+      action: 'claude-plugin-uninstall',
       plugin,
-    });
-  }
-  // Remove the plugin's cache contents (all versions) from our marketplace.
-  const pluginCacheRoot = path.join(registry.CACHE_ROOT, registry.DEFAULT_MARKETPLACE, plugin);
-  if (fs.existsSync(pluginCacheRoot)) {
-    ops.push({ action: 'remove-cache', target: pluginCacheRoot });
-  }
-  return { ops };
+      target: `${plugin}@${registry.DEFAULT_MARKETPLACE}`,
+    },
+  ];
+  return { ops, printOnly };
 }
 
 function applyUninstallClaudePlugin({ plan, results, dryRun }) {
+  const printOnly = plan.printOnly || !claudeCli.claudeAvailable();
   for (const op of plan.ops) {
     if (dryRun) {
       results.push({ ...op, status: 'planned' });
       continue;
     }
     try {
-      if (op.action === 'unregister-plugin') {
-        const ok = registry.unregisterPlugin({ plugin: op.plugin });
-        results.push({ ...op, status: ok ? 'unregistered' : 'already-clean' });
-      } else if (op.action === 'remove-cache') {
-        fs.rmSync(op.target, { recursive: true, force: true });
-        results.push({ ...op, status: 'removed' });
+      if (op.action === 'claude-plugin-uninstall') {
+        if (printOnly) {
+          results.push({
+            ...op,
+            status: 'deferred',
+            hint: `claude plugin uninstall ${op.target}`,
+          });
+        } else {
+          const r = claudeCli.pluginUninstall(op.target);
+          if (r.ok) {
+            results.push({ ...op, status: 'removed', output: r.stdout });
+          } else if (claudeCli.isIdempotentFailure(r)) {
+            results.push({ ...op, status: 'already-clean', output: r.stderr || r.stdout });
+          } else {
+            // "not installed" is fine — treat as no-op
+            const blob = `${r.stdout}\n${r.stderr}`.toLowerCase();
+            if (/not\s+installed|no\s+such|not\s+found/.test(blob)) {
+              results.push({ ...op, status: 'already-clean', output: r.stderr || r.stdout });
+            } else {
+              results.push({
+                ...op,
+                status: 'error',
+                error: r.stderr || r.error || `exit ${r.status}`,
+              });
+            }
+          }
+        }
       }
     } catch (err) {
       results.push({ ...op, status: 'error', error: err.message });
     }
   }
-  if (!dryRun) registry.removeMarketplaceIfEmpty();
 }
 
 // ---------------------------------------------------------------------------
@@ -407,23 +446,22 @@ function replaceWithSymlink(target, source) {
 // Public API (dispatching on mode)
 // ---------------------------------------------------------------------------
 
-function planInstall({ harness, plugin, mode, autoRegister = false }) {
+function planInstall({ harness, plugin, mode, printOnly = false }) {
   const pluginDir = requirePluginBuilt(harness, plugin);
   const resolvedMode = mode || defaultMode(harness);
   // Codex does not have a plugin system we target; force user-level.
   const effectiveMode = harness === 'codex' ? 'user-level' : resolvedMode;
 
   if (effectiveMode === 'plugin') {
-    const inner = planInstallClaudePlugin({ plugin, pluginDir, autoRegister });
+    const inner = planInstallClaudePlugin({ plugin, pluginDir, printOnly });
     return {
       harness,
       plugin,
       pluginDir,
       mode: 'plugin',
       ops: inner.ops,
-      targetDir: inner.targetDir,
       version: inner.version,
-      autoRegister: inner.autoRegister,
+      printOnly: inner.printOnly,
       marketplaceDir: inner.marketplaceDir,
     };
   }
@@ -487,10 +525,10 @@ function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
 /**
  * Uninstall always cleans both modes so migration and legacy removal Just Work.
  */
-function planUninstall({ harness, plugin }) {
+function planUninstall({ harness, plugin, printOnly = false }) {
   const userLevel = planUninstallUserLevel({ harness, plugin });
   const plugin_ =
-    harness === 'claude' ? planUninstallClaudePlugin({ plugin }) : { ops: [] };
+    harness === 'claude' ? planUninstallClaudePlugin({ plugin, printOnly }) : { ops: [] };
 
   const hasWork = userLevel.ops.length + plugin_.ops.length + (userLevel.hooksPlan?.events?.length || 0) > 0;
   if (!hasWork) {
@@ -517,6 +555,7 @@ function planUninstall({ harness, plugin }) {
     ops: userLevel.ops,
     hooksPlan: userLevel.hooksPlan,
     pluginRegistryOps: plugin_.ops,
+    pluginRegistryPrintOnly: plugin_.printOnly,
   };
 }
 
@@ -533,7 +572,7 @@ function applyUninstall(plan, { dryRun = false, skipHooks = false } = {}) {
 
   if (plan.harness === 'claude' && plan.pluginRegistryOps && plan.pluginRegistryOps.length > 0) {
     applyUninstallClaudePlugin({
-      plan: { ops: plan.pluginRegistryOps },
+      plan: { ops: plan.pluginRegistryOps, printOnly: plan.pluginRegistryPrintOnly },
       results,
       dryRun,
     });
