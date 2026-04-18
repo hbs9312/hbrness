@@ -76,22 +76,32 @@ def _run(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
 def _looks_like_commit(command: str) -> bool:
     """Best-effort check that `command` is a real `git commit` invocation.
 
-    Intentionally permissive on aliases (no one writes `git -C /tmp commit`
-    that often) — the skill also validates the SHA afterwards, so false
-    positives are cheap.
+    Requires `git commit` to appear as the leading verb of at least one
+    shell segment (split on `;`, `&&`, `||`) so that strings like
+    `echo git commit is great` or `grep 'git commit' file` do NOT match.
+    Tolerates leading env-var assignments (`GIT_AUTHOR_NAME=x git commit ...`)
+    and trailing subcommand arguments. Intentionally permissive on `git -C
+    <path> commit` — an uncommon form; the skill validates the SHA again
+    afterwards so false positives remain cheap.
     """
     if not command:
         return False
-    s = command.strip()
-    # Must mention `git commit` as a token sequence.
-    if not re.search(r"(?:^|[\s;&|(])git\s+commit\b", s):
-        return False
-    # Skip obvious non-committing invocations.
-    tokens = s.split()
-    for tok in tokens:
-        if tok in NON_COMMIT_FLAGS:
-            return False
-    return True
+    segments = re.split(r"&&|\|\||;|\n", command)
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        # Drop leading env var assignments (FOO=bar BAZ=qux git commit ...)
+        seg = re.sub(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)+", "", seg)
+        m = re.match(r"^git\s+commit\b(.*)$", seg)
+        if not m:
+            continue
+        rest = m.group(1)
+        for flag in NON_COMMIT_FLAGS:
+            if re.search(rf"(?:^|\s){re.escape(flag)}(?:\s|$|=)", rest):
+                return False
+        return True
+    return False
 
 
 def _repo_slug_from_remote(cwd: str) -> str | None:
