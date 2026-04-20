@@ -1,6 +1,6 @@
 {
   "name": "backflow",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "specflow 산출물 기반 백엔드 구현 워크플로우. 스키마, 리포지토리, 서비스, 컨트롤러, 미들웨어, 통합까지 바텀업으로 구축합니다.",
   "author": {
     "name": "hbs9312"
