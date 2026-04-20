@@ -12,8 +12,8 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 | Plugin | Version | Skills | Description |
 |--------|---------|--------|-------------|
 | specflow | 1.5.0 | 21 | Spec generation & validation workflow |
-| frontflow | 1.3.0 | 16 | Frontend implementation (tokens → pages) |
-| backflow | 0.4.0 | 14 | Backend implementation (schema → API) |
+| frontflow | 1.3.1 | 16 | Frontend implementation (tokens → pages) |
+| backflow | 0.4.1 | 14 | Backend implementation (schema → API) |
 | ghflow | 0.3.0 | 7 | GitHub issue/PR/review workflow |
 | meeting-prep | 0.1.0 | 3 | Meeting preparation automation |
 | xreview | 0.1.1 | 1 | External LLM code review |
