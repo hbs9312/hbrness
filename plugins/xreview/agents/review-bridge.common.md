@@ -7,6 +7,7 @@ tools:
   - search:grep
   - shell
   - file:write
+harness: [claude]
 ---
 
 # Review Bridge Agent

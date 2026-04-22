@@ -45,6 +45,26 @@ else
   ok "No Codex-specific env vars in common source"
 fi
 
+# Check no hardcoded ~/.claude or ~/.codex in common source (must use placeholder or ~/.hbrness)
+# See plugins/AUTHORING.md for the 3-tier storage convention.
+# Files that declare `harness:` frontmatter (Tier 3) are exempt because they're
+# explicitly scoped to specific harness(es) — hardcoded paths are legitimate there.
+hardcoded_violations=""
+while IFS= read -r f; do
+  # Skip if file has harness: gate declared (Tier 3 exemption)
+  if head -20 "$f" 2>/dev/null | grep -qE '^harness:'; then
+    continue
+  fi
+  hardcoded_violations="$hardcoded_violations$f"$'\n'
+done < <(grep -rlE '~/\.claude|~/\.codex|\$HOME/\.claude|\$HOME/\.codex' "$PLUGINS_DIR" --include="*.common.md" 2>/dev/null)
+hardcoded_violations=$(echo "$hardcoded_violations" | sed '/^$/d')
+if [ -n "$hardcoded_violations" ]; then
+  err "Found hardcoded harness path (~/.claude|~/.codex|\$HOME/.claude|\$HOME/.codex) in common source (see plugins/AUTHORING.md — use {HARNESS_HOME}, ~/.hbrness, or gate with 'harness:'):"
+  echo "$hardcoded_violations" | while read -r f; do echo "    $f"; done
+else
+  ok "No hardcoded harness paths in common source (Tier 3 gated files exempt)"
+fi
+
 # --- 2. Per-harness validation ---
 for harness in claude codex; do
   harness_dir="$DIST_DIR/$harness"
@@ -113,13 +133,34 @@ for harness in claude codex; do
   done
   ok "Manifests present for all plugins"
 
-  # Skill count parity
-  source_count=$(find "$PLUGINS_DIR" -name "SKILL.common.md" 2>/dev/null | wc -l | tr -d ' ')
+  # Skill count parity (accounting for 'harness:' gate in source frontmatter)
+  # Expected source count for this harness = total SKILL.common.md minus those gated out.
+  source_total=$(find "$PLUGINS_DIR" -name "SKILL.common.md" 2>/dev/null | wc -l | tr -d ' ')
+  gated_out=0
+  while IFS= read -r skill_src; do
+    # Read lines 1..20 of frontmatter; if 'harness:' line exists and doesn't include current harness, count as gated out
+    hdr=$(head -20 "$skill_src" 2>/dev/null)
+    harness_line=$(echo "$hdr" | awk -F: '/^harness:/{print $0; exit}')
+    if [ -z "$harness_line" ]; then
+      continue
+    fi
+    # If the line's value contains the current harness name, keep it; otherwise gated out
+    if echo "$harness_line" | grep -q "$harness"; then
+      continue
+    fi
+    gated_out=$((gated_out + 1))
+  done < <(find "$PLUGINS_DIR" -name "SKILL.common.md" 2>/dev/null)
+  expected_count=$((source_total - gated_out))
+
   dist_count=$(find "$harness_dir" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$source_count" -eq "$dist_count" ]; then
-    ok "Skill count matches: $source_count source = $dist_count $harness"
+  if [ "$expected_count" -eq "$dist_count" ]; then
+    if [ "$gated_out" -gt 0 ]; then
+      ok "Skill count matches: $expected_count expected (source=$source_total, gated-out=$gated_out) = $dist_count $harness"
+    else
+      ok "Skill count matches: $source_total source = $dist_count $harness"
+    fi
   else
-    err "Skill count mismatch: $source_count source != $dist_count $harness"
+    err "Skill count mismatch: expected $expected_count (source=$source_total, gated-out=$gated_out) != $dist_count $harness"
   fi
 done
 

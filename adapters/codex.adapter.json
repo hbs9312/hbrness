@@ -3,7 +3,7 @@
   "manifest_dir": ".codex-plugin",
 
   "frontmatter": {
-    "strip": ["allowed-tools", "disable-model-invocation", "argument-hint", "effort", "skills"],
+    "strip": ["allowed-tools", "disable-model-invocation", "argument-hint", "effort", "skills", "harness"],
     "add": {},
     "transform_tools_to": null,
     "tool_map": {
@@ -22,6 +22,9 @@
   "body_replacements": {
     "${SKILL_DIR}": "${CODEX_SKILL_DIR}",
     "${PLUGIN_ROOT}": "${CODEX_PLUGIN_ROOT}",
+    "{HARNESS_HOME}": "~/.codex",
+    "{HARNESS_NAME}": "codex",
+    "{HBRNESS_HOME}": "~/.hbrness",
     "서브에이전트로": "spawn_agent로",
     "harness_spawn({": "spawn_agent({",
     "tools: sub-agent": "tools: spawn_agent"

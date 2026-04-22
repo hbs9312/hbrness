@@ -1,6 +1,7 @@
 ---
 name: clear-issue
 description: "pick-issue 스킬로 저장한 현재 작업 이슈 메모리(project_current_issue.md)를 삭제하고 MEMORY.md에서 Current Issue 섹션을 제거하는 스킬. 사용자가 '이슈 정리', '이슈 메모리 삭제', '이슈 클리어', '작업 이슈 지워줘', '이슈 완료', 'clear issue', 'done with issue', 'close issue memory', '/clear-issue' 등을 말하면 트리거한다. 이슈 작업이 끝났거나 메모리를 정리하려는 맥락이면 적극적으로 이 스킬을 사용할 것."
+harness: [claude]
 ---
 
 # Clear Issue

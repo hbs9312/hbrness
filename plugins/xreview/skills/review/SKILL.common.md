@@ -1,6 +1,7 @@
 ---
 name: review
 description: 외부 CLI 기반 LLM(codex 등)에게 작업물 리뷰를 위임하고 결과를 구조화하여 반환하는 스킬. 대상 파일 유형에 따라 기본 리뷰 관점(preset)을 자동 선택하며, 호출자가 `perspective`나 `context`를 명시하면 프리셋을 오버라이드합니다. 코드, 기능/기술/와이어프레임/UI/QA 명세서, 디자인 파일 등 다양한 산출물을 리뷰할 수 있습니다. 사용자가 "리뷰해줘", "코드 리뷰", "명세서 검토", "다른 모델로 리뷰", "/xreview:review" 등을 말하면 트리거하거나, 타 플러그인에서 Skill tool로 호출합니다.
+harness: [claude]
 ---
 
 # xreview:review

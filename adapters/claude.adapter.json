@@ -3,7 +3,7 @@
   "manifest_dir": ".claude-plugin",
 
   "frontmatter": {
-    "strip": [],
+    "strip": ["harness"],
     "add": {
       "model": "claude-opus-4-6"
     },
@@ -24,6 +24,9 @@
   "body_replacements": {
     "${SKILL_DIR}": "${CLAUDE_SKILL_DIR}",
     "${PLUGIN_ROOT}": "${CLAUDE_PLUGIN_ROOT}",
+    "{HARNESS_HOME}": "~/.claude",
+    "{HARNESS_NAME}": "claude",
+    "{HBRNESS_HOME}": "~/.hbrness",
     "서브에이전트로": "Agent 도구로",
     "harness_spawn({": "Agent({",
     "tools: sub-agent": "tools: Agent"
