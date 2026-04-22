@@ -1,6 +1,6 @@
 {
   "name": "hbrness",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Multi-harness AI coding plugin repository. Install hbrness skills, agents, and hooks into Claude Code and Codex CLI.",
   "bin": {
     "hbrness": "./bin/hbrness.js"
