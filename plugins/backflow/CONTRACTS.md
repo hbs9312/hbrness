@@ -19,13 +19,16 @@ impl-schema               ← TS §데이터 모델
 impl-repositories         ← 스키마 + TS §처리 흐름
      │
      ▼
+impl-error-codes          ← TS §에러 코드 맵 (+ FS §도메인)   ★Phase 1 (1)
+     │                      impl-services 에 앞서 실행 권장
+     ▼
 impl-services             ← FS §BR/AC + TS §처리 흐름, §오류 처리
      │
      ▼
 impl-controllers          ← TS §API 설계
      │
      ▼
-impl-middleware           ← TS §보안, §비기능 요구사항
+impl-middleware           ← TS §보안, §비기능 요구사항 (impl-error-codes 의 HTTP_STATUS_MAP 을 import)
      │
      ▼
 impl-integrations         ← TS §인프라, §외부 호출 (B3 stub 교체)
@@ -100,6 +103,18 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Storage Tier** | N/A — project code |
 | **Depends on** | impl-schema |
 | **Notes** | 기존 repo 재사용(메서드 append). N+1 방지 강제. 패턴 일관성 확인 필수. |
+
+### impl-error-codes
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | TS §에러 코드 맵 → 백엔드 상수·HTTP 매핑·i18n 리소스 |
+| **Reads (specflow)** | `specs/TS/*` §4 에러 코드 맵 (필수), `specs/FS/*` §도메인 정의 (교차검증) |
+| **Reads (registry/config)** | `.backflow/task-file-map.md`(있으면), `backend.md` (error_handling.*, framework.language) |
+| **Writes** | `src/errors/codes.ts` (enum + ErrorMeta), `src/errors/http-mapping.ts`, `src/locales/errors.{ko,en}.json` (i18n_enabled=true 시) |
+| **Storage Tier** | N/A — project code |
+| **Depends on** | `map-tasks`. `impl-services` 에 앞서 실행 권장 (서비스가 throw 할 enum 상수 제공) |
+| **Notes** | AUTO-GENERATED 주석 필수. Grace period: TS 에 §에러 코드 맵 없으면 기본 5 코드로 임시 동작 + 경고. 언어별 출력(TS/Python/Kotlin) 은 `backend.md.framework.language` 로 분기. 3 시나리오(신규/애드혹 merge/기존 표준) 머지 전략 내장. |
 
 ### impl-services
 
@@ -233,14 +248,15 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | TS §데이터 모델 | impl-schema, impl-repositories |
 | TS §API 설계 | impl-controllers, validate-api |
 | TS §처리 흐름 | impl-repositories, impl-services |
-| TS §오류 처리 / 에러 코드 | impl-services, generate-tests, validate-tests |
+| TS §에러 코드 맵 | **impl-error-codes**, impl-middleware (HTTP 매핑 import), generate-tests, validate-tests |
+| TS §오류 처리 (sequence 내 에러 흐름) | impl-services, generate-tests, validate-tests |
 | TS §보안 | impl-middleware |
 | TS §비기능 요구사항 | impl-middleware |
 | TS §인프라·외부 호출 | impl-integrations |
 | WF §상태 매트릭스 | generate-tests, validate-tests |
 | PLAN-*-tasks.md (decompose) | map-tasks |
 
-> **Phase 1 로드맵 영향**: `docs/plugin-gaps-and-plan.md` §3.7 에서 TS 에 "에러 코드 맵", "관측성 요건", "OpenAPI fragment" 섹션이 의무화될 예정. 이 표는 그 시점에 `impl-error-codes`, `impl-observability`, `export-api-contract` 행이 추가된다.
+> **Phase 1 로드맵 영향**: `docs/plugin-gaps-and-plan.md` §3.7 에서 TS 에 "관측성 요건", "OpenAPI fragment" 섹션이 추가 의무화될 예정 — 그 시점에 `impl-observability`, `export-api-contract` 행이 추가된다. 에러 코드 맵 관련 행은 이미 반영 완료(Phase 1 (1) 완료). `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
 
 ## 신규 backflow 스킬 추가 체크리스트
 

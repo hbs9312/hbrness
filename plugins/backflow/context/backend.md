@@ -73,7 +73,11 @@ api:
 error_handling:
   strategy: ""           # exception-filter | error-middleware | global-handler
   error_class: ""        # 예: HttpException, AppError
-  error_code_enum: ""    # 예: src/common/error-codes.ts
+  error_code_enum: ""    # 예: src/errors/codes.ts — 에러 코드 enum 파일 (impl-error-codes 출력)
+  http_mapping_file: ""  # 예: src/errors/http-mapping.ts — code → HTTP status 매핑 파일
+  i18n_enabled: true     # true: i18n JSON 생성 | false: 메시지 코드에 inline
+  i18n_output_dir: ""    # 예: src/locales — errors.{lang}.json 출력 디렉토리 (i18n_enabled=true 시)
+  languages: ["ko", "en"] # 생성할 i18n 언어 목록 (TS §에러 코드 맵 컬럼과 1:1)
   logging: ""            # winston | pino | bunyan | built-in
   pattern: |
     // 프로젝트의 에러 핸들링 패턴
