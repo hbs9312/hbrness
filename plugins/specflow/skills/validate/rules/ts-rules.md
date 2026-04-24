@@ -2,7 +2,7 @@
 
 ## 구조 완전성 (critical)
 1. 메타데이터 + FS/WF 참조
-2. 필수 7개 섹션 (ADR, 아키텍처, API, 데이터모델, 플로우, 비기능, 인프라)
+2. 필수 8개 섹션 (ADR, 아키텍처, API, **에러 코드 맵**, 데이터모델, 플로우, 비기능, 인프라)
 3. 참조 문서 ID 유효성
 
 ## ADR 품질 (critical)
@@ -41,3 +41,14 @@
 ## 크로스 참조 정확성 (warning)
 23. 위치 기반 대명사 탐지: ADR/API/데이터모델/처리흐름 본문에서 "위 {명사}", "상기 {명사}", "해당 {명사}" 등이 **다른 ADR/BR/AC/섹션**을 가리키는 경우 → 정확한 ID(`ADR-NNN`, `BR-NNN`, `AC-NNN`, 엔드포인트 경로, 테이블명) 사용 권고. `conventions.md#크로스-참조-규칙` 참조.
     - 예외: 같은 ADR/섹션 내부의 인접 bullet 목록을 "아래/위 항목"으로 가리키는 경우는 허용.
+
+## 에러 코드 맵 (warning — v1.x grace period; v2.0 에 critical 승격 예정)
+24. §에러 코드 맵 섹션 존재 — 누락 시 warning (grace). 누락 시 skill 은 기본 에러 코드 5종(AUTH/USER/VALIDATION/SYSTEM/NETWORK) 으로 임시 동작
+25. code 전역 유일성 — 같은 code 가 여러 행에 등장하면 warning
+26. code 네이밍: UPPER_SNAKE_CASE + 도메인 prefix — `NOT_FOUND` 처럼 도메인 없는 code 는 warning (`USER_NOT_FOUND` 권고)
+27. domain 교차검증 — FS §도메인 정의에 없는 domain 을 사용하면 warning (`conventions.md` 의 domain snake_case 규약 참조)
+28. http_status 허용 범위 — 400/401/403/404/409/422/429/500/502/503/504 외 값 사용 시 warning + 사용자 review 요청
+29. i18n_key 패턴 — `errors.{domain}.{snake}` 패턴에 어긋나면 warning
+30. API Error Responses 의 CODE 가 §에러 코드 맵에 없으면 warning ("orphan code")
+31. §에러 코드 맵에 있으나 어떤 API 에서도 참조되지 않는 code — warning ("unused code"; 의도적 예약이면 주석 권고)
+32. message_ko / message_en: 기술 용어 노출 금지 — "DB 연결 실패" 같은 내부 상태 단어 감지 시 warning ("사용자 대상 메시지로 완화 권고")
