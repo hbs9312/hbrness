@@ -164,6 +164,51 @@ def transform_body(body, adapter):
     return body
 
 
+def parse_harness_gate(fm_str):
+    """Extract `harness:` field value from frontmatter.
+
+    Returns a list of harness names, or None if field absent (means: all harnesses).
+    Accepts either inline form ``harness: [claude, codex]`` or a YAML block list.
+    """
+    if not fm_str:
+        return None
+    lines = fm_str.split("\n")
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("harness:"):
+            continue
+        val = stripped.split(":", 1)[1].strip()
+        if val.startswith("[") and val.endswith("]"):
+            inner = val[1:-1]
+            return [h.strip().strip('"').strip("'") for h in inner.split(",") if h.strip()]
+        if val:
+            return [val.strip().strip('"').strip("'")]
+        # Empty value → expect block list below
+        out = []
+        for nxt in lines[i + 1:]:
+            s = nxt.strip()
+            if s.startswith("- "):
+                out.append(s[2:].strip().strip('"').strip("'"))
+            else:
+                break
+        return out or None
+    return None
+
+
+def is_harness_gated_out(src_path, target_harness):
+    """Check if a .common.md file should be skipped for the given harness."""
+    try:
+        with open(src_path, "r") as f:
+            content = f.read()
+    except OSError:
+        return False
+    fm_str, _ = parse_frontmatter(content)
+    allowed = parse_harness_gate(fm_str)
+    if allowed is None:
+        return False
+    return target_harness not in allowed
+
+
 def transform_file(src_path, dst_path, adapter, is_agent=False):
     """Transform a single .common.md file to harness-specific output."""
     with open(src_path, "r") as f:
@@ -274,8 +319,12 @@ def handle_hooks(plugin_dir, output_dir, adapter, repo_root):
     shutil.copy2(src, os.path.join(dst_hooks_dir, "hooks.json"))
 
 
-def load_agent_definitions(plugin_dir):
-    """Load all agent .common.md files into a dict keyed by agent ref name."""
+def load_agent_definitions(plugin_dir, target_harness=None):
+    """Load all agent .common.md files into a dict keyed by agent ref name.
+
+    Agents gated out via ``harness:`` frontmatter for ``target_harness`` are skipped.
+    Pass ``target_harness=None`` to include every agent regardless of gate.
+    """
     agents = {}
     agents_dir = os.path.join(plugin_dir, "agents")
     if not os.path.isdir(agents_dir):
@@ -287,6 +336,8 @@ def load_agent_definitions(plugin_dir):
             if not fname.endswith(".common.md"):
                 continue
             fpath = os.path.join(root, fname)
+            if target_harness is not None and is_harness_gated_out(fpath, target_harness):
+                continue
             with open(fpath, "r") as f:
                 content = f.read()
             # Extract name from frontmatter
@@ -355,21 +406,46 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
     # Pre-load agent definitions if inlining is needed
     agent_defs = {}
     if should_inline_agents:
-        agent_defs = load_agent_definitions(plugin_dir)
+        agent_defs = load_agent_definitions(plugin_dir, target_harness=harness)
         # Also load agents from other plugins (for cross-plugin refs like xreview)
         plugins_root = os.path.dirname(plugin_dir.rstrip("/"))
         for entry in os.listdir(plugins_root):
             other_dir = os.path.join(plugins_root, entry)
             if os.path.isdir(other_dir) and entry != plugin_name:
-                agent_defs.update(load_agent_definitions(other_dir))
+                agent_defs.update(load_agent_definitions(other_dir, target_harness=harness))
 
     # Clean output
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
 
+    # Pre-compute gated-out source directories for this harness.
+    # Any file whose path is inside one of these dirs should be skipped entirely.
+    gated_dirs = set()
+    for scan_subdir in ("skills", "agents"):
+        scan_root = os.path.join(plugin_dir, scan_subdir)
+        if not os.path.isdir(scan_root):
+            continue
+        for r, _ds, fs in os.walk(scan_root):
+            for fn in fs:
+                if not fn.endswith(".common.md"):
+                    continue
+                src = os.path.join(r, fn)
+                if is_harness_gated_out(src, harness):
+                    gated_dirs.add(r)
+
+    def _is_under_gated(root_abs):
+        for g in gated_dirs:
+            if root_abs == g or root_abs.startswith(g + os.sep):
+                return True
+        return False
+
     # Walk source and process files
     for root, dirs, files in os.walk(plugin_dir):
         rel_root = os.path.relpath(root, plugin_dir)
+
+        # Skip entire subtree if it's under a gated-out skill/agent dir
+        if _is_under_gated(root):
+            continue
 
         for fname in files:
             src_path = os.path.join(root, fname)
@@ -385,6 +461,8 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
 
             # Transform SKILL.common.md → SKILL.md
             if fname == "SKILL.common.md":
+                if is_harness_gated_out(src_path, harness):
+                    continue  # skill gated out for this harness
                 dst_name = "SKILL.md"
                 dst_path = os.path.join(output_dir, rel_root, dst_name) if rel_root != "." else os.path.join(output_dir, dst_name)
                 transform_file(src_path, dst_path, adapter, is_agent=False)
@@ -399,12 +477,14 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
 
             # Transform agent .common.md → .md
             if fname.endswith(".common.md") and "agents" in rel_path:
+                if is_harness_gated_out(src_path, harness):
+                    continue
                 dst_name = fname.replace(".common.md", ".md")
                 dst_path = os.path.join(output_dir, rel_root, dst_name) if rel_root != "." else os.path.join(output_dir, dst_name)
                 transform_file(src_path, dst_path, adapter, is_agent=True)
                 continue
 
-            # Copy all other files as-is
+            # Copy all other files as-is (subtree-level gating already filtered above)
             dst_path = os.path.join(output_dir, rel_path)
             os.makedirs(os.path.dirname(dst_path), exist_ok=True)
             shutil.copy2(src_path, dst_path)

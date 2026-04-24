@@ -1,6 +1,7 @@
 ---
 name: pick-issue
 description: "GitHub 원격 저장소에서 사용자에게 assign된 이슈 목록을 가져와 작업할 이슈를 선택하게 한 뒤, 선택된 이슈의 내용을 프로젝트 메모리에 저장하는 스킬. 사용자가 '이슈 선택', '작업할 이슈', '이슈 골라줘', '내 이슈 보여줘', '이슈 목록', 'pick issue', 'my issues', 'assigned issues', 'what should I work on', '어떤 이슈 작업할까', '/pick-issue' 등을 말하면 트리거한다. 이슈를 고르거나 작업을 시작하려는 맥락이면 적극적으로 이 스킬을 사용할 것."
+harness: [claude]
 ---
 
 # Pick Issue
