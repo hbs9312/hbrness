@@ -164,6 +164,60 @@ generated_marker:
   - backend_codes_file 가 별도 repo 에 있어 접근 불가 시 cross-plugin 검사 스킵 + info
 ```
 
+### 9. API 계약 drift (critical) — Phase 1 (3)
+
+`frontflow:sync-api-client` 가 생성한 codegen 출력이 `openapi/openapi.yaml` 과 일치하는지 검사.
+
+```yaml
+입력:
+  openapi_file: frontend.md.api_contract.source (모노레포 상대경로 또는 캐시 경로)
+  lock_file: frontend.md.api_contract.contract_lock_file (.frontflow/api-contract.lock)
+  generated_dir: frontend.md.api_contract.client_dir (예: src/api/generated)
+  types_file: frontend.md.api_contract.types_file
+  msw_handlers_file: frontend.md.api_contract.msw_handlers_file (emit_msw=true 시)
+  api_dir: src/api (impl-api-integration 출력 — client.ts 등)
+
+검사 항목 — version/hash 박제 일관성:
+  lock_version_match:
+    - .frontflow/api-contract.lock.version != openapi.yaml.info.version → critical (sync-api-client 재실행 필요)
+  lock_hash_match:
+    - .frontflow/api-contract.lock.contract_hash != openapi.yaml 의 재계산 hash → critical
+  header_marker_match:
+    - generated 파일 헤더의 박제 version/hash 가 lock 과 다르면 → critical (수동 수정 의심)
+
+검사 항목 — generated 파일 무결성:
+  generated_marker:
+    - generated_dir 의 모든 파일에 "AUTO-GENERATED" 주석 없으면 → warning
+  manual_edit_detection:
+    - generated 파일에 `// EDITED:` / `// MANUAL:` 같은 주석 발견 → critical (재생성 시 손실)
+  orphan_in_generated:
+    - generated_dir 에 있는 operationId 가 openapi.yaml.paths 어디에도 없으면 → critical (stale)
+  missing_in_generated:
+    - openapi.yaml.operationId 중 generated 에 없는 것 → critical (불완전 codegen)
+
+검사 항목 — types.gen.ts 일관성:
+  errorcode_enum_match:
+    - types.gen.ts 의 ErrorCode union 이 openapi.yaml.components.schemas.ErrorCode.enum 과 1:1 → 불일치 시 critical
+  schema_count_match:
+    - types.gen.ts 의 export 된 type 개수 (대략적) 가 openapi.yaml.components.schemas 보다 적으면 → warning
+
+검사 항목 — MSW 핸들러 (emit_msw=true 시):
+  msw_path_coverage:
+    - openapi.yaml.paths 의 모든 (method, path) 가 handlers.gen.ts 에 등장 → 누락 시 warning
+  msw_response_status:
+    - handlers.gen.ts 의 응답 status 가 openapi.yaml.responses.{status} 의 키와 일치 → 불일치 시 warning
+
+검사 항목 — hand-written 잔존 검출:
+  duplicate_api_function:
+    - api_dir/*.ts (생성 디렉토리 외) 에서 generated 함수와 같은 이름 export → critical (impl-api-integration housekeeping 미적용)
+  duplicate_api_type:
+    - api_dir 외부에서 EnrollRequest 같은 schema 명을 다시 export → warning (types.gen.ts import 권장)
+
+예외:
+  - lock_file 부재 (첫 sync 전) → 모든 lock 검사 skip + warning ("api-contract.lock 부재 — sync-api-client 미실행")
+  - generator: manual 시 emit_msw / emit_query_keys 검사 자동 skip
+```
+
 ## 출력
 
 ```yaml
