@@ -88,12 +88,13 @@ backend.md의 `error_handling.strategy`에 따름:
 // → { status: 429, body: { error: "QUOTA_EXCEEDED", message: "..." } }
 ```
 
-에러 코드 → HTTP 상태 매핑은 **`backflow:impl-error-codes` 가 생성한 파일을 import** 합니다 (인라인 정의 금지 — 중복 source of truth 가 됨):
+에러 코드 → HTTP 상태 매핑은 **`backflow:impl-error-codes` 가 생성한 파일을 import** 합니다 (인라인 정의 금지 — 중복 source of truth 가 됨). 추가로 catch 시점에 **`backflow:impl-observability` 가 만든 `tagError(exception)` 를 호출** 해 ErrorCode 를 자동으로 span attribute + structured log field 로 주입합니다 (`backend.md.observability.error_code_tag=true` 일 때):
 
 ```typescript
 // filters/app-exception.filter.ts
 import { ErrorCode, ErrorMeta } from '@/errors/codes';
 import { HTTP_STATUS_MAP } from '@/errors/http-mapping';
+import { tagError } from '@/observability/error-tag'; // impl-observability 출력
 
 @Catch(AppException)
 export class AppExceptionFilter implements ExceptionFilter {
@@ -103,6 +104,9 @@ export class AppExceptionFilter implements ExceptionFilter {
     const code = exception.code;
     const status = HTTP_STATUS_MAP[code] ?? 500;
 
+    // Observability hook — span attribute + structured log 자동 기록
+    tagError({ code, message: exception.message });
+
     response.status(status).json({
       error: { code, message: exception.message },
     });
@@ -110,11 +114,13 @@ export class AppExceptionFilter implements ExceptionFilter {
 }
 ```
 
-경로(`@/errors/codes`, `@/errors/http-mapping`) 는 `backend.md.error_handling.error_code_enum` / `http_mapping_file` 설정값에 따름.
+경로(`@/errors/codes`, `@/errors/http-mapping`, `@/observability/error-tag`) 는 `backend.md.error_handling.error_code_enum` / `http_mapping_file` 와 `backend.md.observability.error_tag_file` 설정값에 따름.
 
-`impl-error-codes` 가 아직 실행되지 않은 경우 (Phase 1 (1) 도입 전 프로젝트):
-1. 먼저 `backflow:impl-error-codes` 실행 권고 (TS §4 에러 코드 맵 기반)
-2. 또는 grace-period 5 기본 코드로 시작 (impl-error-codes 가 자동 생성)
+선행 스킬 미실행 시:
+1. `backflow:impl-error-codes` 가 아직 안 돌았으면: 먼저 실행 권고 (TS §4 에러 코드 맵 기반). grace-period 5 기본 코드로 시작도 가능.
+2. `backflow:impl-observability` 가 아직 안 돌았으면 또는 `error_code_tag=false` 면: `tagError` import 줄과 호출 줄을 **생략**하고 filter 만 생성 (관측성 도입 전 호환). 이후 impl-observability 실행 시 patch 권고.
+
+`tagError` 가 부재하면 filter 동작 자체에는 영향 없음 — 단지 span attribute 와 구조화된 로그가 자동 기록되지 않을 뿐.
 
 ### 4. 요청 로깅
 
