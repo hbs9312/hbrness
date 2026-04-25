@@ -67,6 +67,27 @@ api:
     // { success: false, error: { code: string, message: string } }
 ```
 
+## API 계약
+
+```yaml
+api_contract:
+  source: "ts-and-routes"     # ts-only | ts-and-routes (default) | routes-only
+                              # ts-only: 신규 프로젝트, 라우트 아직 없음 — fragment 만 export
+                              # routes-only: 레거시 프로젝트, TS §3.2 없음 — fragment 자동 합성 + 신뢰도 등급 출력 (warning)
+  output_path: "openapi/openapi.yaml"   # commit 대상. format=json 시 .json 으로 변경
+  format: "yaml"              # yaml (default) | json
+  servers:                    # OpenAPI servers 배열 (없으면 framework convention default)
+    - url: "/api/v1"
+      description: "production"
+  emit_examples: true         # responses.examples 자동 생성 여부 (TS 의 example 또는 schema 의 default 사용)
+  drift_report_path: ".backflow/api-contract-drift.md"
+  exclude_paths:              # internal endpoint (admin, health 등) export 제외
+    - "/internal/**"
+    - "/health"
+  # XR-007: contractHash 박제 — info.version 외 별도 fingerprint
+  contract_hash_alg: "sha256" # paths/schemas/security 의 정렬된 직렬화 hash
+```
+
 ## 에러 핸들링
 
 ```yaml

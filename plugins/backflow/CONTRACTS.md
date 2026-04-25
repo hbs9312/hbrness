@@ -36,6 +36,9 @@ impl-middleware           ← TS §보안, §비기능 요구사항 (HTTP_STATUS
 impl-integrations         ← TS §인프라, §외부 호출 (B3 stub 교체)
      │
      ▼
+export-api-contract       ← TS §3.2 + §4 → openapi.yaml (+ §4 components 합성)   ★Phase 1 (3)
+     │
+     ▼
 generate-tests            ← FS BR/AC + TS 오류 코드
      │
      ▼
@@ -55,6 +58,9 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | `.backflow/task-file-map.md` | map-tasks | 모든 impl-*, validate-code | Tier 0 | 태스크 → 파일·레이어 매핑, commit plan |
 | `backend.md` (프로젝트 설정) | — | 모든 스킬 | Tier 0 | 구조·ORM·라우팅·테스트 러너 등 프로젝트 설정. 커밋 대상 |
 | `specs/reviews/{TS-docID}-BV2-*.md` | validate-api | (사용자·후속 PR) | Tier 0 | API 검증 리포트 |
+| `backend.md.api_contract.*` (설정 키 그룹) | — | export-api-contract | Tier 0 | source / output_path / format / servers / emit_examples / drift_report_path / exclude_paths / contract_hash_alg |
+| `openapi/openapi.yaml` | export-api-contract | (frontflow:sync-api-client, validate-code §9) | N/A — project artifact | AUTO-GENERATED. commit 대상. `info.version` + `x-contract-hash` 박제 |
+| `.backflow/api-contract-drift.md` | export-api-contract | validate-code §9 | Tier 0 | TS ↔ 라우트 drift 리포트. ts-and-routes 모드 시 생성 |
 
 ## 스킬별 계약
 
@@ -178,6 +184,18 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Depends on** | impl-services, impl-controllers |
 | **Notes** | impl-services 가 남긴 stub 을 실제 코드로 교체. 모든 외부 호출에 timeout+retry+fallback 필수. DLQ/상태 업데이트. env 하드코딩 금지. |
 
+### export-api-contract
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | TS §3.2 OpenAPI fragment + §4 에러 코드 맵 + 실제 컨트롤러 라우트 → 단일 `openapi/openapi.yaml` 문서로 export. **`components.schemas.ErrorCode` enum 채움 + `components.responses` 합성** + TS ↔ 라우트 drift 1차 검출 |
+| **Reads (specflow)** | `specs/TS/*` §3 API 설계 (특히 §3.2 OpenAPI fragment), `specs/TS/*` §4 에러 코드 맵 (**필수 — components 합성 입력**) |
+| **Reads (registry/config)** | `.backflow/task-file-map.md`(있으면), `backend.md` (`api_contract.*` 섹션, `api.*`, `framework.*`, `error_handling.error_code_enum`), 컨트롤러 파일 (라우트 데코레이터) |
+| **Writes** | `openapi/openapi.yaml` (또는 `.json` — `backend.md.api_contract.format`), `.backflow/api-contract-drift.md` (export 시점 TS ↔ route 차이 리포트) |
+| **Storage Tier** | N/A — project artifact. `openapi/` 디렉토리는 프로젝트 루트, commit 대상 |
+| **Depends on** | `map-tasks`, `impl-error-codes` (§4 합성 입력), `impl-integrations` (라우트 표면 완성 후 — `source: ts-and-routes` 모드 시). `impl-services` 와 무관 (라우트 표면만 본다) |
+| **Notes** | OpenAPI 3.1 only. Vendor lock-in 0건. AUTO-GENERATED 멱등성. **`components.schemas.ErrorCode` enum 과 `components.responses` 본문 합성은 이 skill 의 단독 책임** (specflow 는 placeholder 만 둠). `backend.md.api_contract.source` 가 `ts-only` 이면 fragment 만 사용 (라우트 미검증 — 신규 프로젝트 grace). `routes-only` 는 레거시 일회성. first-class framework (NestJS/Express/Fastify) 라우트 추출 가능, 그 외 graceful 부분 추출 + 신뢰도 등급. |
+
 ### generate-tests
 
 | 항목 | 내용 |
@@ -261,6 +279,8 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | FS §권한 BR | impl-middleware |
 | TS §데이터 모델 | impl-schema, impl-repositories |
 | TS §API 설계 | impl-controllers, validate-api |
+| TS §3.2 OpenAPI fragment | **export-api-contract** |
+| TS §4 에러 코드 맵 → components 합성 | **export-api-contract** (components 합성 — export 용. impl-error-codes 의 백엔드 상수 생성과 별개) |
 | TS §처리 흐름 | impl-repositories, impl-services |
 | TS §에러 코드 맵 | **impl-error-codes**, impl-middleware (HTTP 매핑 import), generate-tests, validate-tests |
 | TS §오류 처리 (sequence 내 에러 흐름) | impl-services, generate-tests, validate-tests |
@@ -271,7 +291,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | WF §상태 매트릭스 | generate-tests, validate-tests |
 | PLAN-*-tasks.md (decompose) | map-tasks |
 
-> **Phase 1 로드맵 영향**: `docs/plugin-gaps-and-plan.md` §3.7 에서 TS 에 "관측성 요건", "OpenAPI fragment" 섹션이 추가 의무화될 예정 — 그 시점에 `impl-observability`, `export-api-contract` 행이 추가된다. 에러 코드 맵 관련 행은 이미 반영 완료(Phase 1 (1) 완료). `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
+> **Phase 1 로드맵 현황**: `impl-observability` (Phase 1 (2) 완료), `export-api-contract` (Phase 1 (3) 완료) 행 반영 완료. 에러 코드 맵 관련 행은 Phase 1 (1) 완료. `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
 
 ## 신규 backflow 스킬 추가 체크리스트
 
