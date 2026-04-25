@@ -61,3 +61,15 @@
 37. 트레이싱 표 sampling_rate_dev / sampling_rate_prod 가 [0.0, 1.0] 범위 — 위반 시 warning
 38. 상관 관계 표 correlation_header 명이 `X-Request-Id` / `X-Correlation-Id` 중 하나 — 그 외 warning (review 요청). **`Traceparent` 는 trace_propagation 전용 — correlation_header 값으로 사용 금지** (트레이싱과 request correlation 책임 혼합)
 39. error_code_tag 가 true 일 때 §4 에러 코드 맵이 비어있지 않음 — 위반 시 warning ("ErrorMeta hook 활성화 의도이나 hook 대상 없음")
+
+## API 계약 (warning — v1.x grace period; v2.0 critical 승격 예정)
+40. §3.2 OpenAPI fragment 부속섹션 존재 — 누락 시 warning + skill 은 §3.1 표 파싱 폴백
+41. fragment 의 openapi 필드가 `3.1.x` — 그 외 warning (3.0.x 는 nullable 등 차이로 자동 보정 권고)
+42. §3.1 표의 모든 (METHOD, canonical path) 가 fragment.paths 에 존재 — 비교는 base_path strip 후. 누락 시 warning
+43. fragment 의 모든 path 에 operationId 존재 (camelCase, 전역 유일) — 위반 시 warning
+44. §4 에러 코드 맵 의 모든 code 가 fragment 의 어느 path 의 responses[status].$ref: '#/components/responses/{CODE}' 로 등장 — 누락 시 warning
+45. fragment.paths.*.responses 의 모든 $ref target 이 §4 에 존재 — 미존재 시 warning ("orphan response ref")
+46. fragment.components.schemas.ErrorEnvelope.error.code 가 $ref: '#/components/schemas/ErrorCode' — 그 외(특히 type: string) 시 warning
+47. fragment 내부 $ref 가 모두 같은 fragment 안에서 해소 가능 — broken ref → critical (TS 내부 무결성)
+48. fragment.components.securitySchemes 가 §보안 섹션의 인증 방식과 일치 — 위반 시 warning
+49. fragment.components.responses 가 비어 있음 ({}) — 비어 있지 않으면 warning ("specflow 단계에서 합성 책임 침범 — export-api-contract 책임")

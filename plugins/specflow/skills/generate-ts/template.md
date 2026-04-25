@@ -21,12 +21,74 @@
 # 2. 시스템 아키텍처
 
 # 3. API 설계
-### {METHOD} {경로}
+
+## 3.1 엔드포인트 표 (인간 가독)
+
+> 경로는 servers[].url 또는 backend.md.api.base_path 를 제외한 canonical path 로 통일.
+
+### {METHOD} {canonical 경로}
 기능 참조: {AC/BR-NNN}
 Request: ...
 Response: ...
 Error Responses:
   {status} {CODE}: {설명} → {AC/BR-NNN}   # CODE 는 §4 에러 코드 맵 참조
+
+## 3.2 OpenAPI Fragment (source of truth)
+
+```yaml
+openapi: 3.1.0
+info:
+  title: {project name}
+  version: {semver}
+servers:
+  - url: {base_path}
+    description: production
+paths:
+  {canonical_path}:
+    {method}:
+      operationId: {camelCase}
+      summary: {한줄 요약}
+      tags: [{도메인}]
+      security: [{securityScheme}: []] # 인증 필요 시
+      requestBody: ...
+      responses:
+        '{성공 status}':
+          description: ...
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/{ResponseType}'
+        '{에러 status}':
+          $ref: '#/components/responses/{ERROR_CODE}'  # §4 에러 코드 맵 행의 code
+components:
+  schemas:
+    # 요청/응답 스키마는 §5 데이터 모델 기반
+    {RequestType}: ...
+    {ResponseType}: ...
+    ErrorCode:
+      type: string
+      description: '§4 에러 코드 맵에서 export 시 enum 으로 합성됨'
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            meta: { type: object, additionalProperties: true }
+  securitySchemes: {}  # 인증 방식에 따라 (bearerAuth / cookieAuth / apiKeyAuth)
+  responses: {}  # 비워둠 — backflow:export-api-contract 가 §4 에서 합성
+```
+
+규칙:
+- operationId: camelCase, 전역 유일. codegen 함수명·queryKey 의 안정 ID
+- canonical path: servers[].url 제외. §3.1 표와 path 일치
+- components.responses: 항상 비워둠 (`{}`). export-api-contract 가 합성 (Phase 1 (3) XR-001)
+- ErrorEnvelope.error.code: ErrorCode 를 $ref (plain string 금지, Phase 1 (3) XR-003)
+- 선택 필드: x-ts-adr (ADR 역참조 — Phase 2)
 
 # 4. 에러 코드 맵
 | domain | code | http_status | i18n_key | message_ko | message_en | retriable |
