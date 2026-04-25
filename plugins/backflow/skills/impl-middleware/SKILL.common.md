@@ -88,19 +88,33 @@ backend.md의 `error_handling.strategy`에 따름:
 // → { status: 429, body: { error: "QUOTA_EXCEEDED", message: "..." } }
 ```
 
-에러 코드 → HTTP 상태 매핑 테이블:
+에러 코드 → HTTP 상태 매핑은 **`backflow:impl-error-codes` 가 생성한 파일을 import** 합니다 (인라인 정의 금지 — 중복 source of truth 가 됨):
 
 ```typescript
-const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
-  QUOTA_EXCEEDED: 429,
-  DUPLICATE_NAME: 409,
-  NOT_FOUND: 404,
-  PERMISSION_DENIED: 403,
-  AUDIO_TOO_SHORT: 400,
-  VALIDATION_ERROR: 400,
-  INTERNAL_ERROR: 500,
+// filters/app-exception.filter.ts
+import { ErrorCode, ErrorMeta } from '@/errors/codes';
+import { HTTP_STATUS_MAP } from '@/errors/http-mapping';
+
+@Catch(AppException)
+export class AppExceptionFilter implements ExceptionFilter {
+  catch(exception: AppException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse();
+    const code = exception.code;
+    const status = HTTP_STATUS_MAP[code] ?? 500;
+
+    response.status(status).json({
+      error: { code, message: exception.message },
+    });
+  }
 }
 ```
+
+경로(`@/errors/codes`, `@/errors/http-mapping`) 는 `backend.md.error_handling.error_code_enum` / `http_mapping_file` 설정값에 따름.
+
+`impl-error-codes` 가 아직 실행되지 않은 경우 (Phase 1 (1) 도입 전 프로젝트):
+1. 먼저 `backflow:impl-error-codes` 실행 권고 (TS §4 에러 코드 맵 기반)
+2. 또는 grace-period 5 기본 코드로 시작 (impl-error-codes 가 자동 생성)
 
 ### 4. 요청 로깅
 

@@ -112,25 +112,35 @@ export function useEnrollSpeaker() {
 
 ### 4. 에러 핸들링
 
-TS의 에러 코드 → 프론트엔드 동작 매핑:
+에러 분기 로직은 **`frontflow:impl-error-handling` 이 생성한 `handler.ts` 를 import** 합니다 (인라인 switch/case 금지):
 
 ```typescript
-// TS 에러 코드별 분기
-function handleApiError(error: ApiError) {
-  switch (error.error) {
-    case 'AUDIO_TOO_SHORT':
-      return { type: 'inline', field: 'audio', message: error.message }
-    case 'DUPLICATE_NAME':
-      return { type: 'inline', field: 'name', message: error.message }
-    case 'PERMISSION_DENIED':
-      return { type: 'toast', message: error.message, redirect: '/settings' }
-    case 'QUOTA_EXCEEDED':
-      return { type: 'modal', message: error.message }
-    default:
-      return { type: 'toast', message: '오류가 발생했습니다. 다시 시도해 주세요.' }
-  }
+import { handleError } from '@/errors/handler';
+import { presentError } from '@/errors/ui-flow'; // 선택 — 프로젝트 디자인 시스템에 따라 대체 가능
+
+const enroll = useMutation({
+  mutationFn: speakersApi.enroll,
+  onError: (err: unknown) => {
+    const apiError = parseApiError(err);  // { code: string, message?: string, field?: string }
+    const decision = handleError(apiError);
+    presentError(decision); // 또는 inline 인 경우 form field 에 직접 바인딩
+  },
+});
+```
+
+경로(`@/errors/handler`, `@/errors/ui-flow`) 는 `frontend.md.error_handling.handler_file` / `ui_flow_file` 설정값을 따름.
+
+inline 분기(form field error binding)는 호출자가 `decision.uiFlow === 'inline'` 일 때 `decision.field` 를 form 의 해당 필드에 바인딩:
+
+```typescript
+if (decision.uiFlow === 'inline' && decision.field) {
+  form.setError(decision.field, { message: decision.message });
+} else {
+  presentError(decision);
 }
 ```
+
+`impl-error-handling` 이 아직 실행되지 않은 경우 (Phase 1 (1) 도입 전): `frontflow:impl-error-handling` 을 먼저 실행 권고. handler.ts 가 없으면 grace-period 5 기본 코드로 자동 생성됨.
 
 ### 5. 비동기 완료 처리 (해당 시)
 
