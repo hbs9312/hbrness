@@ -104,6 +104,85 @@ specflow V 스킬처럼 `context: fork`하지 않습니다.
 - 테스트에서 목(mock) 교체가 가능한 구조인가
 ```
 
+### 8. 관측성 계약 drift (critical) — Phase 1 (2)
+
+`backflow:impl-observability` 가 생성한 산출물이 TS §7.1 관측성과 일치하는지 검사. 실 로그·trace 출력에 required_tags 가 모두 등장하는지, sensitive_field_masking 이 redact 에 반영됐는지 등. (참고: §7 에러 코드 drift 룰 아래에 위치하나 numerical ID 는 8 — 룰 ID 는 안정적, 파일 위치는 추후 정리.)
+
+```yaml
+입력:
+  context_file: backend.md.observability.context_file (예: src/observability/context.ts)
+  logger_file: backend.md.observability.logger_file (예: src/observability/logger.ts)
+  request_id_middleware_file: backend.md.observability.request_id_middleware_file
+  tracing_file: backend.md.observability.tracing_file
+  error_tag_file: backend.md.observability.error_tag_file (error_code_tag=true 시)
+  bootstrap_file: backend.md.observability.bootstrap_file (예: src/main.ts)
+  ts_section: specs/TS-*.md §7.1 관측성
+
+검사 항목 — 로깅:
+  required_tags_in_logger:
+    - logger_file 의 formatter 출력에 TS §7.1 required_tags 의 모든 키(service, environment, request_id, trace_id 등) 가 등장하지 않으면 → critical
+    - "request_id" 가 logger formatter 에 있으나 context_file (AsyncLocalStorage 등) 와 연결되지 않으면 → critical (실 로그에 빈 값으로 나옴)
+  sensitive_masking:
+    - TS §7.1 sensitive_field_masking 의 모든 패턴이 logger redact (또는 winston format / structlog processor) 에 등장하지 않으면 → critical
+  log_format:
+    - logger 가 json 출력을 보장하지 않으면 → warning (text 는 dev only)
+  log_level:
+    - logger init 이 process.env[log_level_env] 또는 동등한 메커니즘으로 LOG_LEVEL 을 읽지 않으면 → warning
+
+검사 항목 — 트레이싱:
+  sampling_rate:
+    - tracing_file 에 sampling_rate_dev / sampling_rate_prod 가 env 분기로 적용되지 않으면 → critical
+    - sampling_rate_prod > 0.5 이면서 production 로 보이는 코드 경로면 → warning ("운영 트래픽에서 비용 폭증 가능")
+  otlp_endpoint_env:
+    - exporter URL 이 하드코딩 (`http://...` 리터럴) 이면 → critical (env 변수 사용 강제)
+  resource_attributes:
+    - service_name / deployment.environment 가 OTel resource 에 등록되지 않으면 → warning
+
+검사 항목 — Middleware / Bootstrap:
+  middleware_registered:
+    - request_id_middleware_file 가 존재하는데 bootstrap_file (또는 framework convention 진입점) 에 등록되지 않으면 → critical
+  tracing_first_import:
+    - bootstrap_file 의 import 순서에서 tracing_file 이 첫 번째가 아니면 → critical (auto-instrumentation 누락)
+  traceparent_passthrough:
+    - middleware 가 incoming `traceparent` 헤더를 OTel context 에 추출하지 않으면 → critical (분산 추적 끊김)
+  correlation_header:
+    - middleware 가 backend.md.observability.correlation_header 값을 사용하지 않거나 응답 헤더로 echo 하지 않으면 → warning
+
+검사 항목 — ErrorMeta hook:
+  error_tag_present:
+    - error_code_tag=true 이고 §4 에러 코드 맵 비어있지 않은데 error_tag_file 부재 → critical
+    - error_code_tag=false 인데 error_tag_file 존재 → warning ("의도치 않은 hook 활성화")
+  app_exception_filter_calls:
+    - AppExceptionFilter (impl-middleware 출력) 가 tagError 를 import 하지 않거나 catch() 에서 호출하지 않으면 → critical (관측성 hook 무력화)
+  errormeta_import_path:
+    - error_tag_file 의 ErrorMeta import 가 backend.md.error_handling.error_code_enum 과 일치하지 않으면 → critical
+
+검사 항목 — 비표준 로그 호출 검출:
+  console_log_remaining:
+    - 프로젝트 코드에서 `console.log(`, `console.warn(`, `console.error(`, `console.debug(`, `console.info(` → critical
+    - 단 logger.ts / context.ts / tracing.ts 등 관측성 파일 자체는 예외 (debug 용 console 허용)
+  print_statements:
+    - Python: `print(`, `sys.stdout.write` (logger 모듈 외) → critical
+    - Java: `System.out.println`, `System.err.println` → critical
+    - Go: `fmt.Println`, `fmt.Printf` (main 외) → critical
+    - Rust: `println!`, `eprintln!` (main / examples 외) → warning
+
+검사 항목 — Vendor leakage (계약 핵심):
+  vendor_name_in_code:
+    - 생성 코드에 `datadog`, `dd-trace`, `newrelic`, `sentry`, `honeycomb`, `appdynamics`, `dynatrace` 등 벤더명 등장 → critical
+    - "OTel only" 계약 위반. exporter URL 은 env 로만 결정.
+
+generated_marker:
+  - context.ts / logger.ts / tracing.ts / error-tag.ts 에 "AUTO-GENERATED" 주석 없으면 → warning
+
+env 변수:
+  - .env.example 에 OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_SERVICE_NAME / LOG_LEVEL 누락 시 → warning
+
+예외:
+  - TS §7.1 부재 (grace mode) 이고 logger/tracing 파일이 default 5종 코드만 가지면 drift 검사 스킵 + 단일 warning ("§7.1 미작성, grace mode")
+  - Scenario D (기존 OTel init 보존) 시 tracing.ts 가 skill 출력이 아닐 수 있음. backend.md.observability.tracing_file 가 명시적으로 "external" 이면 tracing 검사 스킵 + info 메시지
+```
+
 ### 7. 에러 코드 계약 drift (critical) — Phase 1 (1)
 
 `backflow:impl-error-codes` 가 생성한 산출물이 TS §4 에러 코드 맵과 일치하는지 검사. **양방향**으로 비교한다 — 한쪽에만 있는 코드는 모두 finding 으로 보고.
