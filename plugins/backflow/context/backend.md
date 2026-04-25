@@ -78,9 +78,53 @@ error_handling:
   i18n_enabled: true     # true: i18n JSON 생성 | false: 메시지 코드에 inline
   i18n_output_dir: ""    # 예: src/locales — errors.{lang}.json 출력 디렉토리 (i18n_enabled=true 시)
   languages: ["ko", "en"] # 생성할 i18n 언어 목록 (TS §에러 코드 맵 컬럼과 1:1)
-  logging: ""            # winston | pino | bunyan | built-in
+  logging: ""            # winston | pino | bunyan | built-in (deprecated — observability.logger 로 이전)
   pattern: |
     // 프로젝트의 에러 핸들링 패턴
+```
+
+## 관측성 (Observability)
+
+```yaml
+observability:
+  # 라이브러리 선택 (canonical 값. 실제 import 는 skill 이 매핑)
+  logger: ""                          # pino | winston | bunyan | structlog | logging | slog | zerolog | slf4j-logback | tracing
+  tracing_lib: ""                     # otel-sdk-node | opentelemetry-distro | otel-go | otel-java-agent | otel-rust
+
+  # 로깅 동작
+  log_format: "json"                  # json | text(dev only)
+  log_level_default: "info"           # debug | info | warn | error
+  log_level_env: "LOG_LEVEL"          # 런타임 override env 변수 이름
+
+  # 트레이싱
+  sampling_rate_dev: 1.0              # 0.0 ~ 1.0
+  sampling_rate_prod: 0.1             # 0.0 ~ 1.0 (override: OTEL_SAMPLING_RATE_PROD env)
+  trace_propagation: "W3C"            # W3C (default) | b3 (legacy)
+
+  # 태그·마스킹
+  required_tags: ["service", "environment", "request_id", "trace_id"]
+  optional_tags: []                   # 예: ["user_id", "tenant_id"]
+  sensitive_field_masking: ["password", "token", "ssn", "card_number"]
+
+  # 상관 관계
+  correlation_header: "X-Request-Id"  # X-Request-Id | X-Correlation-Id (Traceparent 는 사용 금지 — trace_propagation 전용)
+  error_code_tag: true                # ErrorCode 자동 log tag 주입 (TS §4 에러 코드 맵 존재 전제)
+
+  # 리소스 식별
+  service_name: ""                    # OTel resource attribute (없으면 framework.name 사용)
+  otel_endpoint_env: "OTEL_EXPORTER_OTLP_ENDPOINT"  # OTel Collector 위치 env (벤더는 Collector 설정)
+
+  # 출력 파일 경로 (impl-observability 가 작성)
+  context_file: ""                    # 예: src/observability/context.ts (AsyncLocalStorage / contextvars / MDC 추상)
+  logger_file: ""                     # 예: src/observability/logger.ts
+  request_id_middleware_file: ""      # 예: src/middleware/request-id.ts
+  tracing_file: ""                    # 예: src/observability/tracing.ts
+  error_tag_file: ""                  # 예: src/observability/error-tag.ts (error_code_tag=true 시)
+
+  # App entrypoint — skill 이 tracing import + middleware 등록을 추가
+  bootstrap_file: ""                  # 예: src/main.ts | src/server.ts | src/app.module.ts (framework convention)
+
+  # Phase 2 예정: metrics_file / metrics 계측 — 이 phase 에서는 다루지 않음
 ```
 
 ## 테스트

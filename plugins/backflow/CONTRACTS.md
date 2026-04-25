@@ -22,15 +22,17 @@ impl-repositories         ← 스키마 + TS §처리 흐름
 impl-error-codes          ← TS §에러 코드 맵 (+ FS §도메인)   ★Phase 1 (1)
      │                      impl-services 에 앞서 실행 권장
      ▼
-impl-services             ← FS §BR/AC + TS §처리 흐름, §오류 처리
+impl-observability        ← TS §7.1 관측성 (+ §4 에러 코드 맵 hook)   ★Phase 1 (2)
+     │                      impl-services 에 앞서 실행 — 서비스가 logger import 함
+     ▼
+impl-services             ← FS §BR/AC + TS §처리 흐름, §오류 처리 (logger import)
      │
      ▼
 impl-controllers          ← TS §API 설계
      │
      ▼
-impl-middleware           ← TS §보안, §비기능 요구사항 (impl-error-codes 의 HTTP_STATUS_MAP 을 import)
+impl-middleware           ← TS §보안, §비기능 요구사항 (HTTP_STATUS_MAP + tagError import)
      │
-     ▼
 impl-integrations         ← TS §인프라, §외부 호출 (B3 stub 교체)
      │
      ▼
@@ -139,6 +141,18 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Storage Tier** | N/A — project code |
 | **Depends on** | impl-services |
 | **Notes** | 컨트롤러에 비즈니스 로직 금지. DTO 검증은 `backend.md.request_validation`(class-validator/zod/joi). 응답 래핑은 `response_format`. |
+
+### impl-observability
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | TS §7.1 관측성 → structured logger + tracing SDK 초기화 + request context store + request-id middleware + ErrorMeta hook + entrypoint 등록 (OTel only, vendor-agnostic) |
+| **Reads (specflow)** | `specs/TS/*` §7.1 관측성 (필수 — 로깅·트레이싱 표 mandatory; Metrics SLI 는 Phase 2 로 이전, 이 스킬은 읽지 않음), `specs/TS/*` §4 에러 코드 맵 (`error_code_tag=true` 시 ErrorMeta hook 입력) |
+| **Reads (registry/config)** | `.backflow/task-file-map.md`(있으면), `backend.md` (`observability.*` 섹션, `framework.language`, `framework.name`, `error_handling.error_code_enum` for ErrorMeta import path, deprecated `error_handling.logging` fallback) |
+| **Writes** | `src/observability/context.ts`, `src/observability/logger.ts`, `src/middleware/request-id.ts`, `src/observability/tracing.ts`, `src/observability/error-tag.ts` (error_code_tag=true 시), `.env.example` append (OTel 5 변수 idempotent), **app entrypoint 수정** (tracing 첫 import + middleware 등록) |
+| **Storage Tier** | N/A — project code |
+| **Depends on** | `map-tasks`, `impl-error-codes` (ErrorMeta 출처). **`impl-services` 보다 먼저** 실행 — 서비스가 logger import 함. `impl-middleware` 보다 먼저 — middleware 가 tagError 호출. |
+| **Notes** | OTel only — 벤더명 출력 0건. 언어 분기 (TS/Python/Go/Java/Rust). `traceparent` passthrough 로 future Phase 1 (4) frontend tracking 자동 호환. request_id 는 AsyncLocalStorage / contextvars / MDC 로 logger 까지 전파. AUTO-GENERATED 멱등성. 4 머지 시나리오(신규 / console.log 산재 / 기존 logger / 기존 OTel). Metrics SLI 는 Phase 2 (`backflow:impl-metrics`) 로 이전됨. |
 
 ### impl-middleware
 
@@ -252,6 +266,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | TS §오류 처리 (sequence 내 에러 흐름) | impl-services, generate-tests, validate-tests |
 | TS §보안 | impl-middleware |
 | TS §비기능 요구사항 | impl-middleware |
+| TS §7.1 관측성 | **impl-observability** |
 | TS §인프라·외부 호출 | impl-integrations |
 | WF §상태 매트릭스 | generate-tests, validate-tests |
 | PLAN-*-tasks.md (decompose) | map-tasks |
