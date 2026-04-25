@@ -54,5 +54,39 @@ Error Responses:
 - 최종 실패: {동작} → {에러 코드 §4 참조}
 
 # 7. 비기능 요구사항
+
+## 7.1 관측성
+
+### 로깅
+| key | 값 |
+|---|---|
+| log_format | json |
+| log_level_default | info |
+| log_level_env | LOG_LEVEL |
+| required_tags | service, environment, request_id, trace_id |
+| optional_tags | user_id, error_code (예시 — 프로젝트별 선택) |
+| sensitive_field_masking | password, token, ssn, card_number |
+
+### 트레이싱
+| key | 값 |
+|---|---|
+| trace_propagation | W3C Trace Context (`traceparent`) |
+| sampling_strategy | head-based, ratio |
+| sampling_rate_dev | 1.0 |
+| sampling_rate_prod | 0.1 |
+| custom_spans | DB 쿼리, 외부 호출, 비동기 작업 enqueue |
+
+### Metrics (SLI)
+| sli | type | unit | window |
+|---|---|---|---|
+| http_request_duration_seconds | histogram | seconds | 1m |
+| http_requests_total | counter | requests | - |
+| db_query_duration_seconds | histogram | seconds | 1m |
+| external_call_duration_seconds | histogram | seconds | 1m |
+
+### 상관 관계
+- correlation_header: `X-Request-Id` (없으면 middleware 가 생성). `Traceparent` 는 §트레이싱 의 trace_propagation 으로 별도 처리 — correlation_header 와 혼용 금지
+- error_code_tag: true (Phase 1 (1) ErrorCode 자동 주입 — backend.md `observability.error_code_tag` 와 동일 의미)
+
 # 8. 인프라 & 배포
 ```

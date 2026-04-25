@@ -2,7 +2,7 @@
 
 ## 구조 완전성 (critical)
 1. 메타데이터 + FS/WF 참조
-2. 필수 8개 섹션 (ADR, 아키텍처, API, **에러 코드 맵**, 데이터모델, 플로우, 비기능, 인프라)
+2. 필수 8개 top-level 섹션 (ADR, 아키텍처, API, **에러 코드 맵**, 데이터모델, 플로우, 비기능, 인프라). 부속섹션(§7.1 관측성 등) 은 별도 룰에서 평가 — 룰 2 는 top-level 만 critical 로 검사
 3. 참조 문서 ID 유효성
 
 ## ADR 품질 (critical)
@@ -52,3 +52,12 @@
 30. API Error Responses 의 CODE 가 §에러 코드 맵에 없으면 warning ("orphan code")
 31. §에러 코드 맵에 있으나 어떤 API 에서도 참조되지 않는 code — warning ("unused code"; 의도적 예약이면 주석 권고)
 32. message_ko / message_en: 기술 용어 노출 금지 — "DB 연결 실패" 같은 내부 상태 단어 감지 시 warning ("사용자 대상 메시지로 완화 권고")
+
+## 관측성 (warning — v1.x grace period; v2.0 critical 승격 예정)
+33. §7.1 관측성 부속섹션 존재 — 누락 시 warning (grace). backflow:impl-observability 가 OTel default 로 동작
+34. §7.1 의 로깅·트레이싱 표 mandatory — 둘 중 누락 시 warning. Metrics SLI / 상관 관계 표는 optional (없으면 impl-observability 가 default 4 SLI · `X-Request-Id` 적용)
+35. 로깅 표의 required_tags 에 4 base 태그(`service`, `environment`, `request_id`, `trace_id`) 모두 포함 — 일부 누락 시 warning. trace_id 누락 시 추가 메모: "로그·스팬 correlation 저하"
+36. 로깅 표 log_format 값이 `json` 또는 `text` (개발 환경 only) — 그 외 warning
+37. 트레이싱 표 sampling_rate_dev / sampling_rate_prod 가 [0.0, 1.0] 범위 — 위반 시 warning
+38. 상관 관계 표 correlation_header 명이 `X-Request-Id` / `X-Correlation-Id` 중 하나 — 그 외 warning (review 요청). **`Traceparent` 는 trace_propagation 전용 — correlation_header 값으로 사용 금지** (트레이싱과 request correlation 책임 혼합)
+39. error_code_tag 가 true 일 때 §4 에러 코드 맵이 비어있지 않음 — 위반 시 warning ("ErrorMeta hook 활성화 의도이나 hook 대상 없음")
