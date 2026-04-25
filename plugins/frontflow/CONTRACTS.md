@@ -28,6 +28,9 @@ impl-pages                ← WF (전환·레이아웃) + UI (반응형) + mock 
 impl-error-handling       ← TS §에러 코드 맵 (+ UI ui_flow 힌트)   ★Phase 1 (1)
      │                      impl-interactions / impl-api-integration 에 앞서 실행 권장
      ▼
+sync-api-client           ← openapi.yaml → codegen (types + client + MSW)   ★Phase 1 (3)
+     │
+     ▼
 impl-interactions         ← FS BR + UI 인터랙션 + WF 상태 매트릭스 + TS 상태 enum
      │
      ▼
@@ -51,6 +54,7 @@ patch-frontend / reimpl-frontend   ← 검증 피드백 반영
 | `.frontflow/component-registry.md` | scan-codebase | map-tasks, impl-atoms, impl-composites, validate-* | Tier 0 | 기존 컴포넌트·훅·유틸·디자인시스템 레지스트리 |
 | `.frontflow/task-file-map.md` | map-tasks | 모든 impl-*, validate-code | Tier 0 | 태스크 → 파일·레이어, commit plan |
 | `frontend.md` (프로젝트 설정) | — | 모든 스킬 | Tier 0 | framework/styling/state_management/api_client 등 |
+| `.frontflow/api-contract.lock` | sync-api-client | validate-code (§9 drift 검사) | Tier 0 | version/contract_hash/source_etag/generated_at/generator 박제. commit 대상 |
 | Figma data cache | extract-figma | impl-composites, impl-pages | Tier 1 (`~/.hbrness/figma/...`) | Figma MCP 응답 정규화·노이즈 제거 캐시 |
 
 ## 스킬별 계약
@@ -138,6 +142,18 @@ patch-frontend / reimpl-frontend   ← 검증 피드백 반영
 | **Storage Tier** | N/A — project code |
 | **Depends on** | `map-tasks`, `impl-pages`. `impl-interactions` / `impl-api-integration` 에 앞서 실행 권장 |
 | **Notes** | **`code` 문자열 값이 backflow:impl-error-codes 출력과 완전 일치해야 함** (계약의 바이트). handler 는 순수 함수 — 렌더링 책임 없음. i18n 라이브러리(i18next/formatjs/lingui/inline) 에 따라 생성 형태 분기. 3 머지 시나리오 내장. AUTO-GENERATED 주석으로 멱등성. |
+
+### sync-api-client
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | `openapi/openapi.yaml` → TS API 클라이언트 함수 + 타입 정의 + (옵션) MSW 핸들러 codegen. `info.version` + `contractHash` 이중 박제로 stale 검출 |
+| **Reads (specflow)** | — (직접 읽지 않음. OpenAPI 가 specflow 의 indirect 출력) |
+| **Reads (registry/config)** | `.frontflow/task-file-map.md`(있으면), `frontend.md` (`api_contract.*` 섹션 필수, `api_client.method`, `server_state`), OpenAPI 문서 (path or URL), `.frontflow/api-contract.lock` (이전 sync 의 version/hash) |
+| **Writes** | `{client_dir}/{tag}.ts`, `{client_dir}/index.ts` (barrel), `{types_file}` (전체 schema 타입 + ErrorCode union), (`emit_msw=true`) `{msw_handlers_file}`, **`.frontflow/api-contract.lock`** (version/hash/source etag 박제) |
+| **Storage Tier** | N/A — project code. `generated/` / `*.gen.ts` 는 commit 대상이지만 사람 편집 금지. `.frontflow/api-contract.lock` 도 commit 대상 |
+| **Depends on** | `map-tasks`. **`backflow:export-api-contract` 가 먼저 실행되어 `openapi/openapi.yaml` 이 존재해야 함**. `impl-error-handling` 와 무관 — 에러 코드는 OpenAPI components.schemas.ErrorCode enum 으로 흡수 |
+| **Notes** | Phase 1 default generator = **`openapi-typescript-codegen`** 단일 first-class. 다른 generator 는 experimental. AUTO-GENERATED 주석 + 헤더에 `info.version` + `contractHash` 박제. version+hash mismatch 시 validate critical. lock 비교 후 변동 없으면 no-op. |
 
 ### impl-interactions
 
@@ -275,8 +291,8 @@ patch-frontend / reimpl-frontend   ← 검증 피드백 반영
 | UI §에러 UI 플로우 힌트 | **impl-error-handling** (ui_flow 컬럼 부재 시 참고) |
 | WF §화면 전환·레이아웃 | impl-pages |
 | WF §상태 매트릭스 | impl-atoms, impl-interactions |
-| TS §API 설계 | impl-api-integration |
-| TS §API 응답 스키마 | impl-composites (Props), impl-api-integration (types) |
+| TS §API 설계 | **sync-api-client** (codegen), impl-api-integration (wiring) |
+| TS §API 응답 스키마 | impl-composites (Props), **sync-api-client** (types codegen), impl-api-integration (wiring) |
 | TS §상태 enum | impl-interactions |
 | TS §에러 코드 맵 | **impl-error-handling**, impl-api-integration (handleError import), generate-tests |
 | PLAN-*-tasks.md (decompose) | map-tasks |

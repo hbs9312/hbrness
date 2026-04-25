@@ -82,6 +82,23 @@ api_client:
   auth_header: ""        # 예: Authorization: Bearer {token}
 ```
 
+## API 계약
+
+```yaml
+api_contract:
+  source: "openapi/openapi.yaml"
+  source_etag_file: ".frontflow/api-contract.etag"
+  contract_lock_file: ".frontflow/api-contract.lock"
+  generator: "openapi-typescript-codegen"
+  client_dir: "src/api/generated"
+  types_file: "src/api/types.gen.ts"
+  msw_handlers_file: "src/mocks/handlers.gen.ts"
+  emit_msw: true
+  emit_query_keys: true
+  pinned_version: ""
+  runtime_assertion: false
+```
+
 ## 에러 핸들링
 
 ```yaml

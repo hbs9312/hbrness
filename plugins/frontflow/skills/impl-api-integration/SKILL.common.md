@@ -40,51 +40,26 @@ const { mutate: enrollSpeaker } = useMutation({
 
 ## 생성할 코드
 
-### 1. API 클라이언트 함수
+### 1. API 클라이언트 함수 — codegen import
 
-TS의 각 엔드포인트에 대응하는 함수:
-
-```typescript
-// api/speakers.ts
-export const speakersApi = {
-  enroll: (data: EnrollRequest): Promise<EnrollResponse> =>
-    fetchClient.post('/api/v1/speakers/enroll', data),
-  
-  list: (workspaceId: string): Promise<SpeakerListResponse> =>
-    fetchClient.get(`/api/v1/speakers?workspace_id=${workspaceId}`),
-  
-  delete: (speakerId: string): Promise<void> =>
-    fetchClient.delete(`/api/v1/speakers/${speakerId}`),
-}
-```
-
-frontend.md의 `api_client.method`에 따라 fetch/axios/ky 사용.
-
-### 2. 타입 정의
-
-TS의 요청/응답 스키마를 TypeScript 타입으로:
+`frontflow:sync-api-client` 가 `frontend.md.api_contract.client_dir` 에 생성한 함수를 import:
 
 ```typescript
-// types/api.ts — TS 명세서와 1:1 대응
-interface EnrollRequest {
-  name: string
-  audio_file: File
-  workspace_id: string
-}
-
-interface EnrollResponse {
-  speaker_id: string
-  name: string
-  embedding_status: EmbeddingStatus
-  created_at: string
-}
-
-// 에러 응답도 타입화
-interface ApiError {
-  error: string    // AUDIO_TOO_SHORT, DUPLICATE_NAME 등
-  message: string
-}
+// codegen 출력 사용 — hand-write 금지
+import { enrollSpeaker, listSpeakers } from '@/api/generated/speakers';
 ```
+
+직접 API 함수를 작성하지 않는다. 함수가 없으면 `sync-api-client` 를 먼저 실행.
+
+### 2. 타입 정의 — codegen import
+
+`sync-api-client` 가 생성한 `types.gen.ts` 에서 import:
+
+```typescript
+import type { EnrollRequest, EnrollResponse, ErrorCode } from '@/api/types.gen';
+```
+
+직접 타입을 정의하지 않는다.
 
 ### 3. 커스텀 훅
 
@@ -169,3 +144,5 @@ useEffect(() => {
 - [ ] 로딩/에러 상태가 실제 API 응답과 연결되었는가
 - [ ] SSE/WebSocket이 필요하면 구현되었는가
 - [ ] frontend.md의 api_client, server_state 패턴을 따르는가
+- [ ] API 클라이언트 함수가 hand-written 되지 않고 codegen import 인가
+- [ ] 타입이 types.gen.ts 에서 import 되었는가 (직접 정의 금지)
