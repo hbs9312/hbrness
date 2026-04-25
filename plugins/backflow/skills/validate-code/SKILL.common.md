@@ -104,6 +104,44 @@ specflow V 스킬처럼 `context: fork`하지 않습니다.
 - 테스트에서 목(mock) 교체가 가능한 구조인가
 ```
 
+### 7. 에러 코드 계약 drift (critical) — Phase 1 (1)
+
+`backflow:impl-error-codes` 가 생성한 산출물이 TS §4 에러 코드 맵과 일치하는지 검사. **양방향**으로 비교한다 — 한쪽에만 있는 코드는 모두 finding 으로 보고.
+
+```yaml
+입력:
+  codes_file: backend.md.error_handling.error_code_enum (예: src/errors/codes.ts)
+  http_mapping_file: backend.md.error_handling.http_mapping_file
+  i18n_output_dir: backend.md.error_handling.i18n_output_dir
+  ts_section: specs/TS-*.md §4 에러 코드 맵 (자동 탐지; 여러 TS 가 있으면 합집합)
+
+검사 항목:
+  missing_in_code:
+    - TS §4 행에 있으나 codes.ts ErrorCode enum 에 없는 code → critical
+    - 권고: impl-error-codes 재실행
+  orphan_in_code:
+    - codes.ts ErrorCode 에 있으나 TS §4 어느 행에도 없는 code → critical
+    - 권고: TS 에 추가하거나 코드에서 제거 (의도적 예약이면 주석 + 별도 화이트리스트)
+  http_status_mismatch:
+    - codes.ts ErrorMeta[code].httpStatus !== TS row.http_status → critical
+  i18n_key_mismatch:
+    - codes.ts ErrorMeta[code].i18nKey !== TS row.i18n_key → critical
+  http_mapping_consistency:
+    - HTTP_STATUS_MAP 의 키 집합 ≠ ErrorCode 키 집합 → critical
+    - HTTP_STATUS_MAP[code] !== ErrorMeta[code].httpStatus → critical
+  i18n_locale_files:
+    - error_handling.i18n_enabled=true 시:
+        languages 배열의 각 lang 에 대해 {i18n_output_dir}/errors.{lang}.json 존재 → warning
+        JSON 의 i18nKey 집합 ⊇ ErrorMeta 의 i18nKey 집합 → warning
+  generated_marker:
+    - codes.ts 첫 줄에 "AUTO-GENERATED" 주석 없으면 → warning (사람 편집 의심)
+
+예외:
+  - TS §4 가 비어있고 codes.ts 가 grace-period 기본 5 코드(AUTH_UNAUTHORIZED,
+    AUTH_FORBIDDEN, VALIDATION_FAILED, SYSTEM_INTERNAL_ERROR, NETWORK_TIMEOUT) 만
+    가지고 있으면 drift 검사 스킵 + 단일 warning ("§4 미작성, grace mode")
+```
+
 ## 출력
 
 ```yaml

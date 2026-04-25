@@ -110,6 +110,60 @@ FV1은 격리하지 않습니다. 이유:
 - 모바일 viewport 스토리가 있는가
 ```
 
+### 7. 에러 코드 계약 drift (critical) — Phase 1 (1)
+
+`frontflow:impl-error-handling` 가 생성한 산출물이 TS §4 에러 코드 맵과 일치하는지 검사. backflow 가 만든 codes.ts 와도 cross-plugin 으로 비교 (가능 시).
+
+```yaml
+입력:
+  codes_file: frontend.md.error_handling.codes_file (예: src/errors/codes.ts)
+  handler_file: frontend.md.error_handling.handler_file
+  ui_flow_file: frontend.md.error_handling.ui_flow_file (선택)
+  i18n_output_dir: frontend.md.error_handling.i18n_output_dir
+  ts_section: specs/TS-*.md §4 에러 코드 맵 (자동 탐지)
+  backend_codes_file: (선택) 같은 모노레포면 sibling 백엔드의 codes.ts 경로
+
+검사 항목 — TS ↔ frontend codes.ts:
+  missing_in_code:
+    - TS §4 행에 있으나 codes.ts ErrorCode 에 없는 code → critical
+  orphan_in_code:
+    - codes.ts ErrorCode 에 있으나 TS §4 어느 행에도 없는 code → critical
+  http_status_mismatch / i18n_key_mismatch:
+    - codes.ts ErrorMeta 의 httpStatus / i18nKey 가 TS 와 다르면 → critical
+  ui_flow_value:
+    - codes.ts ErrorMeta[code].uiFlow 값이 {inline,toast,modal,redirect,silent} 외 → critical
+    - TS 에 ui_flow 컬럼이 있는데 코드에 반영 안 됨 → critical
+
+검사 항목 — handler.ts 분기 무결성:
+  unknown_branch:
+    - handler.ts 의 switch/case 또는 if 체인에서 ErrorCode 가 아닌 문자열 분기 → critical
+  missing_unknown_fallback:
+    - handler.ts 에 UNKNOWN_ERROR fallback (default 분기) 없으면 → critical
+  pure_function:
+    - handler.ts 가 toast / modal / router / window / document API 를 호출하면 → critical
+      (렌더링은 ui-flow.tsx 또는 호출자의 책임)
+
+검사 항목 — i18n locale:
+  - i18n_library != inline 시:
+      languages 의 각 lang 에 대해 {i18n_output_dir}/errors.{lang}.json 존재 → warning
+      JSON 의 i18nKey 집합 ⊇ ErrorMeta 의 i18nKey 집합 → warning
+
+검사 항목 — Cross-plugin (backend_codes_file 접근 가능 시):
+  code_set_equality:
+    - backend codes.ts 의 ErrorCode 키 집합 ≠ frontend 의 ErrorCode 키 집합 → critical
+    - 키 집합이 같아도 문자열 값(`'USER_NOT_FOUND'`) 이 다르면 → critical
+      (계약의 바이트 위반)
+  http_status_consistency:
+    - 같은 code 의 httpStatus 가 양쪽에서 다르면 → critical (TS 가 source of truth)
+
+generated_marker:
+  - codes.ts / handler.ts 에 "AUTO-GENERATED" 주석 없으면 → warning
+
+예외:
+  - TS §4 가 비어있고 codes.ts 가 grace-period 기본 5 코드만 가지면 drift 검사 스킵 + 단일 warning
+  - backend_codes_file 가 별도 repo 에 있어 접근 불가 시 cross-plugin 검사 스킵 + info
+```
+
 ## 출력
 
 ```yaml
