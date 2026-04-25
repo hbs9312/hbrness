@@ -80,6 +80,19 @@ api_client:
   method: ""             # fetch | axios | ky
   base_url_env: ""       # 예: NEXT_PUBLIC_API_URL
   auth_header: ""        # 예: Authorization: Bearer {token}
-  error_handling_pattern: |
-    // 프로젝트의 에러 핸들링 패턴
+```
+
+## 에러 핸들링
+
+```yaml
+error_handling:
+  codes_file: ""         # 예: src/errors/codes.ts — impl-error-handling 출력 (backend 와 code 값 동기)
+  handler_file: ""       # 예: src/errors/handler.ts — code → {message, uiFlow, retriable} 순수 함수
+  ui_flow_file: ""       # 예: src/errors/ui-flow.tsx — React 프리셋 (선택)
+  i18n_library: ""       # i18next | formatjs | lingui | inline — inline 시 message 를 codes.ts 에 내장
+  i18n_output_dir: ""    # 예: src/locales — errors.{lang}.json (i18n_library != inline 시)
+  languages: ["ko", "en"] # 생성 언어 (TS §에러 코드 맵 컬럼과 1:1)
+  default_ui_flow:       # ui_flow 컬럼이 TS 에 없을 때 http_status 기반 fallback
+    "4xx": toast
+    "5xx": modal
 ```
