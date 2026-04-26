@@ -28,3 +28,12 @@
 ## 크로스 참조 정확성 (warning)
 14. 위치 기반 대명사 탐지: BR/AC/US 본문에서 "위 {명사}", "상기 {명사}", "해당 {명사}" 등이 **다른 BR/AC/US/섹션**을 가리키는 경우 → 정확한 ID(`BR-NNN`, `AC-NNN`, `US-NNN`) 사용 권고. `conventions.md#크로스-참조-규칙` 참조.
     - 예외: 같은 BR/AC 내부의 인접 bullet 목록을 "아래/위 항목"으로 가리키는 경우는 허용.
+
+## 이벤트 트래킹 (warning — v1.x grace period)
+15. §7 이벤트 트래킹 섹션 존재 — 누락 시 warning + skill 은 page_view / nav_click / error_shown 3종 default 로 동작
+16. event_name snake_case + 전역 유일 — 위반 시 warning
+17. event_name 예약어 충돌 — page_view / nav_click / error_shown 을 다른 의미로 재정의 시 warning
+18. when (trigger) 가 모호 표현("적절히", "필요시") 포함 — warning
+19. properties 에 PII 키 검출 — comma-split + nested-segment(`contact.email` 의 `email`) 파싱 후 email/phone/ssn/card_number/password/user_id 매칭 → warning
+20. error_shown 이벤트가 정의되면 properties 에 error_code 필수 — 누락 시 warning (Phase 1 (1) ErrorCode 연계)
+21. error_shown 의 where 컬럼이 handler.ts / errors/handler 를 가리키면 → warning ("순수 함수 원칙 위반 — 호출자로 이동")

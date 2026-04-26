@@ -54,6 +54,7 @@ $ARGUMENTS 로 전달된 PRD 파일 경로 또는 기능 설명을 입력으로 
 2. **각 US에서 제약 조건을 분리** → 비즈니스 룰(BR)로 승격
 3. **각 BR에 대해 "위반 시 어떤 일이 발생하는가"** → 수용 기준(AC)으로 변환
 4. **UI 흐름은 해피패스 → 에러패스 → 엣지케이스 순서**로 기술
+5. **§7 이벤트 트래킹 표 mandatory** — PRD 의 "기록", "분석", "추적", "이벤트", "GA", "Amplitude" 키워드를 흡수해 5~10행 초안. event_name 은 snake_case + 전역 유일. where 컬럼은 컴포넌트 파일명 + handler 까지. error_shown 의 where 는 handler.ts 가 아닌 호출자 지점(presentError wrapper / impl-interactions / impl-api-integration).
 
 ## 출력 템플릿
 
@@ -68,6 +69,11 @@ $ARGUMENTS 로 전달된 PRD 파일 경로 또는 기능 설명을 입력으로 
 - [ ] UI 흐름에서 정상/에러/로딩/빈 상태가 모든 화면에 정의되었는가
 - [ ] Out of Scope이 명시되었는가
 - [ ] 경계 위반 항목(DB, API, 기술 스택)이 포함되어 있지 않은가
+- [ ] §7 이벤트 트래킹 섹션 존재
+- [ ] 모든 event_name snake_case + 전역 유일
+- [ ] where 컬럼이 컴포넌트 파일명 + handler 까지 명시 (모호 표현 0건)
+- [ ] PII 키 (email, phone, ssn, card_number, password, user_id) 가 properties 에 직접 등장하지 않음
+- [ ] error_shown 의 where 컬럼이 handler.ts 가 아닌 호출자 지점
 
 ## 출력 위치
 

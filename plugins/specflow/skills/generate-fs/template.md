@@ -67,6 +67,21 @@ AC-001: {입력/조건} → {기대결과} (관련: US-001)
 AC-002: {입력/조건} → {기대결과} (관련: BR-001 위반 시)
 
 # ─────────────────────────────────────
+# 7. 이벤트 트래킹
+# ─────────────────────────────────────
+
+| event_name | when (trigger) | where (UI 요소) | properties | related |
+|---|---|---|---|---|
+| {snake_case} | {시점 — "X 직후", "Y 수신 시"} | {컴포넌트 파일.tsx + handler 명} | {key: type, key?: type} | {US/AC/BR 또는 (전역)} |
+
+규칙:
+- event_name: snake_case + 전역 유일. 예약어: page_view / nav_click / error_shown 은 default 제공
+- where: 컴포넌트 파일명 + handler/함수명까지 (codemod 매칭 대상)
+- properties: comma 구분 `key: type` 또는 `key?: type` (optional). 타입 미작성 가능
+- PII 키(email, phone, ssn, card_number, password, user_id) 직접 사용 금지 (vendor user identification API 사용)
+- error_shown 의 where 는 handler.ts 외부 (presentError wrapper / impl-interactions / impl-api-integration)
+
+# ─────────────────────────────────────
 # 6. 범위 밖 (Out of Scope)
 # ─────────────────────────────────────
 
