@@ -274,6 +274,89 @@ env 변수:
   - TS §3.2 누락 (grace) + openapi.yaml 부재 → drift 검사 전체 skip + warning ("§3.2 미작성, grace mode")
 ```
 
+### 10. 파일 업로드 drift (critical) — Phase 1 (5)
+
+`backflow:impl-file-upload` 가 생성한 controller / service / meta / storage adapter 가 TS §9 + 선행 skill 출력과 일치하는지 검사.
+
+```yaml
+입력:
+  ts_section: specs/TS-*.md §9 파일 처리
+  service_registry: .backflow/service-registry.md
+  uploads_dir: backend.md.file_upload.uploads_module_dir
+  storage_dir: uploads_dir + "/" + backend.md.file_upload.storage_subdir
+  selected_storage_file: storage_dir + "/" + backend.md.file_upload.selected_storage_filename
+  vendor: backend.md.file_upload.storage_vendor
+  resize_dir: uploads_dir + "/" + backend.md.file_upload.resize_subdir
+  resize_presets: backend.md.file_upload.resize_presets
+  metadata_schema_version: backend.md.file_upload.metadata_schema_version
+
+§10.1 — TS §9 ↔ controller/service 일관성:
+  upload_kind_in_controller:
+    - TS §9 의 모든 upload_kind 가 controller 핸들러/디렉토리/operationId 에 등장 → 누락 시 critical
+  mime_validation:
+    - controller/service/DTO 의 mime_type 검증이 §9.mime_types 와 1:1 → 불일치 시 critical
+  max_size_validation:
+    - server 측 size 검증이 §9.max_size_mb * 1024 * 1024 와 일치 → 불일치 시 critical
+  server_side_head_recheck:
+    - complete handler 가 storage.head() 또는 동등한 호출로 size/mime 재검증 → 누락 시 critical
+    - client 의 size_bytes / mime_type 만 사용해 status: complete 전이 → critical
+  storage_path_resolution:
+    - storage_path 의 모든 placeholder 가 reserved (file_id/ext/upload_kind) 또는 명시된 source 에서 resolve → 미해결 시 critical
+  related_error_codes:
+    - TS §4 에 FILE_TOO_LARGE / MIME_NOT_ALLOWED / STORAGE_UNAVAILABLE / FILE_INTEGRITY_MISMATCH / FILE_NOT_FOUND 부재 → warning
+
+§10.2 — Vendor 식별자 영역 검사:
+  vendor_identifier_in_uploads:
+    - controller/service/module/DTO/storage/types.ts/storage/local.ts 에 vendor SDK import (`@aws-sdk/`, `@google-cloud/storage`, `aws-sdk`, `Minio`) 또는 vendor 직접 호출 등장 → critical
+  selected_storage_static_export_only:
+    - selected-storage.ts 가 단일 `export { X as storage } from './Y'` 외 형태(런타임 if/switch / 다중 import / 동적 import / SDK direct import) → critical
+    - vendor != "" 이면 X 가 vendor adapter 의 export 와 일치 → 불일치 시 critical
+    - vendor == "" 이면 X 가 localAdapter → 불일치 시 critical
+    - **selected-storage.ts 자체의 vendor 이름 (s3Adapter, gcsAdapter 등) 은 허용** — re-export 만 검사
+  storage_directory_exempt:
+    - storage/{vendor}.ts 는 vendor 식별자 검사 제외 + info
+  local_passthrough_guard:
+    - storage_vendor != "" 일 때 local-passthrough route 등록 → critical (production 노출 위험)
+    - storage_vendor == "" + NODE_ENV !== 'production' 가드 부재 → critical
+    - local passthrough 가 query path 직접 사용 (file_id 기반 server-side 재계산 미사용) → critical
+
+§10.3 — 메타 entity 일관성:
+  meta_required_fields:
+    - id / upload_kind / storage_path / mime_type / size_bytes / status / metadata_schema_version / metadata 모두 존재 → 누락 시 critical
+  status_enum_match:
+    - status enum 이 [pending, complete, failed, expired] → 추가/누락 시 warning
+  retention_handling:
+    - §9.retention_days > 0 인 upload_kind 가 있는데 expires_at 부재 → warning
+  metadata_schema_version_field:
+    - metadata 에 schema_version: 1 (또는 entity 별도 컬럼) 부재 → warning
+  metadata_canonical_shape:
+    - metadata.original = { path, size_bytes, mime_type } 패턴 service 코드 사용 → 미사용 시 warning
+    - variants 가 있는 upload_kind 의 metadata.variants[variant] = { path, width, height, mime_type, size_bytes, status } → 미사용 시 warning
+
+§10.4 — 리사이즈 일관성 (central/per-variant 둘 다):
+  resize_handler_present:
+    - §9 의 모든 resize_variants 에 대해:
+      - resize_worker_pattern: per-variant — resize/{variant}.processor.ts 존재 → 누락 시 warning
+      - resize_worker_pattern: central — central worker 의 preset key dispatch 분기에 variant 등장 → 누락 시 warning
+  preset_lookup:
+    - resize 코드의 preset key 가 backend.md.file_upload.resize_presets 미정의 → critical
+  preset_consistency:
+    - §9 의 resize_variants 가 resize_presets 에 정의 → 누락 시 warning ("preset 추가 권고")
+  enqueue_on_complete:
+    - complete handler 가 variants 가 있는 upload_kind 에서 리사이즈 enqueue 호출 → 누락 시 warning
+
+§10.5 — 선행 skill 책임 경계:
+  controller_no_duplication:
+    - impl-controllers 가 생성한 controller 에서 §9 의 upload operationId 가 stub/skip 이 아닌 본문 구현 → warning ("impl-file-upload 가 처리 — stub")
+  storage_service_wrapper:
+    - service-registry 에 StorageService 가 있는데 impl-file-upload 가 새 storage adapter 를 wrapping 없이 작성 → warning ("기존 service wrapper 권고")
+
+예외:
+  - TS §9 부재 (grace) + impl-file-upload 가 default `generic_file` 만 → §10 검사 skip + warning
+  - vendor: "" + NODE_ENV: production 빌드 → local-passthrough route 부재가 정상
+  - external_services.storage 미정의 → impl-file-upload 가 local 만 + info
+```
+
 ## 출력
 
 ```yaml
