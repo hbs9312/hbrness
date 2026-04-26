@@ -101,6 +101,19 @@ WF의 화면 전환 맵에 따른 라우트 이동:
 - 뒤로가기: router.back 또는 명시적 경로
 - 모달/바텀시트: 상태 기반 열기/닫기
 
+## 트래킹 hook (Phase 1 (4) 연계)
+
+`frontflow:impl-tracking` 가 선언한 이벤트(`@/tracking` 의 `TrackEvent`) 를 적절한 위치에서 호출:
+
+- mutation `onSuccess` 안: `track(TrackEvent.X, {...})`
+- form submit 후: `track(...)` (검증 통과 + mutation 성공 후)
+- effect 시점: `useEffect(() => track(TrackEvent.PAGE_VIEW, {...}), [])`
+- **error 처리**: handler.ts (Phase 1 (1)) 는 순수 함수 — `track` 호출 금지.
+  mutation `onError` 또는 presentError wrapper 에서 `track(TrackEvent.ERROR_SHOWN, { error_code, ui_flow })` 호출
+
+`impl-tracking [Phase B]` 가 codemod proposal 로 위치를 제안. 사용자 확인 후 적용.
+`track` import 는 `@/tracking` (barrel) 에서.
+
 ## 품질 자가 점검
 
 - [ ] WF 상태 매트릭스의 모든 상태를 코드에서 재현 가능한가
@@ -108,3 +121,5 @@ WF의 화면 전환 맵에 따른 라우트 이동:
 - [ ] 애니메이션 duration/easing이 UI 명세와 정확히 일치하는가
 - [ ] 실제 API 호출 코드 = 0건 (시뮬레이션만)
 - [ ] 폼 검증이 FS BR과 일치하는가
+- [ ] 이벤트 트래킹 hook 이 적절한 위치에 호출됨 (impl-tracking proposal 결과)
+- [ ] error_shown hook 이 handler.ts 외부에서 호출됨 (mutation onError / presentError)

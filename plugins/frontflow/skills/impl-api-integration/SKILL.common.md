@@ -117,7 +117,19 @@ if (decision.uiFlow === 'inline' && decision.field) {
 
 `impl-error-handling` 이 아직 실행되지 않은 경우 (Phase 1 (1) 도입 전): `frontflow:impl-error-handling` 을 먼저 실행 권고. handler.ts 가 없으면 grace-period 5 기본 코드로 자동 생성됨.
 
-### 5. 비동기 완료 처리 (해당 시)
+### 5. 트래킹 hook (Phase 1 (4) 연계)
+
+`frontflow:impl-tracking` 가 정의한 이벤트는 다음 위치에서 호출:
+
+- useMutation `onSuccess`: 도메인 이벤트 (예: `speaker_enrolled`)
+- response interceptor (client.ts): `error_shown` 같은 글로벌 이벤트
+- useQuery 결과 변화 시: 필요한 경우 useEffect
+
+handler.ts (Phase 1 (1)) 는 순수 함수 유지. error_shown 호출은 호출자 (mutation onError / response interceptor / presentError wrapper) 에서.
+
+import 는 `import { track, TrackEvent } from '@/tracking';`.
+
+### 6. 비동기 완료 처리 (해당 시)
 
 TS에 SSE/WebSocket 명시가 있으면:
 
