@@ -122,10 +122,14 @@ if (decision.uiFlow === 'inline' && decision.field) {
 `frontflow:impl-tracking` 가 정의한 이벤트는 다음 위치에서 호출:
 
 - useMutation `onSuccess`: 도메인 이벤트 (예: `speaker_enrolled`)
-- response interceptor (client.ts): `error_shown` 같은 글로벌 이벤트
 - useQuery 결과 변화 시: 필요한 경우 useEffect
 
-handler.ts (Phase 1 (1)) 는 순수 함수 유지. error_shown 호출은 호출자 (mutation onError / response interceptor / presentError wrapper) 에서.
+- **error_shown** (단일 지점 원칙, Phase 1 (4) XR-005):
+  - presentError wrapper 가 있으면 거기서만 호출
+  - response interceptor 에서 호출 시 uiFlow 'silent' / 자동 retry 성공 케이스 제외
+  - mutation onError 와 response interceptor 를 동시에 hook 하지 말 것 (중복)
+
+handler.ts (Phase 1 (1)) 는 순수 함수 유지. error_shown 호출은 호출자 (presentError wrapper 우선, 없으면 mutation onError 또는 response interceptor 중 하나만) 에서.
 
 import 는 `import { track, TrackEvent } from '@/tracking';`.
 

@@ -238,6 +238,10 @@ generated_marker:
     - events.ts TrackEvent 의 키 가 FS §7 어디에도 없음 → critical
   properties_mismatch:
     - TrackProps 의 키 집합 ≠ FS §7 의 properties 컬럼 → warning (Phase 1 hint)
+  pii_in_properties:
+    - FS §7 properties 컬럼의 정규화된 키 (lowercase + camelCase→snake_case + kebab-case→snake_case + nested 마지막 segment) 가 frontend.md.tracking.pii_redact 의 PII set 과 매칭 → critical
+    - 권고: PII 는 vendor user identification API 사용 (track 의 properties 에 직접 X)
+    - 정규화 규칙은 fs-rules 19 와 동일
 
 §10.2 — Callsite event literal 금지:
   literal_event_in_components:
@@ -251,6 +255,9 @@ generated_marker:
   selected_adapter_match:
     - frontend.md.tracking.vendor != "" 이면 adapters/{vendor}.ts 존재 → 부재 시 critical
     - selected-adapter.ts 의 export 가 vendor 와 일치 → 불일치 시 critical
+  selected_adapter_static_export_only:
+    - selected-adapter.ts 가 단일 `export { X as vendorAdapter } from './adapters/Y'` 외의 형태(런타임 if/switch, 다중 import, 동적 import) 면 → critical
+    - vendor != "" 이면 X 가 vendor adapter 의 export 와 일치 → 불일치 시 critical
   vendor_empty_console:
     - vendor == "" 이면 selected-adapter.ts 가 console adapter 를 export → 그 외 critical
   vendor_token_env_set:
@@ -263,6 +270,8 @@ generated_marker:
     - 권고: track() API 사용
   adapter_directory_exempt:
     - adapters_dir 하위 파일은 vendor 식별자 검사에서 제외 + info
+  selected_adapter_file_exempt:
+    - selected-adapter.ts 는 §10.3 의 selected_adapter_static_export_only 룰로만 검사. §10.4 의 vendor_identifier_in_components 검사 대상에서 제외 + info 메시지
   generated_marker:
     - tracking/ 의 모든 AUTO-GENERATED 파일에 주석 없으면 → warning
 

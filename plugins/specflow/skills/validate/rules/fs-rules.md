@@ -34,6 +34,6 @@
 16. event_name snake_case + 전역 유일 — 위반 시 warning
 17. event_name 예약어 충돌 — page_view / nav_click / error_shown 을 다른 의미로 재정의 시 warning
 18. when (trigger) 가 모호 표현("적절히", "필요시") 포함 — warning
-19. properties 에 PII 키 검출 — comma-split + nested-segment(`contact.email` 의 `email`) 파싱 후 email/phone/ssn/card_number/password/user_id 매칭 → warning
+19. properties 에 PII 키 검출 — 정규화 후 PII set 매칭 시 warning. 정규화 규칙: (a) comma-split → trim, (b) `?` suffix 제거, (c) `:` 뒤 타입 제거, (d) **lowercase**, (e) camelCase / kebab-case → snake_case (예: `userId` → `user_id`, `card-number` → `card_number`), (f) nested key (`contact.email`) 는 마지막 segment(`email`) 까지 검사. PII set: email/phone/ssn/card_number/password/user_id (frontend.md.tracking.pii_redact 와 동일)
 20. error_shown 이벤트가 정의되면 properties 에 error_code 필수 — 누락 시 warning (Phase 1 (1) ErrorCode 연계)
 21. error_shown 의 where 컬럼이 handler.ts / errors/handler 를 가리키면 → warning ("순수 함수 원칙 위반 — 호출자로 이동")

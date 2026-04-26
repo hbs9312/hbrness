@@ -108,8 +108,10 @@ WF의 화면 전환 맵에 따른 라우트 이동:
 - mutation `onSuccess` 안: `track(TrackEvent.X, {...})`
 - form submit 후: `track(...)` (검증 통과 + mutation 성공 후)
 - effect 시점: `useEffect(() => track(TrackEvent.PAGE_VIEW, {...}), [])`
-- **error 처리**: handler.ts (Phase 1 (1)) 는 순수 함수 — `track` 호출 금지.
-  mutation `onError` 또는 presentError wrapper 에서 `track(TrackEvent.ERROR_SHOWN, { error_code, ui_flow })` 호출
+- **error 처리**: handler.ts (Phase 1 (1)) 는 순수 함수 — track 호출 금지.
+  **단일 지점 원칙** (Phase 1 (4) XR-005): error_shown 은 한 곳에서만 호출.
+  우선순위: presentError wrapper > inline form.setError 직전 (decision.uiFlow !== 'silent' 일 때) > mutation onError.
+  중복 호출 금지. silent / 자동 retry 성공 케이스는 호출 X.
 
 `impl-tracking [Phase B]` 가 codemod proposal 로 위치를 제안. 사용자 확인 후 적용.
 `track` import 는 `@/tracking` (barrel) 에서.
