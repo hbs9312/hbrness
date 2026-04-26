@@ -83,3 +83,13 @@
 55. retention_days 정수 + ≥ 0 — 위반 시 warning
 56. resize_variants 의 variant 이름이 backend.md.file_upload.resize_presets 에 정의 — 미정의 시 warning ("preset 추가 권고")
 57. §9 의 upload_kind 마다 §3.2 fragment 에 `upload{UploadKindCamel}` operationId 존재 — 누락 시 warning
+
+## Webhook (warning — v1.x grace period)
+58. §10 webhook 섹션 존재 — webhook 명시된 프로젝트만 의무. 부재 시 정상 (skill no-op)
+59. webhook_id snake_case + 전역 유일 — 위반 시 warning
+60. signature_alg enum (hmac_sha256_payload / hmac_sha256_b64 / hmac_sha1_x_hub / hmac_sha256_x_hub / rsa_sha256 / none) — 그 외 warning
+61. signature_alg=none 인데 production 환경에서 사용 의도 → warning ("개발 한정")
+62. signature_header / signature_secret_env 모두 명시 → 누락 시 warning
+63. idempotency_key_source minimal grammar (header / headerParam / body / fallback) 위반 → warning
+64. §10 webhook_id 마다 §3.2 fragment 에 receive{WebhookIdCamel} operationId 존재 → 누락 시 warning
+65. timeout_sec 1~120 정수 → 위반 시 warning

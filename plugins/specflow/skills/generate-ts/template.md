@@ -173,4 +173,31 @@ components:
   미해결 placeholder 는 generation-time critical
 - resize_variants: backend.md.file_upload.resize_presets 의 키만
 - retention_days: ≥ 0 정수. > 0 시 메타에 expires_at 채움
+
+# 10. 외부 연동 — Webhook (Inbound)
+
+| webhook_id | sender | endpoint | signature_alg | signature_header | signature_secret_env | event_types | idempotency_key_source | timeout_sec | always_200 | related |
+|---|---|---|---|---|---|---|---|---|---|---|
+| {snake_case} | {sender 식별자} | /webhooks/{id} | {enum} | {헤더명} | {ENV_VAR} | {comma 구분 또는 빈} | {minimal grammar} | {1~120} | {true | false (default true)} | {US/AC/BR} |
+
+idempotency_key_source minimal grammar (EBNF):
+- source := term ('+' term)*
+- term   := header(NAME)                      # 헤더 전체 값
+         | headerParam(NAME, PARAM)          # 'Stripe-Signature: t=123,v1=abc' 의 t 값
+         | body(PATH)                        # JSON dot path
+         | fallback(term, term)              # 첫 번째 missing 시 두 번째
+
+signature_alg enum:
+- hmac_sha256_payload (Stripe)
+- hmac_sha256_b64 (Toss 등)
+- hmac_sha1_x_hub / hmac_sha256_x_hub (GitHub)
+- rsa_sha256
+- none (개발용 한정)
+
+규칙:
+- webhook_id: snake_case 전역 유일. operationId prefix
+- endpoint: /webhooks/{id} 권장 (impl-middleware bypass_auth_routes 매칭)
+- always_200=true (default): 서명 통과 시 처리 결과 무관 200 (sender 재시도 폭주 방지)
+- always_200=false: enqueue 실패 시 backend.md.webhook.retry_status_code (default 503)
+- signature_alg=none 은 NODE_ENV=development 가드 필수
 ```
