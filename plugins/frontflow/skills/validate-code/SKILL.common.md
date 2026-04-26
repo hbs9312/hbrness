@@ -218,6 +218,58 @@ generated_marker:
   - generator: manual 시 emit_msw / emit_query_keys 검사 자동 skip
 ```
 
+### 10. 이벤트 트래킹 drift (critical) — Phase 1 (4)
+
+`frontflow:impl-tracking` 가 생성한 산출물이 FS §7 + 컴포넌트 호출처와 일치하는지 검사.
+
+```yaml
+입력:
+  fs_section: specs/FS-*.md §7 이벤트 트래킹
+  events_file: frontend.md.tracking.events_file
+  adapters_dir: frontend.md.tracking.adapters_dir
+  vendor: frontend.md.tracking.vendor
+  component_files: frontend.md.structure.component_dir + page_dir
+  selected_adapter_file: frontend.md.tracking.selected_adapter_file
+
+§10.1 — FS ↔ events.ts 양방향:
+  missing_in_code:
+    - FS §7 의 event_name 이 events.ts TrackEvent 에 없음 → critical
+  orphan_in_code:
+    - events.ts TrackEvent 의 키 가 FS §7 어디에도 없음 → critical
+  properties_mismatch:
+    - TrackProps 의 키 집합 ≠ FS §7 의 properties 컬럼 → warning (Phase 1 hint)
+
+§10.2 — Callsite event literal 금지:
+  literal_event_in_components:
+    - 컴포넌트/page 파일에서 track('literal_string', ...) 같은 string literal 호출 → critical
+    - 권고: track(TrackEvent.X, ...) enum 사용
+    - 예외: tracking/ 디렉토리 내부의 default 이벤트 정의 라인은 허용
+  unknown_event_call:
+    - track(TrackEvent.UNKNOWN_X, ...) 처럼 events.ts 에 없는 키 사용 → critical
+
+§10.3 — vendor 설정 ↔ adapter 파일 일치:
+  selected_adapter_match:
+    - frontend.md.tracking.vendor != "" 이면 adapters/{vendor}.ts 존재 → 부재 시 critical
+    - selected-adapter.ts 의 export 가 vendor 와 일치 → 불일치 시 critical
+  vendor_empty_console:
+    - vendor == "" 이면 selected-adapter.ts 가 console adapter 를 export → 그 외 critical
+  vendor_token_env_set:
+    - vendor != "" 이고 vendor_token_env 가 frontend.md 에 비어있음 → warning
+
+§10.4 — Adapter 디렉토리 vendor 식별자 예외 (컴포넌트·공통 API 만 검사):
+  vendor_identifier_in_components:
+    - 컴포넌트/page/hook/api 및 공통 tracking 파일(track.ts/events.ts/index.ts) 에
+      gtag / amplitude / mixpanel / posthog / dd-trace / Sentry 등 벤더 식별자 등장 → critical
+    - 권고: track() API 사용
+  adapter_directory_exempt:
+    - adapters_dir 하위 파일은 vendor 식별자 검사에서 제외 + info
+  generated_marker:
+    - tracking/ 의 모든 AUTO-GENERATED 파일에 주석 없으면 → warning
+
+예외:
+  - FS §7 부재 (grace) + events.ts 가 default 3종(page_view/nav_click/error_shown) 만 → drift 검사 skip + warning
+```
+
 ## 출력
 
 ```yaml
