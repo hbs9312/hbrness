@@ -73,3 +73,13 @@
 47. fragment 내부 $ref 가 모두 같은 fragment 안에서 해소 가능 — broken ref → critical (TS 내부 무결성)
 48. fragment.components.securitySchemes 가 §보안 섹션의 인증 방식과 일치 — 위반 시 warning
 49. fragment.components.responses 가 비어 있음 ({}) — 비어 있지 않으면 warning ("specflow 단계에서 합성 책임 침범 — export-api-contract 책임")
+
+## 파일 처리 (warning — v1.x grace period)
+50. §9 파일 처리 섹션 존재 — 누락 시 warning + skill default 단일 `generic_file`
+51. upload_kind snake_case + 전역 유일 — 위반 시 warning
+52. mime_types wildcard (`*/*`, `image/*`) 포함 — warning ("명시적 IANA type 권고")
+53. max_size_mb 양의 정수 — 위반 시 warning
+54. storage_path 에 `{file_id}` placeholder 포함 — 누락 시 warning ("충돌 위험")
+55. retention_days 정수 + ≥ 0 — 위반 시 warning
+56. resize_variants 의 variant 이름이 backend.md.file_upload.resize_presets 에 정의 — 미정의 시 warning ("preset 추가 권고")
+57. §9 의 upload_kind 마다 §3.2 fragment 에 `upload{UploadKindCamel}` operationId 존재 — 누락 시 warning

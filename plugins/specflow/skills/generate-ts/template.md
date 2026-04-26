@@ -151,4 +151,20 @@ components:
 - error_code_tag: true (Phase 1 (1) ErrorCode 자동 주입 — backend.md `observability.error_code_tag` 와 동일 의미)
 
 # 8. 인프라 & 배포
+
+# 9. 파일 처리
+
+| upload_kind | mime_types | max_size_mb | storage_path | resize_variants | retention_days | related |
+|---|---|---|---|---|---|---|
+| {snake_case} | {IANA MIME comma 구분 — wildcard 금지} | {양의 정수} | {reserved {file_id}/{ext}/{upload_kind} + custom (예: {user_id})} | {variant 이름 comma 또는 (없음)} | {≥0 정수, 0=영구} | {US/AC/BR} |
+
+규칙:
+- upload_kind: snake_case 전역 유일. operationId prefix (uploadProfileImage 등)
+- mime_types: 명시적 IANA type. wildcard (image/*, */*) 금지
+- max_size_mb: 양의 정수. server-side 강제
+- storage_path: reserved placeholder = {file_id} (server 발급), {ext}, {upload_kind}.
+  custom placeholder = presign body / 인증 user / url path param 에서 resolve.
+  미해결 placeholder 는 generation-time critical
+- resize_variants: backend.md.file_upload.resize_presets 의 키만
+- retention_days: ≥ 0 정수. > 0 시 메타에 expires_at 채움
 ```
