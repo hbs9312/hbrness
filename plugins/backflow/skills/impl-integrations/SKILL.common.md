@@ -127,6 +127,19 @@ backend.md의 `external_services.email`에 따름:
 // TS에 명시된 알림 트리거 + 템플릿
 ```
 
+## ★ Phase 1 (5) 책임 경계 — 스토리지 추상 ★
+
+**MUST**: 본 skill 이 storage 통합 (S3 / GCS / 로컬 파일 등) 을 다룰 때, 추상은 `backflow:impl-file-upload` 의 `StorageAdapter` 인터페이스 (`storage/types.ts`) 를 충족해야 한다.
+
+본 skill 이 새 StorageService 를 작성할 때:
+1. `StorageAdapter` 인터페이스 (`presignPut` / `presignGet` / `delete` / `head`) 형태로 작성 권장
+2. 또는 `impl-file-upload` 가 후속 단계에서 wrapper 를 만들 수 있는 호환 구조로
+3. **벤더 SDK 직접 호출은 `storage/{vendor}.ts` 또는 동등한 격리 모듈로 한정** — service 본체에 SDK import 금지
+
+기존 StorageService 를 보존할 때: 인터페이스 비호환 시 `impl-file-upload` 가 wrapper 생성. 본 skill 이 새로 작성한 storage 추상은 처음부터 호환되도록.
+
+위반 시 `validate-code §10.5 storage_service_wrapper` warning.
+
 ## 모든 외부 호출 공통 패턴
 
 TS에 "모든 외부 호출에 타임아웃, 재시도, 실패 경로"가 명시되어 있으므로:

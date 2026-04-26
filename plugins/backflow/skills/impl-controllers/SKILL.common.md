@@ -149,6 +149,17 @@ backend.md의 `doc_tool`이 Swagger이면:
 - 데코레이터로 API 문서화
 - 요청/응답 스키마, 상태 코드, 설명 포함
 
+## ★ Phase 1 (5) 책임 경계 — 파일 업로드 ★
+
+**MUST**: TS §9 파일 처리에 정의된 upload_kind 의 operationId (`upload{UploadKindCamel}`) 는 **본 skill 이 처리하지 않는다**. `backflow:impl-file-upload` 가 자체 controller 를 생성한다.
+
+본 skill 동작:
+- §9 의 upload operationId 는 **stub 또는 skip** (빈 메서드 또는 생성 자체 안 함)
+- §3.2 fragment 에 등장해도 multipart 처리·presigned URL·storage 호출 코드 작성 금지
+- 위반 시 `validate-code §10.5 controller_no_duplication` warning
+
+§9 가 부재한 프로젝트는 일반 endpoint 와 동일하게 본 skill 이 처리.
+
 ## 파일 업로드 엔드포인트
 
 TS에 파일 업로드가 있으면:

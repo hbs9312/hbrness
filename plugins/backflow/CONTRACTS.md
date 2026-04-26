@@ -57,7 +57,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 
 | 파일 | 쓰는 스킬 | 읽는 스킬 | Tier | 비고 |
 |---|---|---|---|---|
-| `.backflow/service-registry.md` | scan-codebase | map-tasks, impl-repositories, impl-services, impl-controllers, validate-code | Tier 0 | 기존 코드의 서비스·리포지토리·미들웨어·엔티티 레지스트리 |
+| `.backflow/service-registry.md` | scan-codebase | map-tasks, impl-repositories, impl-services, impl-controllers, validate-code | Tier 0 | 기존 코드의 서비스·리포지토리·미들웨어·엔티티 레지스트리. **(Phase 1 (5) 부터)** controller 섹션 옵션 — operationId / method / path / generated_by / status (stub\|implemented) 추적 권고. validate-code §10.5 가 추적 정보 사용 (없으면 휴리스틱 fallback) |
 | `.backflow/task-file-map.md` | map-tasks | 모든 impl-*, validate-code | Tier 0 | 태스크 → 파일·레이어 매핑, commit plan |
 | `backend.md` (프로젝트 설정) | — | 모든 스킬 | Tier 0 | 구조·ORM·라우팅·테스트 러너 등 프로젝트 설정. 커밋 대상 |
 | `specs/reviews/{TS-docID}-BV2-*.md` | validate-api | (사용자·후속 PR) | Tier 0 | API 검증 리포트 |

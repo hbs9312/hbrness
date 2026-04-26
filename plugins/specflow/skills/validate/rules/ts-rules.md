@@ -79,7 +79,7 @@
 51. upload_kind snake_case + 전역 유일 — 위반 시 warning
 52. mime_types wildcard (`*/*`, `image/*`) 포함 — warning ("명시적 IANA type 권고")
 53. max_size_mb 양의 정수 — 위반 시 warning
-54. storage_path 에 `{file_id}` placeholder 포함 — 누락 시 warning ("충돌 위험")
+54. storage_path 에 `{file_id}` 포함 — 누락 시 warning. custom placeholder 는 `{key:source}` 문법 (source ∈ auth/body/path); 미명시 source 는 body default. reserved 외 source 부재 시 warning ("placeholder source 명시 권고")
 55. retention_days 정수 + ≥ 0 — 위반 시 warning
 56. resize_variants 의 variant 이름이 backend.md.file_upload.resize_presets 에 정의 — 미정의 시 warning ("preset 추가 권고")
 57. §9 의 upload_kind 마다 §3.2 fragment 에 `upload{UploadKindCamel}` operationId 존재 — 누락 시 warning

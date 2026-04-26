@@ -156,14 +156,20 @@ components:
 
 | upload_kind | mime_types | max_size_mb | storage_path | resize_variants | retention_days | related |
 |---|---|---|---|---|---|---|
-| {snake_case} | {IANA MIME comma 구분 — wildcard 금지} | {양의 정수} | {reserved {file_id}/{ext}/{upload_kind} + custom (예: {user_id})} | {variant 이름 comma 또는 (없음)} | {≥0 정수, 0=영구} | {US/AC/BR} |
+| {snake_case} | {IANA MIME comma 구분 — wildcard 금지} | {양의 정수} | {reserved {file_id}/{ext}/{upload_kind} + custom ({key:auth}/{key:body}/{key:path})} | {variant 이름 comma 또는 (없음)} | {≥0 정수, 0=영구} | {US/AC/BR} |
+| profile_image | image/jpeg, image/png, image/webp | 5 | users/{user_id:auth}/profile/{file_id}.{ext} | thumb_64, thumb_256 | 0 | US-002, AC-005 |
+| document_attachment | application/pdf | 50 | docs/{doc_id:path}/{file_id}.pdf | (없음) | 365 | US-007 |
 
 규칙:
 - upload_kind: snake_case 전역 유일. operationId prefix (uploadProfileImage 등)
 - mime_types: 명시적 IANA type. wildcard (image/*, */*) 금지
 - max_size_mb: 양의 정수. server-side 강제
 - storage_path: reserved placeholder = {file_id} (server 발급), {ext}, {upload_kind}.
-  custom placeholder = presign body / 인증 user / url path param 에서 resolve.
+  custom placeholder = inline source 표기로 명시:
+    {key:auth}  — 인증된 user 정보 (user_id, tenant_id 등)
+    {key:body}  — presign 요청 body 필드
+    {key:path}  — URL path 매개변수
+  source 미표기 시 body default. 예: users/{user_id:auth}/profile/{file_id}.{ext}
   미해결 placeholder 는 generation-time critical
 - resize_variants: backend.md.file_upload.resize_presets 의 키만
 - retention_days: ≥ 0 정수. > 0 시 메타에 expires_at 채움

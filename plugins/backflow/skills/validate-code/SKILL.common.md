@@ -301,7 +301,9 @@ env 변수:
     - complete handler 가 storage.head() 또는 동등한 호출로 size/mime 재검증 → 누락 시 critical
     - client 의 size_bytes / mime_type 만 사용해 status: complete 전이 → critical
   storage_path_resolution:
-    - storage_path 의 모든 placeholder 가 reserved (file_id/ext/upload_kind) 또는 명시된 source 에서 resolve → 미해결 시 critical
+    - storage_path 의 모든 placeholder 가 reserved (file_id/ext/upload_kind) 또는 명시된 source ({key:auth}/{key:body}/{key:path}) 에서 resolve → 미해결 시 critical
+    - controller 의 path resolve 로직이 source 별로 분기되었는가 (req.user / req.body / req.params) → 분기 부재 시 critical
+    - source 표기 없이 사용된 custom placeholder → warning ("source 명시 권고; body default 적용 중")
   related_error_codes:
     - TS §4 에 FILE_TOO_LARGE / MIME_NOT_ALLOWED / STORAGE_UNAVAILABLE / FILE_INTEGRITY_MISMATCH / FILE_NOT_FOUND 부재 → warning
 
@@ -319,6 +321,9 @@ env 변수:
     - storage_vendor != "" 일 때 local-passthrough route 등록 → critical (production 노출 위험)
     - storage_vendor == "" + NODE_ENV !== 'production' 가드 부재 → critical
     - local passthrough 가 query path 직접 사용 (file_id 기반 server-side 재계산 미사용) → critical
+  local_passthrough_auth:
+    - local passthrough route 에 auth guard / middleware 미적용 → critical
+    - file_id 로 조회한 meta.owner_id 와 인증된 user_id 일치 검증 부재 → critical (XR-003)
 
 §10.3 — 메타 entity 일관성:
   meta_required_fields:
@@ -347,7 +352,9 @@ env 변수:
 
 §10.5 — 선행 skill 책임 경계:
   controller_no_duplication:
-    - impl-controllers 가 생성한 controller 에서 §9 의 upload operationId 가 stub/skip 이 아닌 본문 구현 → warning ("impl-file-upload 가 처리 — stub")
+    - **사전 조건**: .backflow/service-registry.md 또는 .backflow/controller-registry.md 에 controller 의 operationId / generated_by 추적 정보 존재 시에만 정밀 검사
+    - 추적 정보 부재 시: 휴리스틱 검사 — controller 파일에서 §9 의 upload_kind 와 매칭되는 operationId 함수의 body 가 비어있지 않으면 (return null / pass / TODO 외 본문) → warning
+    - 추적 정보 존재 시: generated_by != "impl-file-upload" 인 controller 가 §9 upload operationId 를 본문 구현 → warning
   storage_service_wrapper:
     - service-registry 에 StorageService 가 있는데 impl-file-upload 가 새 storage adapter 를 wrapping 없이 작성 → warning ("기존 service wrapper 권고")
 

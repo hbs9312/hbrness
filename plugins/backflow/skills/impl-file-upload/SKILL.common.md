@@ -87,6 +87,21 @@ export interface StorageAdapter {
 }
 ```
 
+## storage_path placeholder grammar
+
+- **Reserved** (server 자동 채움): `{file_id}`, `{ext}`, `{upload_kind}`
+- **Custom** (TS §9 표에 inline source 표기): `{key:auth}` (auth context) / `{key:body}` (presign body) / `{key:path}` (url path param)
+- source 생략 시 body default
+- 예: `users/{user_id:auth}/profile/{file_id}.{ext}`, `docs/{doc_id:path}/{file_id}.pdf`
+
+presign handler 동작:
+1. TS §9 표를 파싱해 path template + custom placeholder 목록 추출
+2. 각 placeholder 의 source 별 resolve:
+   - `auth`: `req.user[key]` (impl-middleware 의 인증 가드 통과 후)
+   - `body`: `req.body[key]` (DTO 검증 통과 후)
+   - `path`: `req.params[key]` (라우트 매개변수)
+3. 미해결 placeholder 검출 시 generation-time critical (skill 이 controller 작성 거부)
+
 ## Controller 동작
 
 ### `POST /uploads/presign`
@@ -126,7 +141,9 @@ export interface StorageAdapter {
 - `storage_vendor === ''` **AND** `NODE_ENV !== 'production'` 시에만 route 등록
 - endpoint: `POST /uploads/local-passthrough/{file_id}` — **query path 직접 사용 금지**
 - 동작: `file_id` 로 pending meta 조회 → server-side 에서 `storage_path` 재계산 → 그 path 에 multipart body 저장
-- production 빌드 시 이 endpoint 제외 (build-time conditional 또는 NODE_ENV 가드)
+- **auth 강제 필수** — 기존 auth guard / middleware 적용. file_id 의 owner_id 와 인증된 user 일치 검증
+- 비-owner 접근 시 403 (FILE_FORBIDDEN — TS §4 권고 추가)
+- production 빌드 시 route 자체 등록 안 됨 (build-time conditional 또는 NODE_ENV 가드)
 
 ## 메타 entity canonical schema
 
@@ -216,6 +233,22 @@ validate-code §10.4 가 두 패턴 모두 통과.
 - `{uploads_module_dir}/{resize_subdir}/processor.ts` — central 패턴 시
 - `{uploads_module_dir}/{resize_subdir}/{variant}.processor.ts` — per-variant 패턴 시
 - 마이그레이션 파일 (ORM 별)
+
+## Framework 별 출력 분기
+
+`backend.md.framework.name` + `backend.md.framework.language` 기준:
+
+| framework | controller | service | DTO/schema | module/routing | migration |
+|---|---|---|---|---|---|
+| **NestJS (TypeScript)** | uploads.controller.ts (@Controller) | uploads.service.ts | upload.dto.ts (class-validator) | uploads.module.ts (@Module) + AppModule import | TypeORM/Prisma migration |
+| **Express (TypeScript)** | uploads/router.ts (Router) | uploads/service.ts | uploads/types.ts + zod schema | app.ts use(router) | knex/Drizzle migration |
+| **Fastify (TypeScript)** | uploads/route.ts (FastifyPluginCallback) | uploads/service.ts | Fastify schema (JSON Schema) | server.ts register(plugin) | knex/Drizzle |
+| **FastAPI (Python)** | uploads/router.py (APIRouter) | uploads/service.py | uploads/schemas.py (Pydantic) | main.py include_router | Alembic |
+| **Spring Boot (Java/Kotlin)** | UploadController.java (@RestController) | UploadService.java (@Service) | UploadDto.java + jakarta.validation | @ComponentScan 자동 | Flyway/Liquibase |
+
+storage adapter / selected-storage / resize worker 도 framework 의 build/test 환경에 맞는 형식 (TS .ts vs Python .py vs Java .java/.kt). 단 인터페이스 모양은 공통 (StorageAdapter / PresignPutResult).
+
+backend.md.structure.{controller_dir, service_dir, dto_dir, ...} 가 명시되어 있으면 그 경로 우선. 없으면 위 default.
 
 ## Vendor 어댑터 매트릭스
 
