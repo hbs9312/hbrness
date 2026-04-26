@@ -36,7 +36,10 @@ impl-middleware           ← TS §보안, §비기능 요구사항 (HTTP_STATUS
 impl-integrations         ← TS §인프라, §외부 호출 (B3 stub 교체)
      │
      ▼
-export-api-contract       ← TS §3.2 + §4 → openapi.yaml (+ §4 components 합성)   ★Phase 1 (3)
+impl-file-upload          ← TS §9 파일 처리 + §3.2 + §4 + §5  (presign + head 재검증 + 메타 + adapter)  ★Phase 1 (5)
+     │
+     ▼
+export-api-contract       ← TS §3.2 + §4 + 라우트(file-upload controller 포함)   ★Phase 1 (3)
      │
      ▼
 generate-tests            ← FS BR/AC + TS 오류 코드
@@ -61,6 +64,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | `backend.md.api_contract.*` (설정 키 그룹) | — | export-api-contract | Tier 0 | source / output_path / format / servers / emit_examples / drift_report_path / exclude_paths / contract_hash_alg |
 | `openapi/openapi.yaml` | export-api-contract | (frontflow:sync-api-client, validate-code §9) | N/A — project artifact | AUTO-GENERATED. commit 대상. `info.version` + `x-contract-hash` 박제 |
 | `.backflow/api-contract-drift.md` | export-api-contract | validate-code §9 | Tier 0 | TS ↔ 라우트 drift 리포트. ts-and-routes 모드 시 생성 |
+| `backend.md.file_upload.*` (설정 키 그룹) | — | impl-file-upload, validate-code §10 | Tier 0 | storage_vendor / presigned_ttl_sec / uploads_module_dir / storage_subdir / resize_subdir / selected_storage_filename / resize_worker_pattern / resize_presets / file_id_strategy / callback_required / metadata_schema_version |
 
 ## 스킬별 계약
 
@@ -146,7 +150,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Writes** | Controller 파일 (`{controller_dir}/{feature}.controller.ts`), DTO 파일 (`{dto_dir}/*.dto.ts`), Swagger 데코레이터(doc_tool=Swagger 시) |
 | **Storage Tier** | N/A — project code |
 | **Depends on** | impl-services |
-| **Notes** | 컨트롤러에 비즈니스 로직 금지. DTO 검증은 `backend.md.request_validation`(class-validator/zod/joi). 응답 래핑은 `response_format`. |
+| **Notes** | 컨트롤러에 비즈니스 로직 금지. DTO 검증은 `backend.md.request_validation`(class-validator/zod/joi). 응답 래핑은 `response_format`. TS §9 파일 업로드 의 upload operationId 는 `impl-file-upload` 가 처리 — 본 skill 은 stub/skip 권장. 본문 구현 시 validate-code §10.5 가 warning. |
 
 ### impl-observability
 
@@ -182,7 +186,19 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Writes** | Job processor (`jobs/{feature}.processor.ts`), producer (`jobs/{feature}.producer.ts`), storage/cache/email service 파일, `.env.example` append |
 | **Storage Tier** | N/A — project code |
 | **Depends on** | impl-services, impl-controllers |
-| **Notes** | impl-services 가 남긴 stub 을 실제 코드로 교체. 모든 외부 호출에 timeout+retry+fallback 필수. DLQ/상태 업데이트. env 하드코딩 금지. |
+| **Notes** | impl-services 가 남긴 stub 을 실제 코드로 교체. 모든 외부 호출에 timeout+retry+fallback 필수. DLQ/상태 업데이트. env 하드코딩 금지. storage 추상은 `impl-file-upload` 의 `StorageAdapter` 인터페이스 충족 권고. 충족 시 impl-file-upload 가 wrapping (재구현 금지). |
+
+### impl-file-upload
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | TS §9 → presigned URL controller + 완료 콜백(server-side head 재검증) + 메타 entity + (옵션) 리사이즈 worker + 스토리지 어댑터(벤더 격리) |
+| **Reads (specflow)** | `specs/TS/*` §9 파일 처리 (필수), §3.2 (operationId 검증), §4 (FILE_TOO_LARGE / MIME_NOT_ALLOWED / STORAGE_UNAVAILABLE / FILE_NOT_FOUND / FILE_INTEGRITY_MISMATCH 자동 추가 권고), §5 (메타 entity 의 owner FK) |
+| **Reads (registry/config)** | `.backflow/task-file-map.md`(있으면), `.backflow/service-registry.md` (기존 StorageService 검출), `backend.md` (`file_upload.*` 신설, `structure.*` derive, `framework.*`, `database.orm`, `external_services.storage`) |
+| **Writes** | controller / service / module(Nest) / DTO / meta entity / migration / storage adapter dir / resize worker — 경로는 `backend.md.structure` 와 framework convention 에서 derive. 항상 생성: `storage/types.ts`, `storage/local.ts`, `storage/selected-storage.ts`. vendor 명시 시 `storage/{vendor}.ts` 추가 |
+| **Storage Tier** | N/A — project code |
+| **Depends on** | `map-tasks`, `impl-schema`, `impl-error-codes`, `impl-services` 후. `impl-controllers` / `impl-integrations` 와 책임 경계: impl-controllers 는 §9 의 upload operationId 를 skip, impl-integrations 의 StorageService 존재 시 wrapper 우선 (재구현 금지) |
+| **Notes** | 벤더-중립 영역: controller / service / storage/types.ts / storage/local.ts / selected-storage.ts. 예외: `storage/{vendor}.ts` 의 SDK 사용 가능. `selected-storage.ts` 는 정적 re-export 의 vendor 이름은 허용 (SDK import / 직접 호출만 금지). callback_required 는 **항상 true** (Phase 1). local passthrough 는 production 차단 + file_id 기반 path 재계산 강제. |
 
 ### export-api-contract
 
@@ -280,7 +296,11 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | TS §데이터 모델 | impl-schema, impl-repositories |
 | TS §API 설계 | impl-controllers, validate-api |
 | TS §3.2 OpenAPI fragment | **export-api-contract** |
+| TS §3.2 OpenAPI fragment → operationId 검증 | **impl-file-upload** (upload{Kind} operationId 검증) |
 | TS §4 에러 코드 맵 → components 합성 | **export-api-contract** (components 합성 — export 용. impl-error-codes 의 백엔드 상수 생성과 별개) |
+| TS §4 에러 코드 맵 → FILE_* 권고 | **impl-file-upload** (FILE_TOO_LARGE / MIME_NOT_ALLOWED / STORAGE_UNAVAILABLE / FILE_INTEGRITY_MISMATCH / FILE_NOT_FOUND) |
+| TS §5 데이터 모델 → owner FK | **impl-file-upload** (메타 entity 의 owner_id FK 도출) |
+| TS §9 파일 처리 | **impl-file-upload** |
 | TS §처리 흐름 | impl-repositories, impl-services |
 | TS §에러 코드 맵 | **impl-error-codes**, impl-middleware (HTTP 매핑 import), generate-tests, validate-tests |
 | TS §오류 처리 (sequence 내 에러 흐름) | impl-services, generate-tests, validate-tests |
@@ -291,7 +311,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | WF §상태 매트릭스 | generate-tests, validate-tests |
 | PLAN-*-tasks.md (decompose) | map-tasks |
 
-> **Phase 1 로드맵 현황**: `impl-observability` (Phase 1 (2) 완료), `export-api-contract` (Phase 1 (3) 완료) 행 반영 완료. 에러 코드 맵 관련 행은 Phase 1 (1) 완료. `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
+> **Phase 1 로드맵 현황**: `impl-observability` (Phase 1 (2) 완료), `export-api-contract` (Phase 1 (3) 완료) 행 반영 완료. 에러 코드 맵 관련 행은 Phase 1 (1) 완료. `impl-file-upload` (Phase 1 (5) 완료). `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
 
 ## 신규 backflow 스킬 추가 체크리스트
 

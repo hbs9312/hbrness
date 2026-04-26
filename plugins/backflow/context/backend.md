@@ -170,3 +170,29 @@ external_services:
   email: ""              # none | SendGrid | SES | Resend
   realtime: ""           # none | SSE | WebSocket | Socket.IO
 ```
+
+## 파일 업로드 (Phase 1 (5))
+
+```yaml
+file_upload:
+  storage_vendor: ""              # "" (local only) | s3 | gcs | r2 | minio
+  storage_bucket_env: "STORAGE_BUCKET"
+  storage_endpoint_env: "STORAGE_ENDPOINT"
+  storage_region_env: "STORAGE_REGION"
+  storage_local_root_env: "STORAGE_LOCAL_ROOT"
+  presigned_ttl_sec: 900
+  meta_table: "upload_meta"
+  uploads_module_dir: "src/uploads"
+  storage_subdir: "storage"
+  resize_subdir: "resize"
+  selected_storage_filename: "selected-storage.ts"
+  resize_worker_pattern: "central"   # central | per-variant
+  resize_presets:
+    thumb_64: { width: 64, height: 64, fit: "cover", format: "webp", quality: 80 }
+    thumb_256: { width: 256, height: 256, fit: "cover", format: "webp", quality: 85 }
+    card_512: { width: 512, height: 512, fit: "contain", format: "webp", quality: 85 }
+  file_id_strategy: "uuid_v7"
+  callback_required: true         # Phase 1 항상 true 강제 (false 는 Phase 2)
+  scan_on_complete: false         # Phase 2
+  metadata_schema_version: 1
+```
