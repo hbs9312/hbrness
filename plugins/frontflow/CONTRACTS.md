@@ -31,10 +31,16 @@ impl-error-handling       ← TS §에러 코드 맵 (+ UI ui_flow 힌트)   ★
 sync-api-client           ← openapi.yaml → codegen (types + client + MSW)   ★Phase 1 (3)
      │
      ▼
+impl-tracking [Phase A]   ← FS §7 → events/track/adapters/selected-adapter   ★Phase 1 (4)
+     │
+     ▼
 impl-interactions         ← FS BR + UI 인터랙션 + WF 상태 매트릭스 + TS 상태 enum
      │
      ▼
 impl-api-integration      ← TS §API 설계 (F5 stub → 실제 호출 교체; handleError 를 impl-error-handling 에서 import)
+     │
+     ▼
+impl-tracking [Phase B]   ← 컴포넌트 hook 삽입 proposal (default) / apply   ★Phase 1 (4)
      │
      ▼
 validate-{code,visual,a11y} ← 구현된 코드·스토리·접근성 검증
@@ -55,6 +61,7 @@ patch-frontend / reimpl-frontend   ← 검증 피드백 반영
 | `.frontflow/task-file-map.md` | map-tasks | 모든 impl-*, validate-code | Tier 0 | 태스크 → 파일·레이어, commit plan |
 | `frontend.md` (프로젝트 설정) | — | 모든 스킬 | Tier 0 | framework/styling/state_management/api_client 등 |
 | `.frontflow/api-contract.lock` | sync-api-client | validate-code (§9 drift 검사) | Tier 0 | version/contract_hash/source_etag/generated_at/generator 박제. commit 대상 |
+| `frontend.md.tracking.*` | — (사람 설정) | impl-tracking, validate-code (§10 drift) | Tier 0 | vendor / files / consent_gate / default_properties / pii_redact / codemod_mode |
 | Figma data cache | extract-figma | impl-composites, impl-pages | Tier 1 (`~/.hbrness/figma/...`) | Figma MCP 응답 정규화·노이즈 제거 캐시 |
 
 ## 스킬별 계약
@@ -154,6 +161,20 @@ patch-frontend / reimpl-frontend   ← 검증 피드백 반영
 | **Storage Tier** | N/A — project code. `generated/` / `*.gen.ts` 는 commit 대상이지만 사람 편집 금지. `.frontflow/api-contract.lock` 도 commit 대상 |
 | **Depends on** | `map-tasks`. **`backflow:export-api-contract` 가 먼저 실행되어 `openapi/openapi.yaml` 이 존재해야 함**. `impl-error-handling` 와 무관 — 에러 코드는 OpenAPI components.schemas.ErrorCode enum 으로 흡수 |
 | **Notes** | Phase 1 default generator = **`openapi-typescript-codegen`** 단일 first-class. 다른 generator 는 experimental. AUTO-GENERATED 주석 + 헤더에 `info.version` + `contractHash` 박제. version+hash mismatch 시 validate critical. lock 비교 후 변동 없으면 no-op. |
+
+### impl-tracking
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | FS §7 → 이벤트 상수 + 어댑터 디렉토리 + (옵션) 컴포넌트 hook 삽입 proposal/codemod |
+| **Reads (specflow)** | `specs/FS/*` §7 (필수), `specs/UI/*` (where 컬럼 → 실 컴포넌트 경로 매칭), `specs/TS/*` §4 (`error_shown.error_code` 검증) |
+| **Reads (registry/config)** | `.frontflow/task-file-map.md`(있으면), `.frontflow/component-registry.md`, `frontend.md` (`tracking.*` 섹션) |
+| **Writes (Phase A — generate, 항상)** | `src/tracking/events.ts`, `src/tracking/track.ts`, `src/tracking/index.ts`, `src/tracking/adapters/types.ts`, `src/tracking/adapters/console.ts` (항상), `src/tracking/selected-adapter.ts`, `src/tracking/adapters/{vendor}.ts` (vendor 명시 시), `.env.example` 업데이트 |
+| **Writes (Phase B — codemod, 옵션)** | 컴포넌트 파일에 hook 삽입 proposal (default `--proposal-only`) 또는 실제 Edit (`--apply` 또는 사용자 확인) |
+| **Storage Tier** | N/A — project code |
+| **Depends on (Phase A)** | `map-tasks`, `sync-api-client` |
+| **Depends on (Phase B)** | `impl-interactions`, `impl-api-integration` |
+| **Notes** | 컴포넌트·공통 tracking API 에 vendor 식별자 0건 (`adapters/{vendor}.ts` 만 예외). selected-adapter.ts 가 build-time static import 로 tree-shake 보장. AUTO-GENERATED 멱등성. |
 
 ### impl-interactions
 
@@ -295,6 +316,8 @@ patch-frontend / reimpl-frontend   ← 검증 피드백 반영
 | TS §API 응답 스키마 | impl-composites (Props), **sync-api-client** (types codegen), impl-api-integration (wiring) |
 | TS §상태 enum | impl-interactions |
 | TS §에러 코드 맵 | **impl-error-handling**, impl-api-integration (handleError import), generate-tests |
+| TS §4 에러 코드 맵 | **impl-tracking [Phase A]** (error_shown.error_code property 검증) |
+| FS §7 이벤트 트래킹 | **impl-tracking** |
 | PLAN-*-tasks.md (decompose) | map-tasks |
 
 > **Phase 1 로드맵 영향**: `docs/plugin-gaps-and-plan.md` §3.3 (3) 에서 `impl-api-integration` 이 `backflow:export-api-contract` + `frontflow:sync-api-client` 로 분리 예정. §3.7 의 FS "이벤트 트래킹 테이블" 이 추가되면 신설 `impl-tracking` 행이 이 표에 추가된다. 에러 핸들링 관련 행은 이미 반영(Phase 1 (1) 완료). `impl-api-integration` 은 다음 커밋에서 `impl-error-handling` 의 `handleError` 를 import 하도록 SKILL 문서 정리 필요.

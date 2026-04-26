@@ -99,6 +99,26 @@ api_contract:
   runtime_assertion: false
 ```
 
+## 이벤트 트래킹
+
+```yaml
+tracking:
+  vendor: ""                    # "" (console only) | ga4 | amplitude | mixpanel | posthog
+  events_file: "src/tracking/events.ts"
+  track_module: "src/tracking/track.ts"
+  index_file: "src/tracking/index.ts"
+  adapters_dir: "src/tracking/adapters"
+  selected_adapter_file: "src/tracking/selected-adapter.ts"
+  enabled_env: "NEXT_PUBLIC_TRACKING_ENABLED"
+  consent_gate: false
+  default_properties:
+    app_version: "env:NEXT_PUBLIC_APP_VERSION"
+    locale: "navigator.language"
+  pii_redact: ["email", "phone", "ssn", "card_number", "password", "user_id"]
+  vendor_token_env: ""
+  codemod_mode: "proposal-only" # proposal-only (default) | apply | interactive
+```
+
 ## 에러 핸들링
 
 ```yaml
