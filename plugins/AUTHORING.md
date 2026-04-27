@@ -61,7 +61,7 @@
 - Tier 0 은 하네스 구분이 없으므로 `{HARNESS_HOME}` placeholder 와 섞이면 안 됩니다.
 
 **현재 Tier 0 스킬/플러그인:**
-- `dbflow` (예정) — `.e2e/` 전체
+- `dbflow` — `.e2e/` 전체 (config.yml + scenarios/ + fixtures/ commit, snapshots/state/cache/reports gitignore)
 - `specflow` — `specs/` 출력 (플러그인 전체가 Tier 0 산출물 생성)
 
 ---
@@ -181,5 +181,5 @@ harness: [claude, codex]  # 둘 다 포함 (명시. 생략해도 같은 효과)
 | `ghflow:clear-issue` | 하드코딩된 `~/.claude/projects/` | `harness: [claude]` (Tier 3) |
 | `ghflow:pick-issue` | 하드코딩된 `~/.claude/projects/` | `harness: [claude]` (Tier 3) |
 | `xreview:review-bridge` (agent) | 하드코딩된 `~/.claude/plugins/` | `harness: [claude]` (Tier 3) |
-| `dbflow` (신규) | n/a | `.e2e/` (Tier 0) |
+| `dbflow` | n/a | `.e2e/` (Tier 0, 본문 적용 — Phase 1.5.0) |
 | `specflow` 산출물 | 암묵적 project-local | `specs/` (Tier 0) 로 명시 |
