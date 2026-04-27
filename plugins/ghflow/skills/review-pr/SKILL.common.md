@@ -1,6 +1,7 @@
 ---
 name: review-pr
 description: >
+model: sonnet
   PR(Pull Request)에 달린 리뷰 댓글을 불러와 정리하고, 각 피드백을 코드와 함께 검토할 수 있게 도와주는 스킬.
   사용자가 "PR 리뷰 확인", "리뷰 내용 봐줘", "리뷰 달린 거 확인해줘", "PR 피드백 정리", "#101 리뷰 검토해줘",
   "review-pr", "pr review check", "review comments 보여줘", "리뷰 코멘트 처리", "/review-pr" 등을 말하면 트리거한다.

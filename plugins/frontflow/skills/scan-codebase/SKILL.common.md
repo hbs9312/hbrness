@@ -4,6 +4,7 @@ description: 기존 프로젝트의 컴포넌트, 훅, 유틸리티를 스캔하
 argument-hint: (인자 없음 — frontend.md의 경로를 자동 참조)
 tools: [file:read, search:grep, search:glob, file:write, shell(npm *), shell(npx *), shell(cat *)]
 effort: medium
+model: sonnet
 ---
 
 # 코드베이스 스캔 (FU1)

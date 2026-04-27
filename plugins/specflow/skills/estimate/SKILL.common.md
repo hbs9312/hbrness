@@ -5,6 +5,7 @@ argument-hint: [태스크 목록 경로] [의존성 분석 경로]
 disable-model-invocation: true
 tools: [file:read, search:grep, search:glob, file:write]
 effort: high
+model: sonnet
 ---
 
 # 공수 추정 (P3)

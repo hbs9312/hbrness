@@ -5,6 +5,7 @@ argument-hint: [태스크 목록 파일 경로]
 disable-model-invocation: true
 tools: [file:read, search:grep, search:glob, file:write]
 effort: high
+model: sonnet
 ---
 
 # 의존성 분석 (P2)

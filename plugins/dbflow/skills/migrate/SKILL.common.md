@@ -4,6 +4,7 @@ description: "샌드박스 DB 에 마이그레이션을 적용합니다. \"dbflo
 argument-hint: [--fresh (snapshot 재실행 후 마이그레이션)]
 tools: [file:read, file:write, file:edit]
 effort: medium
+model: sonnet
 ---
 
 # dbflow:migrate — 마이그레이션 적용

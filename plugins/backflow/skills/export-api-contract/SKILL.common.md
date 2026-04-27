@@ -4,6 +4,7 @@ description: TS §3.2 OpenAPI fragment + §4 에러 코드 맵 + 라우트 → o
 argument-hint: [기술 명세서 경로]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # API 계약 Export (B-API)

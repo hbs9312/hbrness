@@ -4,6 +4,7 @@ description: 명세서에서 참조 ID를 추출하고 인덱스를 생성합니
 argument-hint: [문서 경로 또는 specs/ 디렉토리]
 tools: [file:read, search:grep, search:glob, file:write]
 effort: medium
+model: sonnet
 ---
 
 # 참조 ID 추출/매핑 (U1)

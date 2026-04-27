@@ -4,6 +4,7 @@ description: "지정 테이블의 before 스냅샷을 저장합니다. diff 의 
 argument-hint: [<tables> 또는 all]
 tools: [file:read, file:write]
 effort: medium
+model: sonnet
 ---
 
 # dbflow:watch — 테이블 before 스냅샷 저장

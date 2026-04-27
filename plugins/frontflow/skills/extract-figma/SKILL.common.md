@@ -5,6 +5,7 @@ argument-hint: [Figma 파일 URL 또는 노드 ID] [추출 범위: component | p
 disable-model-invocation: true
 tools: [file:read, file:write, search:grep, search:glob, shell(npx figma*)]
 effort: high
+model: sonnet
 ---
 
 # Figma 데이터 추출 (FU2)

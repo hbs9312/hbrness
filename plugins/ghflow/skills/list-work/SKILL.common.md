@@ -1,6 +1,7 @@
 ---
 name: list-work
 description: "현재 레포의 PR과 이슈 목록을 조회하여 보기 좋게 정리하는 스킬. GitHub 프로젝트 번호를 전달하면 해당 프로젝트에 속한 항목만 필터링한다. 사용자가 'PR 목록', '이슈 목록', '내 작업 목록', '작업 현황', 'PR 리스트', '이슈 리스트', 'my work', 'list work', 'list prs', 'list issues', '내 PR 보여줘', '내 이슈 보여줘', '프로젝트 현황', '/list-work' 등을 말하면 트리거한다. PR이나 이슈의 현황을 파악하려는 맥락이면 적극적으로 이 스킬을 사용할 것."
+model: sonnet
 ---
 
 # List Work

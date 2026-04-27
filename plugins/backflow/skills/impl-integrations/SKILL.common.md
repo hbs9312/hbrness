@@ -4,6 +4,7 @@ description: 외부 서비스 통합(메시지 큐, 캐시, 스토리지, 이메
 argument-hint: [기술 명세서 경로]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # 외부 서비스 통합 (B6)

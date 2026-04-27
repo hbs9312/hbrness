@@ -2,6 +2,7 @@
 name: impl-scanner
 description: 구현 프로젝트 디렉토리를 스캔하여 기술 스택과 구현 현황을 분석합니다. "구현 현황 파악", "프로젝트 상태 분석", "코드 스캔", "개발 진행률 확인" 요청 시 사용.
 tools: [file:read, search:grep, search:glob, shell]
+model: sonnet
 ---
 
 # impl-scanner

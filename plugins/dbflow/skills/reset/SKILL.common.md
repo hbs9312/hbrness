@@ -4,6 +4,7 @@ description: "샌드박스 DB drop + state.json 삭제 + snapshots 정리. \"dbf
 argument-hint: [--snapshots (snapshots 도 정리)]
 tools: [file:read, file:write, file:edit]
 effort: low
+model: sonnet
 ---
 
 # dbflow:reset — 샌드박스 환경 정리

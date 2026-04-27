@@ -4,6 +4,7 @@ description: "샌드박스 DB 연결, API 서버 PID, 마지막 snapshot/migrate
 argument-hint: (없음)
 tools: [file:read, search:grep]
 effort: low
+model: sonnet
 ---
 
 # dbflow:status — 현재 상태 출력

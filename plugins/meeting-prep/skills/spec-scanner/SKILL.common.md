@@ -2,6 +2,7 @@
 name: spec-scanner
 description: 기획서/명세서 디렉토리를 스캔하여 구조를 파악하고 불명확·누락·미결정 항목을 탐지합니다. "기획서 분석", "명세서 검토", "스펙 스캔", "기획서에서 빠진 거 찾아줘" 요청 시 사용.
 tools: [file:read, search:grep, search:glob, shell]
+model: sonnet
 ---
 
 # spec-scanner

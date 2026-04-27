@@ -4,6 +4,7 @@ description: TS의 에러 코드 맵을 백엔드 상수 파일과 HTTP 매핑, 
 argument-hint: [기술 명세서 경로] [기능 명세서 경로 (선택)]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # 에러 코드·HTTP 매핑·i18n 리소스 생성 (B-Err)

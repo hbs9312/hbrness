@@ -4,6 +4,7 @@ description: TS §10 → inbound webhook controller (서명 검증 + idempotency
 argument-hint: [기술 명세서 경로]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # Inbound Webhook 구현 (B-WEBHOOK)

@@ -2,6 +2,7 @@
 name: meeting-doc-gen
 description: spec-scanner와 impl-scanner의 분석 결과를 종합하여 회의 준비 문서를 생성합니다. "회의 문서 생성", "분석 결과로 회의 자료 만들어줘" 요청 시 사용.
 tools: [file:read, file:write, search:glob]
+model: sonnet
 ---
 
 # meeting-doc-gen

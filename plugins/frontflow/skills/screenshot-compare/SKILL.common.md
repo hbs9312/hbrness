@@ -5,6 +5,7 @@ argument-hint: [Storybook URL] [Figma 스크린샷 경로]
 disable-model-invocation: true
 tools: [file:read, file:write]
 effort: low
+model: sonnet
 ---
 
 # 스크린샷 비교 (FU4) — Phase 2

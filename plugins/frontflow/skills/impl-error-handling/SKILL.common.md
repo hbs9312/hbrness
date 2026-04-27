@@ -4,6 +4,7 @@ description: TS의 에러 코드 맵을 프론트엔드 상수·핸들러·i18n 
 argument-hint: [기술 명세서 경로] [UI 명세서 경로 (선택)]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # 에러 핸들러·i18n 리소스 생성 (F-Err)

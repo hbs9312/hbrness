@@ -1,6 +1,7 @@
 ---
 name: draft-pr
 description: "GitHub 이슈 번호를 기반으로 브랜치 생성, 빈 커밋, Draft PR 생성, 이슈-브랜치 연결까지 한번에 처리하는 스킬. 사용자가 'Draft PR 만들어줘', '이슈 작업 시작', 'PR 초안', 'draft pr', '빈 PR 생성', '이슈 브랜치 만들어줘', '/draft-pr' 등을 말하면 트리거한다. 이슈 기반으로 브랜치를 만들거나 Draft PR을 생성하려는 맥락이면 적극적으로 이 스킬을 사용할 것."
+model: sonnet
 ---
 
 # Draft PR

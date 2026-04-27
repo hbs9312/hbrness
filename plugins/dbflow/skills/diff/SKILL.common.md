@@ -4,6 +4,7 @@ description: "watch 이후 테이블 변경(insert/update/delete)을 표시합�
 argument-hint: [<tables> (생략 시 watch 전체)]
 tools: [file:read, file:write]
 effort: medium
+model: sonnet
 ---
 
 # dbflow:diff — watch 이후 테이블 변경 비교

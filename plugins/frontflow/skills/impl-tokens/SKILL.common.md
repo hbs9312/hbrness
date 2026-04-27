@@ -4,6 +4,7 @@ description: UI 명세서의 디자인 토큰을 프로젝트에 설정합니다
 argument-hint: [UI 명세서 경로]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: high
+model: sonnet
 ---
 
 # 디자인 토큰 + 테마 설정 (F1)

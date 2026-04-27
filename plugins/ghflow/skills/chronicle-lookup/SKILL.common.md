@@ -1,6 +1,7 @@
 ---
 name: chronicle-lookup
 description: >
+model: sonnet
   Search and display previously-recorded commit chronicles from
   `~/.commit-chronicles/` to answer "why was this code written this way?",
   "왜 이렇게 짰지?", "이 함수 왜 바꿨지?", "이 파일 이전에 무슨 결정이 있었지?",

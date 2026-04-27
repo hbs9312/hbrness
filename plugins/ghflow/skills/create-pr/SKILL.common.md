@@ -1,6 +1,7 @@
 ---
 name: create-pr
 description: >
+model: sonnet
   This skill should be used when the user asks to "create pr", "make pr", "open pull request",
   "PR 올려줘", "PR 만들어줘", "풀리퀘 생성", or invokes /create-pr.
   It creates a GitHub Pull Request using the PR template fetched at session start by the

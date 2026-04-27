@@ -4,6 +4,7 @@ description: 서비스, 리포지토리, 컨트롤러의 단위/통합 테스트
 argument-hint: [대상 파일 경로] [--type unit|integration]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # 테스트 자동 생성 (BU2)

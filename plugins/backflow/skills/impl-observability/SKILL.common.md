@@ -4,6 +4,7 @@ description: TS의 §7.1 관측성을 structured logger·tracing·request-id mid
 argument-hint: [기술 명세서 경로]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # Observability 구현 (B-Obs)

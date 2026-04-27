@@ -5,6 +5,7 @@ argument-hint: [원본 문서 경로] [findings 파일 경로]
 disable-model-invocation: true
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: high
+model: sonnet
 ---
 
 # 패치 — 부분 수정 (R1)

@@ -4,6 +4,7 @@ description: "API 서버를 종료합니다. \"dbflow down\", \"API 서버 중�
 argument-hint: (없음)
 tools: [file:read, file:write]
 effort: low
+model: sonnet
 ---
 
 # dbflow:down — API 서버 종료

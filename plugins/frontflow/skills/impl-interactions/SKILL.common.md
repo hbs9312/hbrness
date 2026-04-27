@@ -4,6 +4,7 @@ description: 상태 관리, 조건부 렌더링, 애니메이션을 구현합니
 argument-hint: [기능 명세 경로] [UI 명세서 경로] [기술 명세 경로]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # 인터랙션 + 상태 관리 (F5)

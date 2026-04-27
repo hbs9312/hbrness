@@ -5,6 +5,7 @@ argument-hint: [스프린트 배치 파일 경로]
 disable-model-invocation: true
 tools: [file:read, search:grep, search:glob, file:write]
 effort: high
+model: sonnet
 ---
 
 # 프로젝트 도구 동기화 (P5)

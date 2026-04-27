@@ -4,6 +4,7 @@ description: TS §9 파일 처리 → presigned URL controller + server-side hea
 argument-hint: [기술 명세서 경로]
 tools: [file:read, search:grep, search:glob, file:write, file:edit]
 effort: max
+model: sonnet
 ---
 
 # 파일 업로드 구현 (B-FILE)

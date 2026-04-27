@@ -4,6 +4,7 @@ description: "소스 DB → 샌드박스 DB 복제 (pg_dump | pg_restore, docker
 argument-hint: [--fresh (기존 sandbox drop 후 재생성)]
 tools: [file:read, file:write, file:edit]
 effort: high
+model: sonnet
 ---
 
 # dbflow:snapshot — 소스 DB → 샌드박스 DB 복제

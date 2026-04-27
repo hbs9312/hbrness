@@ -1,6 +1,7 @@
 ---
 name: create-issue
 description: >
+model: sonnet
   GitHub 이슈를 조직 템플릿에 맞춰 생성하는 스킬. 사용자가 '이슈 만들어줘', '이슈 생성', '버그 리포트',
   '기능 제안', '작업 등록', 'create issue', 'github issue', '/create-issue' 등을 말하면 트리거한다.
   이슈와 관련된 요청이면 적극적으로 이 스킬을 사용할 것.

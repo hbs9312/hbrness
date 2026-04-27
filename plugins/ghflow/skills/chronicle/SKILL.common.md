@@ -1,6 +1,7 @@
 ---
 name: chronicle
 description: >
+model: sonnet
   Capture the work content, decisions, intent, and tradeoffs behind a git commit
   into a persistent, tool-agnostic chronicle file that any AI tool or human can read
   later to answer "why was this code written?". Writes to `~/.commit-chronicles/`

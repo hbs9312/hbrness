@@ -4,6 +4,7 @@ description: 기존 프로젝트의 서비스, 리포지토리, 미들웨어를 
 argument-hint: (인자 없음 — backend.md의 경로를 자동 참조)
 tools: [file:read, search:grep, search:glob, file:write, shell(npm *), shell(npx *), shell(cat *)]
 effort: medium
+model: sonnet
 ---
 
 # 코드베이스 스캔 (BU1)

@@ -4,6 +4,7 @@ description: ".e2e/ 디렉토리 스캐폴드 + config.yml template + .gitignore
 argument-hint: (없음)
 tools: [file:read, file:write, file:edit]
 effort: low
+model: sonnet
 ---
 
 # dbflow:init — .e2e/ 스캐폴드

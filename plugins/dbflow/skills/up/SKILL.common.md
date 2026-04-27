@@ -4,6 +4,7 @@ description: "샌드박스 DB 에 연결된 API 서버를 기동합니다. \"dbf
 argument-hint: (없음)
 tools: [file:read, file:write, file:edit]
 effort: medium
+model: sonnet
 ---
 
 # dbflow:up — API 서버 기동
