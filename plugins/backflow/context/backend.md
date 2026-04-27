@@ -196,3 +196,23 @@ file_upload:
   scan_on_complete: false         # Phase 2
   metadata_schema_version: 1
 ```
+
+## Webhook (Phase 1 (6))
+
+```yaml
+webhook:
+  webhook_module_dir: "src/webhooks"
+  signatures_subdir: "signatures"
+  selected_signature_filename: "selected-signature.ts"
+  dispatch_file: "dispatch.ts"
+  idempotency_table: "webhook_idempotency"
+  idempotency_entity_path: "src/webhooks/idempotency.entity.ts"
+  idempotency_ttl_days: 30
+  default_timeout_sec: 30
+  bypass_auth_routes: ["/webhooks/**"]
+  signature_clock_skew_sec: 300
+  always_200_default: true
+  retry_status_code: 503
+  enqueue_only: true
+  duplicate_delivery_logging: true
+```

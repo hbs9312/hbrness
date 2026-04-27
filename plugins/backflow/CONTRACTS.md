@@ -39,7 +39,10 @@ impl-integrations         ← TS §인프라, §외부 호출 (B3 stub 교체)
 impl-file-upload          ← TS §9 파일 처리 + §3.2 + §4 + §5  (presign + head 재검증 + 메타 + adapter)  ★Phase 1 (5)
      │
      ▼
-export-api-contract       ← TS §3.2 + §4 + 라우트(file-upload controller 포함)   ★Phase 1 (3)
+impl-webhook              ← TS §10 외부 연동·Webhook (서명 + idempotency + enqueue)   ★Phase 1 (6)
+     │
+     ▼
+export-api-contract       ← TS §3.2 + §4 + 라우트(file-upload + webhook controller 포함)   ★Phase 1 (3)
      │
      ▼
 generate-tests            ← FS BR/AC + TS 오류 코드
@@ -65,6 +68,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | `openapi/openapi.yaml` | export-api-contract | (frontflow:sync-api-client, validate-code §9) | N/A — project artifact | AUTO-GENERATED. commit 대상. `info.version` + `x-contract-hash` 박제 |
 | `.backflow/api-contract-drift.md` | export-api-contract | validate-code §9 | Tier 0 | TS ↔ 라우트 drift 리포트. ts-and-routes 모드 시 생성 |
 | `backend.md.file_upload.*` (설정 키 그룹) | — | impl-file-upload, validate-code §10 | Tier 0 | storage_vendor / presigned_ttl_sec / uploads_module_dir / storage_subdir / resize_subdir / selected_storage_filename / resize_worker_pattern / resize_presets / file_id_strategy / callback_required / metadata_schema_version |
+| `backend.md.webhook.*` (설정 키 그룹) | — | impl-webhook, validate-code §11 | Tier 0 | webhook_module_dir / signatures_subdir / selected_signature_filename / dispatch_file / idempotency_table / idempotency_entity_path / idempotency_ttl_days / default_timeout_sec / bypass_auth_routes / signature_clock_skew_sec / always_200_default / retry_status_code / enqueue_only / duplicate_delivery_logging |
 
 ## 스킬별 계약
 
@@ -150,7 +154,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Writes** | Controller 파일 (`{controller_dir}/{feature}.controller.ts`), DTO 파일 (`{dto_dir}/*.dto.ts`), Swagger 데코레이터(doc_tool=Swagger 시) |
 | **Storage Tier** | N/A — project code |
 | **Depends on** | impl-services |
-| **Notes** | 컨트롤러에 비즈니스 로직 금지. DTO 검증은 `backend.md.request_validation`(class-validator/zod/joi). 응답 래핑은 `response_format`. TS §9 파일 업로드 의 upload operationId 는 `impl-file-upload` 가 처리 — 본 skill 은 stub/skip 권장. 본문 구현 시 validate-code §10.5 가 warning. |
+| **Notes** | 컨트롤러에 비즈니스 로직 금지. DTO 검증은 `backend.md.request_validation`(class-validator/zod/joi). 응답 래핑은 `response_format`. TS §9 파일 업로드 의 upload operationId 는 `impl-file-upload` 가 처리 — 본 skill 은 stub/skip 권장. 본문 구현 시 validate-code §10.5 가 warning. TS §10 webhook operationId (`receive{WebhookId}`) 도 `impl-webhook` 가 처리 — 본 skill 은 stub/skip |
 
 ### impl-observability
 
@@ -174,7 +178,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Writes** | Guard·미들웨어 파일 (`{middleware_dir}/{feature}.guard.ts`, `error.filter.ts`, `logger.middleware.ts`, `rate-limit.guard.ts`), error_code→HTTP status 매핑 |
 | **Storage Tier** | N/A — project code |
 | **Depends on** | impl-controllers |
-| **Notes** | `auth.strategy`(JWT/Session) · `auth.role_model`(RBAC/ABAC) 기반. error filter 가 AppException → TS error schema 변환. 로깅은 민감 데이터 마스킹. |
+| **Notes** | `auth.strategy`(JWT/Session) · `auth.role_model`(RBAC/ABAC) 기반. error filter 가 AppException → TS error schema 변환. 로깅은 민감 데이터 마스킹. Phase 1 (6): backend.md.webhook.bypass_auth_routes 의 경로는 인증 가드 bypass + signature 검증 middleware 적용. impl-webhook 가 signature middleware 작성, impl-middleware 는 bypass 만 보장 |
 
 ### impl-integrations
 
@@ -186,7 +190,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Writes** | Job processor (`jobs/{feature}.processor.ts`), producer (`jobs/{feature}.producer.ts`), storage/cache/email service 파일, `.env.example` append |
 | **Storage Tier** | N/A — project code |
 | **Depends on** | impl-services, impl-controllers |
-| **Notes** | impl-services 가 남긴 stub 을 실제 코드로 교체. 모든 외부 호출에 timeout+retry+fallback 필수. DLQ/상태 업데이트. env 하드코딩 금지. storage 추상은 `impl-file-upload` 의 `StorageAdapter` 인터페이스 충족 권고. 충족 시 impl-file-upload 가 wrapping (재구현 금지). |
+| **Notes** | impl-services 가 남긴 stub 을 실제 코드로 교체. 모든 외부 호출에 timeout+retry+fallback 필수. DLQ/상태 업데이트. env 하드코딩 금지. storage 추상은 `impl-file-upload` 의 `StorageAdapter` 인터페이스 충족 권고. 충족 시 impl-file-upload 가 wrapping (재구현 금지). Phase 1 (6): 메시지 큐 추상이 있으면 `impl-webhook` 의 dispatch 가 그 큐를 사용 (재구현 금지) |
 
 ### impl-file-upload
 
@@ -199,6 +203,18 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Storage Tier** | N/A — project code |
 | **Depends on** | `map-tasks`, `impl-schema`, `impl-error-codes`, `impl-services` 후. `impl-controllers` / `impl-integrations` 와 책임 경계: impl-controllers 는 §9 의 upload operationId 를 skip, impl-integrations 의 StorageService 존재 시 wrapper 우선 (재구현 금지) |
 | **Notes** | 벤더-중립 영역: controller / service / storage/types.ts / storage/local.ts / selected-storage.ts. 예외: `storage/{vendor}.ts` 의 SDK 사용 가능. `selected-storage.ts` 는 정적 re-export 의 vendor 이름은 허용 (SDK import / 직접 호출만 금지). callback_required 는 **항상 true** (Phase 1). local passthrough 는 production 차단 + file_id 기반 path 재계산 강제. |
+
+### impl-webhook
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | TS §10 → inbound webhook controller (서명 검증 + idempotency + enqueue) + sender 어댑터 + facade + idempotency entity |
+| **Reads (specflow)** | `specs/TS/*` §10 (필수), §3.2 (operationId 검증), §4 (WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TIMESTAMP_REPLAY / WEBHOOK_IDEMPOTENCY_KEY_MISSING 권고. **WEBHOOK_DUPLICATE_DELIVERY 는 에러가 아닌 idempotency hit**), §5 (idempotency entity), §처리 흐름 |
+| **Reads (registry/config)** | `.backflow/task-file-map.md`(있으면), `.backflow/service-registry.md`, `backend.md` (`webhook.*` 섹션, `framework.*`, `database.orm`, `external_services.message_queue`) |
+| **Writes** | controller / service / module(Nest) / DTO / idempotency entity / migration / `webhook/signatures/types.ts` / `webhook/signatures/none.ts` (개발용) / `webhook/signatures/{sender}.ts` (TS §10 마다) / `webhook/signatures/selected-signature.ts` (facade) / `webhook/dispatch.ts` (큐 enqueue). 경로는 `backend.md.webhook.*` 와 framework convention 에서 derive |
+| **Storage Tier** | N/A — project code |
+| **Depends on** | `map-tasks`, `impl-schema`, `impl-error-codes`, `impl-services`, `impl-integrations` (queue) 후. **책임 경계**: impl-controllers 는 §10 webhook operationId 를 stub/skip, impl-middleware 는 bypass_auth_routes bypass 만 보장, impl-integrations 큐 추상이 있으면 dispatch 가 wrapping (재구현 금지) |
+| **Notes** | sender 식별자 격리: `signatures/{sender}.ts` 내부만. controller / service / dispatch / signatures/types.ts / selected-signature.ts 모두 sender SDK import 금지. selected-signature.ts 는 정적 dispatch (Phase 1 (5) selected-storage 패턴). timing-safe compare 의무 (crypto.timingSafeEqual 또는 SDK 검증 API). WEBHOOK_TIMESTAMP_REPLAY (에러) vs WEBHOOK_DUPLICATE_DELIVERY (info log) 분리. |
 
 ### export-api-contract
 
@@ -301,6 +317,11 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | TS §4 에러 코드 맵 → FILE_* 권고 | **impl-file-upload** (FILE_TOO_LARGE / MIME_NOT_ALLOWED / STORAGE_UNAVAILABLE / FILE_INTEGRITY_MISMATCH / FILE_NOT_FOUND) |
 | TS §5 데이터 모델 → owner FK | **impl-file-upload** (메타 entity 의 owner_id FK 도출) |
 | TS §9 파일 처리 | **impl-file-upload** |
+| TS §10 외부 연동·Webhook | **impl-webhook** |
+| TS §3.2 OpenAPI fragment → operationId 검증 (webhook) | **impl-webhook** (receive{WebhookIdCamel} operationId 검증) |
+| TS §4 에러 코드 맵 → WEBHOOK_* 권고 | **impl-webhook** (WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TIMESTAMP_REPLAY / WEBHOOK_IDEMPOTENCY_KEY_MISSING / WEBHOOK_REQUEST_HASH_MISMATCH) |
+| TS §5 데이터 모델 → idempotency entity | **impl-webhook** (idempotency entity 의 관계 도출) |
+| TS §처리 흐름 → handler 큐 dispatch | **impl-webhook** (handler 큐 dispatch 패턴 확인) |
 | TS §처리 흐름 | impl-repositories, impl-services |
 | TS §에러 코드 맵 | **impl-error-codes**, impl-middleware (HTTP 매핑 import), generate-tests, validate-tests |
 | TS §오류 처리 (sequence 내 에러 흐름) | impl-services, generate-tests, validate-tests |
@@ -311,7 +332,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | WF §상태 매트릭스 | generate-tests, validate-tests |
 | PLAN-*-tasks.md (decompose) | map-tasks |
 
-> **Phase 1 로드맵 현황**: `impl-observability` (Phase 1 (2) 완료), `export-api-contract` (Phase 1 (3) 완료) 행 반영 완료. 에러 코드 맵 관련 행은 Phase 1 (1) 완료. `impl-file-upload` (Phase 1 (5) 완료). `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
+> **Phase 1 로드맵 현황**: `impl-observability` (Phase 1 (2) 완료), `export-api-contract` (Phase 1 (3) 완료) 행 반영 완료. 에러 코드 맵 관련 행은 Phase 1 (1) 완료. `impl-file-upload` (Phase 1 (5) 완료). `impl-webhook` (Phase 1 (6) 완료). `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
 
 ## 신규 backflow 스킬 추가 체크리스트
 
