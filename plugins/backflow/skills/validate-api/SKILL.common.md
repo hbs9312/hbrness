@@ -28,3 +28,6 @@ timestamp 형식: `YYYYMMDD-HHmmss`
 ## 결과 전달
 
 에이전트가 반환한 summary를 그대로 출력합니다.
+
+## dbflow 연계 (Phase 1.5)
+API 검증 후 → 시나리오 기반 E2E 검증 (`dbflow:run`) 추가 권장. QA 명세 §5 기반.

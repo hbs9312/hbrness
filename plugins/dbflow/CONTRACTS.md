@@ -174,12 +174,12 @@ reset               ← sandbox drop (사용자 confirm 필수)
 
 | 항목 | 내용 |
 |---|---|
-| **Purpose** | `.e2e/scenarios/*.yml` + config + fixtures 무결성 검증. safety invariant 위반 포함 §A~§F 검사 |
-| **Reads** | `.e2e/config.yml`, `.e2e/scenarios/*.yml`, `.e2e/fixtures/`, `.e2e/state.json` (있으면), `openapi/openapi.yaml` (있으면) |
-| **Writes** | findings 리포트 (stdout 또는 세션 내) |
+| **Purpose** | `.e2e/scenarios/*.yml` + config + fixtures 무결성 검증. safety invariant 위반 포함 §A~§F 검사. 읽기 전용 — 파일 수정 없음. verdict: critical >= 1 → FAIL |
+| **Reads** | `.e2e/config.yml`, `.e2e/scenarios/*.yml`, `.e2e/fixtures/*.sql`, `.e2e/state.json` (있으면), `openapi/openapi.yaml` (있으면) |
+| **Writes** | findings (stdout only — 파일 저장 없음) |
 | **Storage Tier** | Tier 0 |
 | **Depends on** | init, gen-scenarios (또는 수동 작성 시나리오) |
-| **Notes** | 본문은 Phase 1.5.6 에서 작성. §A (source write 금지), §B (sandbox name), §C (confirm bypass), §D (시나리오 무결성), §E (auth 정합성), §F (보안 hygiene). |
+| **Notes** | §A — 소스 DB 쓰기 금지 (source.allowed_hosts 검증, source host grep lint). §B — sandbox.name 에 'sandbox'/'e2e' 포함 확인. §C — config/command 내 confirm bypass 키·flag 금지 (XR-001). §D — schema_version/name/steps 필수, watch_tables 권장, step 필수 필드, name 전역 유일, openapi path 대조(있으면), fixture 존재 확인, BEGIN/COMMIT wrapper, 보간 형식(XR-008), db_diff assertion 키(XR-009). §E — login_as vs config.auth.users 매칭, bearer/jwt_direct 필수 필드. §F — config 평문 password warning, fixture SQL plaintext secret info. |
 
 ---
 

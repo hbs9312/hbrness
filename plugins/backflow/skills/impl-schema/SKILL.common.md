@@ -140,3 +140,6 @@ CREATE TYPE embedding_status AS ENUM ('pending', 'processing', 'ready', 'failed'
 - [ ] 마이그레이션에 rollback(down)이 있는가
 - [ ] 기존 스키마와 충돌 = 0건
 - [ ] BR 주석이 제약 조건에 포함되었는가
+
+## dbflow 연계 (Phase 1.5)
+새 migration 생성 후 → `dbflow:migrate --fresh` 권장. sandbox DB 에 최신 schema 반영.

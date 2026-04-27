@@ -187,3 +187,6 @@ TS에 파일 업로드가 있으면:
 - [ ] 컨트롤러에 비즈니스 로직 = 0건 (서비스 호출만)
 - [ ] 모든 입력에 검증이 있는가 (DTO 데코레이터/스키마)
 - [ ] backend.md의 response_format 래핑을 따르는가
+
+## dbflow 연계 (Phase 1.5)
+API endpoint 구현 후 → 관련 E2E 시나리오 가 있으면 `dbflow:run` 으로 검증 권장.
