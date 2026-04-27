@@ -1,0 +1,8 @@
+{
+  "name": "dbflow",
+  "version": "0.1.0",
+  "description": "E2E 샌드박스 DB 오케스트레이션. 소스 DB 복제, 마이그레이션, API 서버 기동, 시나리오 기반 DB delta 검증까지 자동화합니다.",
+  "author": {
+    "name": "hbs9312"
+  }
+}
