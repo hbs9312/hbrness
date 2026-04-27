@@ -364,6 +364,106 @@ env 변수:
   - external_services.storage 미정의 → impl-file-upload 가 local 만 + info
 ```
 
+### 11. Webhook drift (critical) — Phase 1 (6)
+
+`backflow:impl-webhook` 가 생성한 controller / service / adapter / idempotency entity 가 TS §10 + 선행 skill 출력과 일치하는지 검사.
+
+```yaml
+입력:
+  ts_section: specs/TS-*.md §10 외부 연동·Webhook
+  service_registry: .backflow/service-registry.md
+  webhook_dir: backend.md.webhook.webhook_module_dir
+  signatures_dir: webhook_dir + "/" + backend.md.webhook.signatures_subdir
+  selected_signature_file: signatures_dir + "/" + backend.md.webhook.selected_signature_filename
+  idempotency_entity: backend.md.webhook.idempotency_entity_path
+
+§11.1 — TS §10 ↔ controller/service 일관성:
+  webhook_id_in_controller:
+    - TS §10 모든 webhook_id 가 controller 핸들러/operationId 등장 → 누락 시 critical
+  signature_alg_match / signature_header_match:
+    - controller / adapter 가 사용한 alg / header 가 §10 명시값과 일치 → 불일치 시 critical
+  signature_secret_env_used:
+    - process.env[signature_secret_env] (또는 동등) 으로 secret 로드 → 미사용 시 critical
+    - 시크릿 hardcoded → critical
+  idempotency_key_extraction_grammar:
+    - controller/service 의 key 추출 코드가 §10.idempotency_key_source 의 minimal grammar (header/headerParam/body/fallback) 따름 → 위반 시 critical
+  raw_body_preserved:
+    - framework 별 anchor 패턴 검출 (XR-006):
+      - NestJS: `NestFactory.create(.., { rawBody: true })` + `@Req() req: RawBodyRequest`
+      - Express: webhook route 가 `express.raw(...)` middleware 적용
+      - Fastify: `addContentTypeParser` 또는 `@fastify/raw-body`
+      - FastAPI: `Request.body()` await
+      - Spring: `HttpServletRequest.getInputStream()` 또는 `byte[] body`
+    - 위 패턴 부재 시 → critical
+  related_error_codes:
+    - TS §4 에 WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TIMESTAMP_REPLAY / WEBHOOK_IDEMPOTENCY_KEY_MISSING / WEBHOOK_REQUEST_HASH_MISMATCH 부재 → warning
+    - WEBHOOK_REPLAY_DETECTED 같은 모호한 단일 코드 사용 → warning ("XR-009: 분리 권고")
+
+§11.2 — Sender 식별자 영역 검사 + facade:
+  sender_identifier_in_layers:
+    - controller / service / dispatch / signatures/types.ts / selected-signature.ts 에 sender SDK import (`stripe`, `@octokit`, `@slack/`, sender 별) 등장 → critical
+  selected_signature_static_dispatch_only:
+    - selected-signature.ts 가 `Record<sender, SignatureAdapter>` + `getAdapter` 외 형태 (런타임 if/switch / dynamic import / 동적 require) → critical (XR-001)
+    - selected-signature.ts 자체의 sender adapter import 는 허용 (정적 dispatch facade)
+    - TS §10 의 모든 sender 가 ADAPTERS 객체에 등장 → 누락 시 critical
+  signature_adapter_interface_compliance:
+    - signatures/{sender}.ts 가 SignatureAdapter (sender / alg / verify) 충족 → 불충족 시 critical
+  none_adapter_dev_only:
+    - signatures/none.ts 가 production 환경에서 활성화될 수 있는 분기 → critical
+  timing_safe_compare:
+    - signatures/{sender}.ts 의 직접 HMAC 비교 코드 (`===`, `Buffer.compare`, `==`) 검출 → critical (XR-004 — `crypto.timingSafeEqual` 또는 SDK 검증 API 사용 의무)
+    - SDK 검증 API (`Stripe.webhooks.constructEvent` 등) 사용은 timing-safe 보장으로 통과
+
+§11.3 — Idempotency entity & race:
+  required_fields:
+    - id / webhook_id / idempotency_key / request_hash / status / created_at / updated_at 모두 존재 → 누락 시 critical
+  unique_constraint:
+    - (webhook_id, idempotency_key) UNIQUE constraint 부재 → critical
+  status_enum_match:
+    - [pending, processing, complete, failed] → 추가/누락 시 warning
+  insert_on_conflict_pattern:
+    - controller 의 idempotency insert 가 ON CONFLICT 또는 동등 (try/catch + unique violation) 패턴 → 부재 시 critical (XR-002)
+  request_hash_check:
+    - 기존 행 발견 시 request_hash 비교 코드 부재 → warning ("같은 key 다른 body 검출 누락")
+  replay_uses_stored_response:
+    - status: complete 인 idempotency hit 시 stored response_body/status 그대로 반환 → 부재 시 critical
+  duplicate_delivery_log:
+    - WEBHOOK_DUPLICATE_DELIVERY info log 또는 동등 부재 → warning ("XR-009 logging 권고")
+
+§11.4 — Middleware / 라우팅 책임 경계:
+  webhook_routes_bypass_auth:
+    - bypass_auth_routes 의 경로가 impl-middleware auth guard 에서 bypass → 부재 시 critical
+  webhook_signature_middleware_applied:
+    - bypass_auth_routes 의 경로에 signature 검증이 적용 (XR-007 framework anchor):
+      - NestJS: `consumer.apply(WebhookSignatureMiddleware).forRoutes('webhooks/*')` 또는 controller-level decorator
+      - Express: webhook router 의 `router.use(signatureMiddleware)`
+      - Fastify: `addHook('preHandler', ...)` 또는 plugin
+      - FastAPI: `Depends(verify_signature)` 또는 middleware
+      - Spring: `@Component` filter / interceptor
+    - 패턴 부재 시 critical
+  controller_no_duplication:
+    - 사전 조건: service-registry 에 controller operationId 추적 정보 존재 시 — generated_by != "impl-webhook" 가 §10 webhook 본문 구현 → warning
+    - 추적 정보 부재 시: 휴리스틱 — controller 파일에서 webhook_id 매칭 핸들러 본문 비어있지 않으면 warning
+
+§11.5 — Always-200 정책 + dispatch:
+  always_200_per_webhook:
+    - TS §10.always_200 컬럼 명시 시 controller/service 가 그 값 기준 분기 → 위반 시 warning
+    - 미명시 시 backend.md.webhook.always_200_default 사용
+  enqueue_only_dispatch:
+    - controller 의 webhook handler 가 직접 비즈니스 로직 호출 (큐 enqueue 외) → critical (XR-003 — 동기 모드는 Phase 2)
+    - enqueue 호출은 impl-integrations 의 큐 추상 사용 — 직접 큐 driver 호출 시 warning
+  signature_failure_response:
+    - 서명 검증 실패 시 401 또는 403 → 그 외 (특히 200) 시 critical
+  enqueue_failure_response:
+    - always_200=true 시 enqueue 실패에도 200 반환 → 그 외 critical
+    - always_200=false 시 enqueue 실패 → backend.md.webhook.retry_status_code (default 503) 반환 → 불일치 시 warning
+
+예외:
+  - TS §10 부재 → §11 전체 skip + info
+  - signature_alg=none 인 webhook 이 NODE_ENV=development 가드 존재 시 §11.2 none_adapter_dev_only 통과
+  - bypass_auth_routes 미정의 → §11.4 webhook_routes_bypass_auth 검사 skip + warning
+```
+
 ## 출력
 
 ```yaml
