@@ -52,7 +52,7 @@ export-api-contract       ← TS §3.2 + §4 + 라우트(file-upload + webhook c
 
 ### `impl-middleware` 와의 경계
 
-- `impl-middleware` 는 `backend.md.webhook.bypass_auth_routes` 의 경로에 대해 auth guard bypass 만 보장
+- **impl-middleware**: webhook endpoint 의 auth guard bypass 만 책임. **signature 검증 middleware 는 impl-webhook 가 작성** (본 skill 출력에 포함). impl-middleware 의 일반 auth/error/logging middleware 는 webhook route 에 자동 매칭하지 않도록 bypass 만 보장
 - 본 skill 이 signature 검증 middleware 를 작성하고 bypass 경로에 적용
 
 ### `impl-integrations` 와의 경계
@@ -131,8 +131,9 @@ export function getAdapter(sender: string): SignatureAdapter {
 
 ## sender 식별자 영역 격리
 
-- `signatures/{sender}.ts` 내부에만 sender SDK import 허용
-- controller / service / dispatch / signatures/types.ts / selected-signature.ts 에 sender 식별자(SDK import, 벤더 변수명) 0건
+- **`signatures/{sender}.ts`**: sender SDK (Stripe / @octokit 등) import 및 직접 호출 자유롭게
+- **`signatures/selected-signature.ts`**: sender adapter import 와 sender key 등장 허용 (예: `import { stripeSignatureAdapter } from './stripe'`, `'stripe': stripeSignatureAdapter`). **단 sender SDK 직접 import 금지** (예: `import Stripe from 'stripe'` 는 금지)
+- **그 외 layer** (controller / service / dispatch / signatures/types.ts): sender 식별자·SDK 모두 0건
 - `signatures/none.ts` 는 `NODE_ENV=development` 가드 **필수** (production 차단)
 
 ## raw body 보존 — framework 별 (XR-006)
@@ -147,7 +148,87 @@ export function getAdapter(sender: string): SignatureAdapter {
 
 skill 은 framework 검출 후 적절한 패턴으로 boilerplate 작성. validate-code §11.1 `raw_body_preserved` 가 framework 별 anchor 검사.
 
+### Framework 별 code skeleton (parser ordering / bootstrap / route registration)
+
+```typescript
+// NestJS — main.ts (bootstrap):
+const app = await NestFactory.create(AppModule, { rawBody: true });
+// webhook controller:
+@Post()
+receive(@Req() req: RawBodyRequest<Request>, @Body() body: any) {
+  const raw = req.rawBody;  // Buffer
+  // signature middleware/guard 가 raw 검증
+}
+```
+
+```typescript
+// Express — webhook router:
+const webhookRouter = express.Router();
+// raw parser 를 webhook route 에 한정 (전역 express.json() 앞에 배치)
+webhookRouter.use(express.raw({ type: '*/*' }));
+webhookRouter.post('/stripe', signatureMiddleware('stripe'), stripeController);
+// app.ts:
+app.use('/webhooks', webhookRouter);  // 다른 라우트보다 먼저 등록
+app.use(express.json());  // 그 후 일반 json
+```
+
+```typescript
+// Fastify — webhook plugin:
+async function webhookRoutes(fastify: FastifyInstance) {
+  fastify.addContentTypeParser('*', { parseAs: 'buffer' }, (req, body, done) => {
+    done(null, body);
+  });
+  fastify.addHook('preHandler', signaturePreHandler);
+  fastify.post('/stripe', stripeHandler);
+}
+fastify.register(webhookRoutes, { prefix: '/webhooks' });
+```
+
+```python
+# FastAPI:
+from fastapi import APIRouter, Request, Depends
+
+async def verify_signature(request: Request) -> dict:
+    raw = await request.body()  # bytes — Pydantic 파싱 전
+    # ... signature 검증 ...
+    return {"sender": "stripe", "timestamp": ts, "rawBody": raw}
+
+router = APIRouter(prefix="/webhooks")
+@router.post("/stripe")
+async def receive_stripe(ctx: dict = Depends(verify_signature)):
+    # ctx.rawBody 는 검증된 raw bytes
+    ...
+```
+
+```java
+// Spring Boot — Filter or Interceptor:
+@Component
+public class WebhookSignatureFilter extends OncePerRequestFilter {
+  protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain) {
+    if (req.getRequestURI().startsWith("/webhooks/")) {
+      ContentCachingRequestWrapper wrapped = new ContentCachingRequestWrapper(req);
+      byte[] raw = wrapped.getContentAsByteArray();
+      // signature 검증
+      chain.doFilter(wrapped, res);
+      return;
+    }
+    chain.doFilter(req, res);
+  }
+}
+```
+
 ## Controller 동작 — default flow (XR-002, XR-003)
+
+**서명 검증 표준 흐름**: 서명 검증은 route handler **진입 직전** 단일 지점에서 수행:
+- NestJS: `@UseGuards(WebhookSignatureGuard)` 또는 module-level middleware (`consumer.apply(WebhookSignatureMiddleware).forRoutes('webhooks/*')`)
+- Express: webhook router 의 `router.use(signatureMiddleware)` (route handler 앞)
+- Fastify: `addHook('preHandler', signatureCheck)` 또는 plugin
+- FastAPI: `Depends(verify_signature)` decorator
+- Spring: `@Component` filter 또는 interceptor
+
+middleware/guard 가 verify 결과를 request context (req.webhookContext / FastAPI dependency 결과) 에 저장 → controller body 는 verify 결과를 *소비만* (재호출 금지). 컨트롤러 본문에서 signatureAdapter.verify 를 직접 호출하지 말 것 — middleware 우회 위험.
+
+**Step 1~5 는 middleware/guard 가 수행** (서명 검증·timestamp replay 까지). controller body 는 step 6 (idempotency_key 추출) 부터 시작 — 이때 req.webhookContext 에서 검증된 timestamp / sender / event 정보 소비.
 
 ```
 1. raw body 캡처 (framework 별)
@@ -156,27 +237,29 @@ skill 은 framework 검출 후 적절한 패턴으로 boilerplate 작성. valida
 4. signatureAdapter = getAdapter(webhookCfg.sender)
 5. result = signatureAdapter.verify({ rawBody, headers, secret, clockSkewSec })
    - invalid → 401 + WEBHOOK_SIGNATURE_INVALID (timing-safe 검증 실패)
-6. timestamp replay 검사 (result.timestamp 있으면):
-   - |now - timestamp| > clockSkewSec → 400 + WEBHOOK_TIMESTAMP_REPLAY
-7. idempotency_key 추출 (TS §10.idempotency_key_source grammar 적용)
+   - timestamp replay: |now - result.timestamp| > clockSkewSec → 400 + WEBHOOK_TIMESTAMP_REPLAY
+   ← Steps 1~5: middleware/guard 담당. controller body 진입 전 완료.
+6. idempotency_key 추출 (TS §10.idempotency_key_source grammar 적용)
    - missing/empty → 400 + WEBHOOK_IDEMPOTENCY_KEY_MISSING
-8. request_hash = sha256(rawBody)
-9. INSERT ON CONFLICT (XR-002):
+7. request_hash = sha256(rawBody)
+8. INSERT ON CONFLICT:
    INSERT INTO webhook_idempotency (id, webhook_id, idempotency_key, request_hash, status, expires_at)
    VALUES (..., 'pending', now() + interval '30 days')
    ON CONFLICT (webhook_id, idempotency_key) DO NOTHING
    RETURNING id;
 
    - 새 행 생성 (새 delivery): 정상 진행
-   - 기존 행 존재 (idempotency hit):
-     - 기존 행 status = complete: stored response_status / response_body 그대로 반환 + WEBHOOK_DUPLICATE_DELIVERY info log (XR-009 — 에러 아님)
-     - 기존 행 status = pending/processing: 즉시 200 + "duplicate in flight" log (handler 재실행 안 함) — Phase 1 default
-     - 기존 행 request_hash != now hash: 409 + WEBHOOK_REQUEST_HASH_MISMATCH (같은 key 다른 body — sender 버그 가능성)
-10. queue enqueue (impl-integrations 의 큐 사용):
-    - enqueue 실패 + always_200=true: 200 + idempotency 행 status: failed (worker 가 나중에 cleanup)
-    - enqueue 실패 + always_200=false: 503 + idempotency 행 삭제 (sender 재시도 유도)
-    - enqueue 성공: 200 즉시 응답
-11. async worker (별도 process):
+   - 기존 행 존재 (idempotency hit) 시:
+     8a. **request_hash 비교 가장 먼저** — 기존 행의 request_hash != now hash → 즉시 409 + WEBHOOK_REQUEST_HASH_MISMATCH (status 무관). 같은 key 다른 body 는 sender 버그 가능성 — 처리 거부
+     8b. (hash 일치 시) 기존 행 status 별 분기:
+       - status = complete: stored response_status / response_body 그대로 반환 + WEBHOOK_DUPLICATE_DELIVERY info log (XR-009 — 에러 아님)
+       - status = pending / processing: 즉시 200 + "duplicate in flight" log (handler 재실행 안 함)
+       - status = failed: 200 + 이전 실패 로그 (재시도는 sender 정책 — Phase 2 dead-letter queue)
+9. queue enqueue (impl-integrations 의 큐 사용):
+   - enqueue 실패 + always_200=true: 200 + idempotency 행 status: failed (worker 가 나중에 cleanup)
+   - enqueue 실패 + always_200=false: 503 + idempotency 행 삭제 (sender 재시도 유도)
+   - enqueue 성공: 200 즉시 응답
+10. async worker (별도 process):
     - handler 실행 → idempotency 행 status: complete + response_body/status 기록
     - handler 실패 → status: failed + error 기록 + 재시도 정책 (impl-integrations 큐 의존)
 ```

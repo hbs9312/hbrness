@@ -179,6 +179,16 @@ DELETE /speakers/:id    ✅     admin             ✅
 
 위 매핑은 TS의 API 설계 + FS의 BR에서 도출합니다.
 
+## ★ Phase 1 (6) 책임 경계 — Webhook bypass ★
+
+**MUST**: `backend.md.webhook.bypass_auth_routes` 에 명시된 경로 (default: `/webhooks/**`) 는:
+1. **인증 가드 (JWT / session) bypass** — webhook 은 인증 헤더 없이 도착. 일반 auth guard 적용 시 401 폭주
+2. **Signature middleware 는 `impl-webhook` 가 작성** — 본 skill 은 signature 검증 코드 작성 금지
+
+본 skill 의 auth guard / interceptor 가 bypass_auth_routes 매칭 path 에 자동 skip 되도록 분기 추가. impl-webhook 가 후속 단계에서 같은 경로에 signature middleware 를 등록 (서명이 인증 역할 대체).
+
+위반 시 `validate-code §11.4 webhook_routes_bypass_auth` critical.
+
 ## 품질 자가 점검
 
 - [ ] TS 보안 섹션의 모든 요구사항이 구현되었는가

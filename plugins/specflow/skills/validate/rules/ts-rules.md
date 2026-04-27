@@ -90,6 +90,6 @@
 60. signature_alg enum (hmac_sha256_payload / hmac_sha256_b64 / hmac_sha1_x_hub / hmac_sha256_x_hub / rsa_sha256 / none) — 그 외 warning
 61. signature_alg=none 인데 production 환경에서 사용 의도 → warning ("개발 한정")
 62. signature_header / signature_secret_env 모두 명시 → 누락 시 warning
-63. idempotency_key_source minimal grammar (header / headerParam / body / fallback) 위반 → warning
+63. idempotency_key_source minimal grammar 위반 → warning. EBNF: source := term ('+' term)*; term := header(NAME) | headerParam(NAME, PARAM) | body(PATH) | fallback(term, term). concat delimiter ':' (구현 fix). 모든 term 결과가 missing/empty 면 WEBHOOK_IDEMPOTENCY_KEY_MISSING 반환. 잘못된 사용: nested 깊이 3+ fallback / `+` 결합 외 연산자 / 알 수 없는 term 함수 → warning
 64. §10 webhook_id 마다 §3.2 fragment 에 receive{WebhookIdCamel} operationId 존재 → 누락 시 warning
 65. timeout_sec 1~120 정수 → 위반 시 warning

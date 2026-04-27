@@ -160,6 +160,17 @@ backend.md의 `doc_tool`이 Swagger이면:
 
 §9 가 부재한 프로젝트는 일반 endpoint 와 동일하게 본 skill 이 처리.
 
+## ★ Phase 1 (6) 책임 경계 — Webhook ★
+
+**MUST**: TS §10 외부 연동·Webhook 의 webhook operationId (`receive{WebhookIdCamel}`) 는 **본 skill 이 처리하지 않는다**. `backflow:impl-webhook` 가 자체 controller 를 생성한다.
+
+본 skill 동작:
+- §10 의 webhook operationId 는 **stub 또는 skip** (빈 메서드 또는 생성 자체 안 함)
+- §3.2 fragment 에 등장해도 raw body / 서명 검증 / idempotency / 큐 dispatch 코드 작성 금지
+- 위반 시 `validate-code §11.4 controller_no_duplication` warning
+
+§10 가 부재한 프로젝트는 일반 endpoint 와 동일하게 본 skill 이 처리.
+
 ## 파일 업로드 엔드포인트
 
 TS에 파일 업로드가 있으면:

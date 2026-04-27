@@ -386,7 +386,12 @@ env 변수:
     - process.env[signature_secret_env] (또는 동등) 으로 secret 로드 → 미사용 시 critical
     - 시크릿 hardcoded → critical
   idempotency_key_extraction_grammar:
-    - controller/service 의 key 추출 코드가 §10.idempotency_key_source 의 minimal grammar (header/headerParam/body/fallback) 따름 → 위반 시 critical
+    - controller/service 의 key 추출 코드가 §10.idempotency_key_source EBNF 따름:
+      - source := term ('+' term)* — 결합은 ':' 구분자로 concat
+      - term := header(NAME) | headerParam(NAME, PARAM) | body(PATH) | fallback(term, term)
+      - missing/empty term: fallback 진행, 모든 fallback 실패 시 WEBHOOK_IDEMPOTENCY_KEY_MISSING (400)
+    - 위 EBNF 외 형식 (custom 함수 / 다른 구분자 / 직접 string 추출) → critical
+    - concat delimiter 가 ':' 가 아니면 → critical (구현 fix)
   raw_body_preserved:
     - framework 별 anchor 패턴 검출 (XR-006):
       - NestJS: `NestFactory.create(.., { rawBody: true })` + `@Req() req: RawBodyRequest`
@@ -401,10 +406,12 @@ env 변수:
 
 §11.2 — Sender 식별자 영역 검사 + facade:
   sender_identifier_in_layers:
-    - controller / service / dispatch / signatures/types.ts / selected-signature.ts 에 sender SDK import (`stripe`, `@octokit`, `@slack/`, sender 별) 등장 → critical
+    - controller / service / dispatch / signatures/types.ts 에 sender SDK import (`stripe`, `@octokit`, `@slack/`) 또는 sender 직접 호출 등장 → critical
+    - **selected-signature.ts 는 별도 룰 (selected_signature_static_dispatch_only) 로 검사 — 본 룰의 검사 대상에서 제외**
   selected_signature_static_dispatch_only:
-    - selected-signature.ts 가 `Record<sender, SignatureAdapter>` + `getAdapter` 외 형태 (런타임 if/switch / dynamic import / 동적 require) → critical (XR-001)
-    - selected-signature.ts 자체의 sender adapter import 는 허용 (정적 dispatch facade)
+    - selected-signature.ts 에서 sender adapter import 및 sender key (Record entry) 는 허용
+    - sender SDK 직접 import (`import Stripe from 'stripe'` 등) → critical
+    - 런타임 if/switch / dynamic import / 동적 require → critical
     - TS §10 의 모든 sender 가 ADAPTERS 객체에 등장 → 누락 시 critical
   signature_adapter_interface_compliance:
     - signatures/{sender}.ts 가 SignatureAdapter (sender / alg / verify) 충족 → 불충족 시 critical
@@ -424,7 +431,8 @@ env 변수:
   insert_on_conflict_pattern:
     - controller 의 idempotency insert 가 ON CONFLICT 또는 동등 (try/catch + unique violation) 패턴 → 부재 시 critical (XR-002)
   request_hash_check:
-    - 기존 행 발견 시 request_hash 비교 코드 부재 → warning ("같은 key 다른 body 검출 누락")
+    - **idempotency hit 시 stored response 반환 또는 status 분기 전에 request_hash 비교 코드 존재** → 부재 시 critical (같은 key 다른 body 검출 누락)
+    - 권고 순서: hit 발견 → request_hash 비교 → status 분기 (complete/processing/failed)
   replay_uses_stored_response:
     - status: complete 인 idempotency hit 시 stored response_body/status 그대로 반환 → 부재 시 critical
   duplicate_delivery_log:
@@ -434,7 +442,9 @@ env 변수:
   webhook_routes_bypass_auth:
     - bypass_auth_routes 의 경로가 impl-middleware auth guard 에서 bypass → 부재 시 critical
   webhook_signature_middleware_applied:
-    - bypass_auth_routes 의 경로에 signature 검증이 적용 (XR-007 framework anchor):
+    - bypass_auth_routes 의 경로에 signature 검증 패턴 (XR-007 framework anchor) 적용 → 부재 시 critical
+    - controller body 안에서 signatureAdapter.verify 직접 호출 → critical (middleware 우회 가능 — XR-002)
+    - 서명 검증은 route handler 진입 전 단일 지점 (middleware / guard / decorator / filter) 에서만:
       - NestJS: `consumer.apply(WebhookSignatureMiddleware).forRoutes('webhooks/*')` 또는 controller-level decorator
       - Express: webhook router 의 `router.use(signatureMiddleware)`
       - Fastify: `addHook('preHandler', ...)` 또는 plugin

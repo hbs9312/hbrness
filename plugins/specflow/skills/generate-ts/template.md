@@ -197,7 +197,12 @@ signature_alg enum:
 규칙:
 - webhook_id: snake_case 전역 유일. operationId prefix
 - endpoint: /webhooks/{id} 권장 (impl-middleware bypass_auth_routes 매칭)
-- always_200=true (default): 서명 통과 시 처리 결과 무관 200 (sender 재시도 폭주 방지)
-- always_200=false: enqueue 실패 시 backend.md.webhook.retry_status_code (default 503)
+- always_200 (default true): 서명 검증 + replay 검사 + idempotency_key missing 검사 + idempotency insert **모두 통과** 후, **enqueue 또는 handler 결과** 에 대한 응답 정책 — 처리 결과 무관 200 (sender 재시도 폭주 방지)
+- always_200=false: 위 검증 통과 후 enqueue 실패 시 backend.md.webhook.retry_status_code (default 503) 반환 (sender 재시도 유도)
+- **always_200 적용 안 됨**:
+  - 서명 검증 실패 → 401 / 403 (보안 — 재시도 무의미)
+  - timestamp replay → 400 + WEBHOOK_TIMESTAMP_REPLAY
+  - idempotency_key missing → 400 + WEBHOOK_IDEMPOTENCY_KEY_MISSING
+  - request_hash mismatch → 409 + WEBHOOK_REQUEST_HASH_MISMATCH
 - signature_alg=none 은 NODE_ENV=development 가드 필수
 ```

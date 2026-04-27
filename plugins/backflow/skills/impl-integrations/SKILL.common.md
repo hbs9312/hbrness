@@ -140,6 +140,17 @@ backend.md의 `external_services.email`에 따름:
 
 위반 시 `validate-code §10.5 storage_service_wrapper` warning.
 
+## ★ Phase 1 (6) 책임 경계 — Webhook 큐 ★
+
+**MUST**: 본 skill 이 메시지 큐 추상을 정의할 때, `backflow:impl-webhook` 가 그 큐를 dispatch 에 사용한다. 충족 조건:
+
+1. 큐 추상이 `enqueue(jobName, payload)` 같은 통일된 인터페이스 노출
+2. 또는 본 skill 이 직접 webhook handler 큐를 만들지 않음 — `impl-webhook` 의 `webhook/dispatch.ts` 가 책임
+
+본 skill 이 작성한 큐 추상 (Bull / BullMQ / Redis Stream / SQS 등) 은 **재구현 금지** — `impl-webhook` 가 wrapping 사용. 충족 안 되면 `impl-webhook` 가 wrapper 생성.
+
+위반 시 `validate-code §11.5 enqueue_only_dispatch` warning.
+
 ## 모든 외부 호출 공통 패턴
 
 TS에 "모든 외부 호출에 타임아웃, 재시도, 실패 경로"가 명시되어 있으므로:
