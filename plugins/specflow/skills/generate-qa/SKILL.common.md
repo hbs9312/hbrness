@@ -43,6 +43,7 @@ effort: max
 5. 외부 호출 → 장애 TC (타임아웃, 재시도, 최종 실패)
 6. 상태 매트릭스 → UI TC
 7. 비기능 TC (부하, 보안)
+8. §5 E2E DB 시나리오 — FS BR/AC/US 의 데이터 변화를 가진 항목 흡수해 시나리오 표 작성. scenario_name 전역 유일 (snake_case 또는 한글). watch_tables 명시 (변경 + unchanged 테이블). steps_summary 가 TS §3.2 OpenAPI fragment path 와 매칭 가능. fixture 는 cross-feature/edge state 만 (in-feature 는 step chaining 사용 — velvetalk reference fixture 가이드 참조).
 
 ## TC 작성 규칙
 
@@ -59,5 +60,10 @@ effort: max
 - [ ] 경계값 TC 존재
 - [ ] 비기능 테스트 ≥ 2개
 - [ ] 고아 TC = 0건
+- [ ] §5 E2E DB 시나리오 섹션 존재 (DB 변화 있는 BR/AC 가진 프로젝트만)
+- [ ] scenario_name 전역 유일
+- [ ] watch_tables 명시 (all 지양, 명시적 테이블 권장)
+- [ ] fixture_required 가 cross-feature/edge state 만 (in-feature 는 step chaining)
+- [ ] steps_summary 의 path 가 TS §3.2 fragment 매칭 가능
 
 ## 출력 위치: specs/QA-{YYYY}-{NNN}.md
