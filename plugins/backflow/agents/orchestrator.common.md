@@ -18,6 +18,7 @@ skills:
   - impl-integrations
   - validate-code
   - validate-api
+  - validate-security
   - validate-tests
   - patch-backend
   - reimpl-backend
@@ -42,15 +43,16 @@ Phase 전체를 하나의 커밋으로 묶는 것은 허용되지 않습니다.
 
 ## 검증 아키텍처
 
-`validate-api` 스킬은 **에이전트 디스패처**입니다.
-내부적으로 `backflow:validator-api` 에이전트를 호출하여 클린룸 컨텍스트에서 API 계약 검증을 수행합니다.
+`validate-api`, `validate-security` 스킬은 **에이전트 디스패처**입니다.
+내부적으로 전용 validator 에이전트를 호출하여 클린룸 컨텍스트에서 계약/보안 검증을 수행합니다.
 
 - `/backflow:validate-api` → `backflow:validator-api` 에이전트 호출
+- `/backflow:validate-security` → `backflow:validator-security` 에이전트 호출
 
 **이 구조의 의미:**
 - 검증 에이전트는 구현 과정의 컨텍스트를 일절 보지 못합니다 (런타임 격리)
 - 오케스트레이터는 기존과 동일하게 Skill을 호출하면 됩니다
-- 검증 결과 형식(summary의 critical/total/contract_match)은 동일합니다
+- 검증 결과는 summary 블록으로 반환합니다
 
 참고: `validate-code`, `validate-tests`는 구현 맥락을 알아야 정확한 검증이 가능하므로 에이전트 격리를 사용하지 않습니다.
 
@@ -162,7 +164,16 @@ for commit_unit in commit_plan.phase_6:
      확인해주세요. 특히: 타임아웃, 재시도, 실패 경로"
   → 승인 → /commit
 
-Phase 6 완료 → 완료
+Phase 6 완료 → 보안/회귀 gate
+```
+
+### Final Gate: 보안 / 테스트 검증
+```
+/backflow:validate-api [TS 경로]
+/backflow:validate-security [backend target 경로] [TS 경로]
+/backflow:validate-tests [테스트 경로]
+
+critical finding 이 있으면 patch-backend / reimpl-backend 루프로 복귀
 ```
 
 ## 커밋 단위 실행 규칙

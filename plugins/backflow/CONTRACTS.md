@@ -48,7 +48,7 @@ export-api-contract       ← TS §3.2 + §4 + 라우트(file-upload + webhook c
 generate-tests            ← FS BR/AC + TS 오류 코드
      │
      ▼
-validate-{code,api,tests} ← 구현된 코드를 검증
+validate-{code,api,security,tests} ← 구현된 코드를 검증
      │
      ▼
 patch-backend / reimpl-backend   ← 검증 피드백 반영
@@ -60,10 +60,12 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 
 | 파일 | 쓰는 스킬 | 읽는 스킬 | Tier | 비고 |
 |---|---|---|---|---|
-| `.backflow/service-registry.md` | scan-codebase | map-tasks, impl-repositories, impl-services, impl-controllers, validate-code | Tier 0 | 기존 코드의 서비스·리포지토리·미들웨어·엔티티 레지스트리. **(Phase 1 (5) 부터)** controller 섹션 옵션 — operationId / method / path / generated_by / status (stub\|implemented) 추적 권고. validate-code §10.5 가 추적 정보 사용 (없으면 휴리스틱 fallback) |
+| `.backflow/service-registry.md` | scan-codebase | map-tasks, impl-repositories, impl-services, impl-controllers, validate-code, validate-security | Tier 0 | 기존 코드의 서비스·리포지토리·미들웨어·엔티티 레지스트리. **(Phase 1 (5) 부터)** controller 섹션 옵션 — operationId / method / path / generated_by / status (stub\|implemented) 추적 권고. validate-code §10.5 와 validate-security public route inventory 가 추적 정보 사용 (없으면 휴리스틱 fallback) |
 | `.backflow/task-file-map.md` | map-tasks | 모든 impl-*, validate-code | Tier 0 | 태스크 → 파일·레이어 매핑, commit plan |
 | `backend.md` (프로젝트 설정) | — | 모든 스킬 | Tier 0 | 구조·ORM·라우팅·테스트 러너 등 프로젝트 설정. 커밋 대상 |
 | `specs/reviews/{TS-docID}-BV2-*.md` | validate-api | (사용자·후속 PR) | Tier 0 | API 검증 리포트 |
+| `specs/reviews/{target}-BV3-security-*.md` | validate-security | (사용자·후속 PR, patch-backend) | Tier 0 | 외부 공개 backend 보안 검증 리포트. `security_pass` 포함 |
+| `backend.md.security_validation.*` (설정 키 그룹) | — | validate-security | Tier 0 | scan scope / allowlist / policy defaults 전용. secret value, token, credential 저장 금지 |
 | `backend.md.api_contract.*` (설정 키 그룹) | — | export-api-contract | Tier 0 | source / output_path / format / servers / emit_examples / drift_report_path / exclude_paths / contract_hash_alg |
 | `openapi/openapi.yaml` | export-api-contract | (frontflow:sync-api-client, validate-code §9) | N/A — project artifact | AUTO-GENERATED. commit 대상. `info.version` + `x-contract-hash` 박제 |
 | `.backflow/api-contract-drift.md` | export-api-contract | validate-code §9 | Tier 0 | TS ↔ 라우트 drift 리포트. ts-and-routes 모드 시 생성 |
@@ -250,7 +252,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Writes** | findings YAML(path·line·severity·suggestion), 요약 리포트 (파일 쓰기는 없음 — stdout 또는 세션 내) |
 | **Storage Tier** | N/A |
 | **Depends on** | impl-schema ~ impl-integrations |
-| **Notes** | `disable-model-invocation: true`. 필수 체크: 네이밍/구조, 레이어 격리(순환 금지), 에러 처리 커버리지, `any` 금지, SQL 인젝션·secrets·입력 검증. |
+| **Notes** | `disable-model-invocation: true`. 필수 체크: 네이밍/구조, 레이어 격리(순환 금지), 에러 처리 커버리지, `any` 금지, SQL 인젝션·secrets·입력 검증. 심층 public-service 보안 검토는 validate-security 가 별도 report 로 수행. |
 
 ### validate-api
 
@@ -263,6 +265,18 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Storage Tier** | Tier 0 (`specs/reviews/`) |
 | **Depends on** | impl-controllers |
 | **Notes** | 서브에이전트 `backflow:validator-api` 에 위임. 격리 컨텍스트. |
+
+### validate-security
+
+| 항목 | 내용 |
+|---|---|
+| **Purpose** | 외부 공개 backend service 를 대상으로 인증/인가, 입력/출력, secret, injection, transport, upload/webhook 보안을 클린룸 검증하고 durable report 작성 |
+| **Reads (specflow)** | `specs/TS/*` §3 API / OpenAPI fragment, §4 에러 코드 맵, §7 비기능·보안, §9 파일 처리, §10 Webhook (있으면) |
+| **Reads (registry/config)** | target backend files/directories, `backend.md` (`security_validation.*`, `auth.*`, `api.*`, `file_upload.*`, `webhook.*`, `observability.*`), `.backflow/service-registry.md` (있으면) |
+| **Writes** | `specs/reviews/{target-slug}-BV3-security-{YYYYMMDD-HHmmss}.md` |
+| **Storage Tier** | Tier 0 (`specs/reviews/`) |
+| **Depends on** | validate-code / validate-api 이후 권장. public service release gate 로 사용 |
+| **Notes** | 서브에이전트 `backflow:validator-security` 에 위임. 구현 과정을 모르는 클린룸 컨텍스트. project code 는 patch 하지 않음. `validate-code` 의 기본 보안 항목은 그대로 유지하고, 본 skill 은 public route surface 중심 심층 보안 검토를 담당 |
 
 ### validate-tests
 
@@ -285,7 +299,7 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | **Reads (registry/config)** | validate-* findings YAML |
 | **Writes** | 대상 소스 파일(Edit only, 재작성 금지), change log YAML |
 | **Storage Tier** | N/A — project code 수정 |
-| **Depends on** | validate-code / validate-api / validate-tests |
+| **Depends on** | validate-code / validate-api / validate-security / validate-tests |
 | **Notes** | 단일 파일 변경 선호. 시그니처 변경 시 mock 동기화. 부수효과 기록. |
 
 ### reimpl-backend
@@ -310,29 +324,29 @@ patch-backend / reimpl-backend   ← 검증 피드백 반영
 | FS §수용 기준(AC) | impl-services, generate-tests |
 | FS §권한 BR | impl-middleware |
 | TS §데이터 모델 | impl-schema, impl-repositories |
-| TS §API 설계 | impl-controllers, validate-api |
+| TS §API 설계 | impl-controllers, validate-api, validate-security |
 | TS §3.2 OpenAPI fragment | **export-api-contract** |
 | TS §3.2 OpenAPI fragment → operationId 검증 | **impl-file-upload** (upload{Kind} operationId 검증) |
 | TS §4 에러 코드 맵 → components 합성 | **export-api-contract** (components 합성 — export 용. impl-error-codes 의 백엔드 상수 생성과 별개) |
-| TS §4 에러 코드 맵 → FILE_* 권고 | **impl-file-upload** (FILE_TOO_LARGE / MIME_NOT_ALLOWED / STORAGE_UNAVAILABLE / FILE_INTEGRITY_MISMATCH / FILE_NOT_FOUND) |
+| TS §4 에러 코드 맵 → FILE_* 권고 | **impl-file-upload**, validate-security (FILE_TOO_LARGE / MIME_NOT_ALLOWED / STORAGE_UNAVAILABLE / FILE_INTEGRITY_MISMATCH / FILE_NOT_FOUND) |
 | TS §5 데이터 모델 → owner FK | **impl-file-upload** (메타 entity 의 owner_id FK 도출) |
-| TS §9 파일 처리 | **impl-file-upload** |
-| TS §10 외부 연동·Webhook | **impl-webhook** |
+| TS §9 파일 처리 | **impl-file-upload**, validate-security |
+| TS §10 외부 연동·Webhook | **impl-webhook**, validate-security |
 | TS §3.2 OpenAPI fragment → operationId 검증 (webhook) | **impl-webhook** (receive{WebhookIdCamel} operationId 검증) |
-| TS §4 에러 코드 맵 → WEBHOOK_* 권고 | **impl-webhook** (WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TIMESTAMP_REPLAY / WEBHOOK_IDEMPOTENCY_KEY_MISSING / WEBHOOK_REQUEST_HASH_MISMATCH) |
+| TS §4 에러 코드 맵 → WEBHOOK_* 권고 | **impl-webhook**, validate-security (WEBHOOK_SIGNATURE_INVALID / WEBHOOK_TIMESTAMP_REPLAY / WEBHOOK_IDEMPOTENCY_KEY_MISSING / WEBHOOK_REQUEST_HASH_MISMATCH) |
 | TS §5 데이터 모델 → idempotency entity | **impl-webhook** (idempotency entity 의 관계 도출) |
 | TS §처리 흐름 → handler 큐 dispatch | **impl-webhook** (handler 큐 dispatch 패턴 확인) |
 | TS §처리 흐름 | impl-repositories, impl-services |
-| TS §에러 코드 맵 | **impl-error-codes**, impl-middleware (HTTP 매핑 import), generate-tests, validate-tests |
+| TS §에러 코드 맵 | **impl-error-codes**, impl-middleware (HTTP 매핑 import), generate-tests, validate-security, validate-tests |
 | TS §오류 처리 (sequence 내 에러 흐름) | impl-services, generate-tests, validate-tests |
-| TS §보안 | impl-middleware |
-| TS §비기능 요구사항 | impl-middleware |
+| TS §보안 | impl-middleware, validate-security |
+| TS §비기능 요구사항 | impl-middleware, validate-security |
 | TS §7.1 관측성 | **impl-observability** |
 | TS §인프라·외부 호출 | impl-integrations |
 | WF §상태 매트릭스 | generate-tests, validate-tests |
 | PLAN-*-tasks.md (decompose) | map-tasks |
 
-> **Phase 1 로드맵 현황**: `impl-observability` (Phase 1 (2) 완료), `export-api-contract` (Phase 1 (3) 완료) 행 반영 완료. 에러 코드 맵 관련 행은 Phase 1 (1) 완료. `impl-file-upload` (Phase 1 (5) 완료). `impl-webhook` (Phase 1 (6) 완료). `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
+> **Phase 1/2 로드맵 현황**: `impl-observability` (Phase 1 (2) 완료), `export-api-contract` (Phase 1 (3) 완료) 행 반영 완료. 에러 코드 맵 관련 행은 Phase 1 (1) 완료. `impl-file-upload` (Phase 1 (5) 완료). `impl-webhook` (Phase 1 (6) 완료). `validate-security` (Phase 2 첫 항목 완료). `impl-middleware` 는 다음 커밋에서 `impl-error-codes` 의 `HTTP_STATUS_MAP` 을 import 하도록 문서 정리 필요.
 
 ## 신규 backflow 스킬 추가 체크리스트
 

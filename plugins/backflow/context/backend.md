@@ -51,6 +51,46 @@ auth:
   token_location: ""     # Authorization header | cookie
 ```
 
+## 보안 검증 (Phase 2)
+
+`validate-security` 가 사용하는 scan scope 와 policy default 입니다.
+secret value, token, credential 은 절대 저장하지 마세요.
+
+```yaml
+security_validation:
+  exposure: "public"     # public | internal | mixed
+  public_route_allowlist:
+    - "/health"
+    - "/metrics"
+  auth_bypass_allowlist:
+    - "/health"
+    - "/docs"
+    - "/webhooks/**"
+  privileged_role_names: ["admin", "owner"]
+  tenant_context_keys: ["tenant_id", "workspace_id", "organization_id"]
+  sensitive_fields:
+    - "password"
+    - "password_hash"
+    - "token"
+    - "refresh_token"
+    - "secret"
+    - "api_key"
+    - "authorization"
+    - "ssn"
+    - "card_number"
+  session_auth_requires_csrf: true
+  ssrf_allowed_hosts_env: "SSRF_ALLOWED_HOSTS"
+  upload_routes: ["/uploads/**"]
+  webhook_routes: ["/webhooks/**"]
+  report_min_severity: "info"  # info | warning | critical
+  exclude_globs:
+    - "node_modules/**"
+    - "dist/**"
+    - "build/**"
+    - "coverage/**"
+    - ".git/**"
+```
+
 ## API 스타일
 
 ```yaml
