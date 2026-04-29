@@ -222,7 +222,8 @@
 
 ```
 # 매 커밋마다
-git commit -m "feat: 화자 등록 API"
+/ghflow:commit                             ← 팀 커밋 컨벤션에 맞는 메시지 생성 + 커밋
+/ghflow:commit -y                          ← (자동 커밋 — 확인 없이 바로 실행)
 # (chronicle 은 수동 호출 또는 직접 /chronicle)
 /ghflow:chronicle                          ← 커밋의 의도·결정·트레이드오프 기록
 
@@ -326,7 +327,7 @@ skill 에 `model: sonnet` 이 지정된 기계적 작업은 자동으로 Sonnet 
 
 | 모델 | 대상 skill | 비율 |
 |---|---|---|
-| **Sonnet** (자동) | impl-*, scan-*, map-*, patch-*, generate-tests/stories, export-api-contract, sync-api-client, dbflow (init~diff), ghflow 전체, meeting-prep 전체 | 58/83 (70%) |
+| **Sonnet** (자동) | impl-*, scan-*, map-*, patch-*, generate-tests/stories, export-api-contract, sync-api-client, dbflow (init~diff), ghflow 전체 (commit 포함), meeting-prep 전체 | 59/84 (70%) |
 | **Opus** (세션 기본) | generate-fs/ts/qa/wf, extract-ui, decompose, validate-*, reimpl-*, xreview, dbflow:run/gen-scenarios/validate-scenarios | 25/83 (30%) |
 
 ---

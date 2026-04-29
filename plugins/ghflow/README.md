@@ -6,8 +6,8 @@ GitHub 이슈·PR·리뷰·커밋 기록을 잇는 워크플로우 스킬 모음
 
 ```
 pick-issue → draft-pr → (작업 + commit → chronicle) → create-pr → review-pr → clear-issue
-                ↑                                           ↑
-          create-issue (필요 시)               chronicle-lookup (과거 결정 조회)
+                ↑              ↑                             ↑
+          create-issue    list-work                chronicle-lookup (과거 결정 조회)
 ```
 
 ## 스킬
@@ -16,7 +16,9 @@ pick-issue → draft-pr → (작업 + commit → chronicle) → create-pr → re
 |---|---|---|
 | `create-issue` | `/create-issue`, "이슈 만들어줘" | 조직 이슈 템플릿에 맞춰 GitHub 이슈 생성 |
 | `pick-issue` | `/pick-issue`, "내 이슈 보여줘" | assigned 이슈 목록 → 선택 → 프로젝트 메모리에 저장 |
+| `list-work` | `/list-work`, "PR 목록", "이슈 현황" | 현재 레포의 PR·이슈 목록 조회·정리 |
 | `draft-pr` | `/draft-pr`, "Draft PR 만들어줘" | 이슈 번호 기반으로 브랜치+빈 커밋+Draft PR 생성, 이슈 연결 |
+| `commit` | `/commit`, `/commit -y` | 팀 커밋 컨벤션(tag/scope/subject + Why/What/Impact)에 맞는 메시지 생성 + 커밋. 멀티 레포 지원 |
 | `create-pr` | `/create-pr`, "PR 만들어줘" | 조직 PR 템플릿(`.github` 레포)을 가져와 PR 생성 |
 | `review-pr` | `/review-pr [#PR] [-r] [-o] [-a]`, "PR 리뷰 확인" | PR 리뷰 댓글 가져와 코드와 함께 검토. 디폴트는 **unresolved 스레드만** fetch (토큰 절약), `--all`/`-a` 로 resolved 포함 |
 | `clear-issue` | `/clear-issue`, "이슈 정리" | pick-issue가 저장한 현재 작업 이슈 메모리 삭제 |
