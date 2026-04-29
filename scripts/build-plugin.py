@@ -147,10 +147,11 @@ def transform_frontmatter(fm_str, adapter, is_agent=False):
 
         new_lines.append(line)
 
-    # Add extra fields (like model)
+    # Add extra fields (like model).
+    # Only check non-indented lines (actual YAML keys) to avoid false matches
+    # inside folded/literal scalar continuation lines.
     for k, v in add_fields.items():
-        # Check if already present
-        if not any(l.strip().startswith(f"{k}:") for l in new_lines):
+        if not any(l.startswith(f"{k}:") for l in new_lines):
             new_lines.append(f"{k}: {v}")
 
     return "\n".join(new_lines)
