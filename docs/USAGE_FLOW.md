@@ -231,7 +231,8 @@ git commit -m "feat: 화자 등록 API"
 
 # 코드 리뷰
 /xreview:review src/                       ← codex 에게 외부 리뷰 위임
-/ghflow:review-pr                          ← PR 에 달린 리뷰 댓글 확인 + 처리
+/ghflow:review-pr                          ← PR 리뷰 댓글 확인 + 처리 (디폴트: unresolved 만, 토큰 절약)
+/ghflow:review-pr 101 --all                ← resolved 까지 포함해서 다시 보기
 
 # 마무리
 /ghflow:clear-issue                        ← 이슈 메모리 정리

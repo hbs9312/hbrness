@@ -8,7 +8,8 @@ model: sonnet
   PR 번호를 인자로 받으면 해당 PR의 브랜치로 전환 후 리뷰를 검토하고, 없으면 현재 브랜치의 PR 리뷰를 검토한다.
   리뷰 내용 확인뿐 아니라 피드백 항목을 처리하는 것까지 적극적으로 도와줄 것.
   결과는 ~/.hbrness/reviews/{owner}/{repo}/ 아래 프로젝트별 파일로 저장되며, --open 인자를 주면 VS Code로 연다.
-  Usage: /review-pr [#PR번호] [--rich|-r] [--open|-o]
+  디폴트는 unresolved 스레드만 가져와 토큰을 절약한다. resolved 까지 보고 싶으면 --all.
+  Usage: /review-pr [#PR번호] [--rich|-r] [--open|-o] [--all|-a]
 ---
 
 # Review PR Skill
@@ -22,13 +23,16 @@ PR에 달린 리뷰 댓글을 불러와 **고정된 템플릿**으로 정리하�
 - `[#PR번호]` or `[PR번호]`: Optional. 검토할 PR 번호 (예: `#101` 또는 `101`). 생략하면 현재 브랜치의 PR을 사용.
 - `--rich` / `-r`: Optional. 저장 파일을 **rich 포맷**(접을 수 있는 `<details>` 블록, 전체 diff)으로 기록한다. GitHub 웹/Markdown 프리뷰에서 읽을 때 유용. 채팅 출력은 항상 flat 포맷으로 고정.
 - `--open` / `-o`: Optional. 리뷰 파일 저장 후 VS Code로 연다. `--rich`와 함께 쓰면 **프리뷰 모드**로, 단독이면 **소스 모드**로 연다.
+- `--all` / `-a`: Optional. **resolved 스레드까지 포함**해 가져온다. 디폴트(미지정)는 unresolved 만 fetch 해서 컨텍스트/토큰을 절약한다. resolved 갯수만 헤더에 노출됨. resolved 코멘트 본문을 다시 봐야 할 때만 켠다.
 
 Examples:
-- `/review-pr` — 현재 브랜치 PR 리뷰, flat 저장만
-- `/review-pr #101` — PR #101 리뷰, flat 저장만
+- `/review-pr` — 현재 브랜치 PR 리뷰, unresolved 만, flat 저장
+- `/review-pr #101` — PR #101 리뷰, unresolved 만, flat 저장
 - `/review-pr 101 --open` — PR #101 리뷰, flat 저장 후 VS Code 소스 뷰로 열기
-- `/review-pr 101 -r` — PR #101 리뷰, rich 저장만 (GitHub에 붙여넣기 좋음)
+- `/review-pr 101 -r` — PR #101 리뷰, rich 저장 (GitHub에 붙여넣기 좋음)
 - `/review-pr 101 -r -o` — PR #101 리뷰, rich 저장 후 VS Code **프리뷰**로 열기
+- `/review-pr 101 --all` — PR #101 리뷰, resolved 포함 전부 fetch
+- `/review-pr 101 -a -r` — PR #101 리뷰, resolved 포함 + rich 저장
 
 ## Output Contract (중요)
 
@@ -107,37 +111,77 @@ If the PR's branch differs from the current branch:
 
 거절 시에도 리뷰 데이터는 API로 확인 가능하므로 그대로 진행.
 
-### Step 3: Fetch Review Data (병렬)
+### Step 3: Fetch Review Data (GraphQL 단일 호출)
 
-```bash
-# 1. Review submissions
-gh pr view {number} --json reviews \
-  --jq '.reviews[] | {author: .author.login, state, body, submittedAt}'
+전체 PR 메타·review submission·reviewThread·인라인 코멘트를 **GraphQL 한 번**으로 받는다. 디폴트는 **unresolved 스레드만 처리**하며, resolved 본문은 컨텍스트에 적재하지 않는다 (`--all` 시에만 처리). flat 모드는 `diffHunk` 필드를 빼서 토큰을 추가 절약한다.
 
-# 2. Inline review comments (with resolution status via GraphQL if possible)
-gh api "repos/{owner}/{repo}/pulls/{number}/comments" \
-  --jq '[.[] | {
-    id, author: .user.login, body, path,
-    line: (.line // .original_line),
-    diff_hunk, created_at,
-    in_reply_to_id
-  }]'
+`{owner}/{repo}`: `gh repo view --json nameWithOwner -q .nameWithOwner`
 
-# 3. PR overview
-gh pr view {number} --json title,body,author,additions,deletions,changedFiles,state,isDraft,headRefName,baseRefName
+#### 3.1 쿼리 구성 (모드별 분기)
 
-# 4. Thread resolution (optional, GraphQL)
-gh api graphql -f query='
-  query($owner:String!,$repo:String!,$number:Int!){
-    repository(owner:$owner,name:$repo){
-      pullRequest(number:$number){
-        reviewThreads(first:100){ nodes { isResolved comments(first:1){ nodes { databaseId } } } }
+쿼리 본문에서 `__DIFF_HUNK__` 자리를 다음 규칙으로 치환한다.
+
+- **flat (기본)** — 빈 문자열 (필드 미요청)
+- **rich (`--rich`)** — `diffHunk`
+
+```graphql
+query($owner:String!,$repo:String!,$number:Int!) {
+  repository(owner:$owner, name:$repo) {
+    pullRequest(number:$number) {
+      number title body state isDraft
+      additions deletions changedFiles
+      headRefName baseRefName
+      author { login }
+      reviews(first: 50) {
+        nodes { author { login } state body submittedAt }
+      }
+      reviewThreads(first: 100) {
+        nodes {
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 30) {
+            nodes {
+              databaseId
+              author { login }
+              body
+              path
+              line
+              originalLine
+              createdAt
+              __DIFF_HUNK__
+              replyTo { databaseId }
+            }
+          }
+        }
       }
     }
-  }' -f owner={owner} -f repo={repo} -F number={number}
+  }
+}
 ```
 
-`{owner}/{repo}`: `gh repo view --json owner,name -q '"\(.owner.login)/\(.name)"'`
+호출:
+```bash
+gh api graphql \
+  -f owner={owner} -f repo={repo} -F number={number} \
+  -f query="$QUERY"
+```
+
+#### 3.2 클라이언트 측 필터링
+
+응답을 받은 직후, 처리 모드에 따라 다음을 수행한다.
+
+| 모드 | 처리 |
+|---|---|
+| **디폴트** (resolved 숨김) | `reviewThreads.nodes` 중 `isResolved == false` 만 펼친다. resolved thread 의 코멘트 본문은 **읽지 않고**, `resolved_hidden_count` 만 센다. |
+| **`--all`** | resolved 포함 전부 펼친다. resolved 코멘트는 `[RESOLVED]` 배지 + 본문 취소선으로 표시. |
+
+`reviewThreads(first:100)` cap 을 초과하면 (응답에 `pageInfo.hasNextPage` 가 있을 경우) 사용자에게 알리고 `--all`/추가 페이지네이션 옵션을 안내한다 — 100 초과 PR 은 드물지만 가능.
+
+#### 3.3 전역 번호 매기기
+
+펼쳐진 thread 들을 **createdAt 오름차순**으로 정렬 → thread 단위로 첫 코멘트가 `#1, #2, ...` 를 받는다. thread 내 reply 는 같은 번호의 reply 트리로 묶는다 (별도 번호 부여 X).
 
 ### Step 3.5: Assess Validity (타당성 평가)
 
@@ -218,7 +262,7 @@ gh api graphql -f query='
 | 4  | ❌  | 💡  | `lib/date.ts:7`    | 이미 처리됨      | 반박      |
 | 5  | ✅  | 💡  | `core/cache.ts:30` | 캐시 전면 개편   | 이슈 생성 |
 
-**분포**: ✅{N} · ⚠️{N} · ❌{N} · 🤔{N}  |  **미해결 스레드**: {N}건  |  **이슈 분리 제안**: {N}건
+**분포**: ✅{N} · ⚠️{N} · ❌{N} · 🤔{N}  |  **미해결 스레드**: {N}건  |  **이슈 분리 제안**: {N}건  |  **resolved 숨김**: {N}건 (디폴트 모드일 때만; `--all` 이면 표시 생략)
 **처리 순서 제안**: `{공백으로 구분된 번호 나열, Valid(수정) → Valid(이슈 생성) → Partial → Unclear → Invalid 순}`
 
 (코멘트가 없으면 "아직 인라인 코멘트가 없습니다." 한 줄로 대체)
@@ -417,7 +461,9 @@ code "~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.md" \
   - `❓ question`: 물음표로 끝나거나 "why", "어떻게", "이유" 같은 질문 톤
   - `💡 suggestion`: "consider", "how about", "nit", "could", "might" 등 제안 톤
   - `💬 note`: 위에 해당하지 않는 단순 코멘트/칭찬
-- **Resolved threads**: `[RESOLVED]` 배지 + 본문 취소선. 대시보드 테이블·상세 블록에서 제외(또는 회색 톤으로 표시). 처리 순서 제안에도 포함하지 않음.
+- **Resolved threads**:
+  - **디폴트 (`--all` 미지정)**: resolved thread 는 fetch 단계에서 본문을 읽지 않는다. 헤더 분포 라인의 `resolved 숨김: {N}건` 으로만 노출. 대시보드 / 상세 / 처리 순서에서 모두 제외.
+  - **`--all` 지정 시**: resolved 도 받아서 표시. 코멘트 헤더에 `[RESOLVED]` 배지 + 본문 취소선. 대시보드 행은 회색 톤 라벨(`~~`)로 두되 처리 순서 제안에서는 여전히 제외(이미 닫힌 논의이므로).
 - **Draft PR**: 헤더에 `[DRAFT]` 배지, 리뷰는 그대로 표시.
 - **Closed/Merged PR**: 헤더에 `[CLOSED]`/`[MERGED]` 배지, "PR이 이미 닫혔습니다" 한 줄 안내 후 리뷰 표시.
 - **리뷰 없음**: 대시보드를 "아직 인라인 코멘트가 없습니다."로 대체, 상세/리뷰어 요약 섹션은 빈 섹션으로 유지("_없음_").

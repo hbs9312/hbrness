@@ -18,7 +18,7 @@ pick-issue → draft-pr → (작업 + commit → chronicle) → create-pr → re
 | `pick-issue` | `/pick-issue`, "내 이슈 보여줘" | assigned 이슈 목록 → 선택 → 프로젝트 메모리에 저장 |
 | `draft-pr` | `/draft-pr`, "Draft PR 만들어줘" | 이슈 번호 기반으로 브랜치+빈 커밋+Draft PR 생성, 이슈 연결 |
 | `create-pr` | `/create-pr`, "PR 만들어줘" | 조직 PR 템플릿(`.github` 레포)을 가져와 PR 생성 |
-| `review-pr` | `/review-pr`, "PR 리뷰 확인" | PR 리뷰 댓글 가져와 코드와 함께 검토 |
+| `review-pr` | `/review-pr [#PR] [-r] [-o] [-a]`, "PR 리뷰 확인" | PR 리뷰 댓글 가져와 코드와 함께 검토. 디폴트는 **unresolved 스레드만** fetch (토큰 절약), `--all`/`-a` 로 resolved 포함 |
 | `clear-issue` | `/clear-issue`, "이슈 정리" | pick-issue가 저장한 현재 작업 이슈 메모리 삭제 |
 | `chronicle` | `/chronicle`, "커밋 기록해줘" | git commit 의 의도·결정·트레이드오프를 `~/.commit-chronicles/` 에 기록 |
 | `chronicle-lookup` | `/chronicle-lookup`, "왜 이렇게 짰지?" | 과거 chronicle 검색·표시 (SHA / 파일 / 기간 / 키워드) |
