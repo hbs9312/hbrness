@@ -129,7 +129,6 @@ commit_plan.phase_4 로드 (.backflow/task-file-map.md에서)
 for commit_unit in commit_plan.phase_4:
   /backflow:impl-controllers [TS 경로] → commit_unit.files 범위만 구현
   /backflow:validate-code [commit_unit.files]
-  /backflow:validate-api [TS 경로]
   /backflow:generate-tests [commit_unit.files] --type integration
   → 커밋 리뷰: "{commit_unit.commit} 커밋 준비 완료.
      확인해주세요. 특히: 요청/응답 스키마, 상태 코드, 에러 응답"
@@ -176,12 +175,23 @@ Phase 6 완료 → 보안/회귀 gate
 critical finding 이 있으면 patch-backend / reimpl-backend 루프로 복귀
 ```
 
+Final Gate 최적화 원칙:
+- 기본값은 실행한다. 영향 여부가 불명확하면 skip 하지 않는다.
+- validate-api: controller, DTO, route, response schema, error response, OpenAPI/export contract, API security scheme 변경이 없을 때만 생략 가능.
+- validate-security: auth, middleware, public route, upload, webhook, external integration, secret/config handling 변경이 없을 때만 생략 가능.
+- validate-tests: 테스트 파일 또는 테스트 대상 코드 변경이 없을 때만 생략 가능.
+
 ## 커밋 단위 실행 규칙
 
 1. **commit_plan 로드**: 각 Phase 시작 시 `.backflow/task-file-map.md`의 `commit_plan.phase_N`을 읽는다
 2. **scope 제한**: impl-* 스킬 호출 시 commit_unit.files에 포함된 파일만 구현/수정한다
 3. **분할 강제**: commit_plan이 없거나 해당 Phase 항목이 비어 있으면 Phase를 진행하지 않는다. `map-tasks`를 재실행하거나 사용자에게 분할 계획을 요청한 뒤 재개한다. **Phase 전체를 단일 커밋으로 묶는 fallback은 허용되지 않는다** — 사용자가 명시적으로 "한 커밋으로 묶어라"라고 지시한 경우만 예외.
 4. **수정 요청**: 사람이 커밋 단위 리뷰에서 수정 요청 시, 해당 커밋 범위 파일만 수정 → 재검증 → 재리뷰
+
+validate-code skip 예외:
+- commit_unit.files 가 문서/리포트/비런타임 메타 파일만 포함할 때만 생략 가능.
+- `src/**`, migration, DTO, route/controller, service, repository, middleware, integration, hook, component, generated API client, runtime config, test target 이 하나라도 포함되면 validate-code 를 실행한다.
+- 애매하면 실행한다.
 
 ## 수정 흐름
 

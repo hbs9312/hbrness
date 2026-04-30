@@ -185,6 +185,14 @@
 /frontflow:validate-a11y                   ← WCAG 접근성 검증
 ```
 
+검증 호출 최적화 원칙:
+
+- 기본값은 실행. 영향 범위가 애매하면 skip 하지 않는다.
+- backflow 컨트롤러 구현 루프에서는 `validate-code` 와 통합 테스트 생성을 유지하고, 전범위 `validate-api` 는 Final Gate 에서 한 번 실행한다.
+- `validate-code` 는 문서/리포트/비런타임 메타 파일만 바뀐 커밋에서만 생략 가능하다. 소스 코드, 마이그레이션, DTO, route/controller, service, repository, middleware, integration, hook, component, generated API client, runtime config, test target 이 포함되면 실행한다.
+- Final Gate 의 `validate-api` / `validate-security` / `validate-tests` 는 관련 surface 가 명확히 변경되지 않았을 때만 생략 가능하다.
+- `frontflow:validate-a11y` 는 JSX/TSX, CSS, layout, aria, form, button, modal, navigation, focus, keyboard interaction 변경이 있으면 실행한다. 순수 타입/API hook/내부 계산만 바뀌고 DOM/accessibility surface 를 건드리지 않을 때만 생략 가능하다.
+
 ### Phase 8: E2E DB 검증 (dbflow)
 
 백엔드 구현 완료 후. 실제 DB + 실제 API 서버 위에서 검증.

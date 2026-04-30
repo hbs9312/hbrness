@@ -128,6 +128,11 @@ for commit_unit in commit_plan.phase_4:
 Phase 4 완료 → Phase 5
 ```
 
+validate-a11y 실행 원칙:
+- JSX/TSX, CSS, layout, aria, form, button, modal, navigation, focus, keyboard interaction 변경이 있으면 실행한다.
+- 순수 타입, API hook, 내부 상태 계산만 변경하고 DOM/accessibility surface 를 건드리지 않을 때만 생략 가능.
+- 애매하면 실행한다.
+
 ### Phase 5: 인터랙션
 ```
 commit_plan.phase_5 로드 (.frontflow/task-file-map.md에서)
@@ -162,6 +167,11 @@ Phase 6 완료 → 완료
 2. **scope 제한**: impl-* 스킬 호출 시 commit_unit.files에 포함된 파일만 구현/수정한다
 3. **분할 강제**: commit_plan이 없거나 해당 Phase 항목이 비어 있으면 Phase를 진행하지 않는다. `map-tasks`를 재실행하거나 사용자에게 분할 계획을 요청한 뒤 재개한다. **Phase 전체를 단일 커밋으로 묶는 fallback은 허용되지 않는다** — 사용자가 명시적으로 "한 커밋으로 묶어라"라고 지시한 경우만 예외.
 4. **수정 요청**: 사람이 커밋 단위 리뷰에서 수정 요청 시, 해당 커밋 범위 파일만 수정 → 재검증 → 재리뷰
+
+validate-code skip 예외:
+- commit_unit.files 가 문서/리포트/비런타임 메타 파일만 포함할 때만 생략 가능.
+- `src/**`, migration, DTO, route/controller, service, repository, middleware, integration, hook, component, generated API client, runtime config, test target 이 하나라도 포함되면 validate-code 를 실행한다.
+- 애매하면 실행한다.
 
 ## 수정 흐름
 

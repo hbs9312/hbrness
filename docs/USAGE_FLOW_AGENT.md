@@ -123,6 +123,13 @@ frontflow:validate-visual                  → Storybook visual QA checklist
 frontflow:validate-a11y                    → WCAG check
 ```
 
+Validation optimization rules:
+- Default to running validators. If impact is unclear, do not skip.
+- In backflow controller commit loops, keep `validate-code` + integration test generation; run whole-contract `validate-api` once at Final Gate.
+- Skip `validate-code` only for docs/reports/non-runtime metadata-only commit units. Run it if any source, migration, DTO, route/controller, service, repository, middleware, integration, hook, component, generated API client, runtime config, or test target changes.
+- Skip Final Gate `validate-api` / `validate-security` / `validate-tests` only when the relevant API/security/test surface is provably untouched.
+- Skip `frontflow:validate-a11y` only for pure type, API hook, or internal state calculation changes that do not touch DOM/accessibility surface.
+
 ### P8: E2E DB (dbflow — after P5 complete)
 
 ```
