@@ -117,6 +117,69 @@ for harness in claude codex; do
     if [ "$at_found" -eq 0 ]; then
       ok "No allowed-tools in Codex SKILL.md frontmatter"
     fi
+
+    # Codex strips agent tools from frontmatter. A malformed strip can leave
+    # orphan YAML list items like "  - shell" with no owning key.
+    dangling_found=0
+    while IFS= read -r md_file; do
+      if ! dangling_lines=$(awk '
+        BEGIN {
+          in_fm = 0
+          seen_fm = 0
+          in_list = 0
+          err = 0
+        }
+        NR == 1 && $0 == "---" {
+          in_fm = 1
+          seen_fm = 1
+          next
+        }
+        in_fm && $0 == "---" {
+          in_fm = 0
+          exit
+        }
+        in_fm {
+          line = $0
+          if (line ~ /^[[:space:]]*$/ || line ~ /^[[:space:]]*#/) {
+            next
+          }
+          if (line ~ /^[[:space:]]*-[[:space:]]+/) {
+            if (!in_list) {
+              print FILENAME ":" NR ":" line
+              err = 1
+            }
+            next
+          }
+          if (line ~ /^[^[:space:]#][^:]*:[[:space:]]*$/) {
+            in_list = 1
+            next
+          }
+          if (line ~ /^[^[:space:]#][^:]*:/) {
+            in_list = 0
+            next
+          }
+          if (line !~ /^[[:space:]]/) {
+            in_list = 0
+          }
+        }
+        END {
+          if (err) {
+            exit 1
+          }
+          if (seen_fm && in_fm) {
+            print FILENAME ": unterminated frontmatter"
+            exit 1
+          }
+        }
+      ' "$md_file"); then
+        err "Dangling YAML list item in Codex frontmatter: $md_file"
+        echo "$dangling_lines" | head -5 | while read -r line; do echo "    $line"; done
+        dangling_found=1
+      fi
+    done < <(find "$harness_dir" -name "*.md" 2>/dev/null)
+    if [ "$dangling_found" -eq 0 ]; then
+      ok "No dangling YAML list items in Codex Markdown frontmatter"
+    fi
   fi
 
   # Manifest check

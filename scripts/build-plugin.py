@@ -79,7 +79,11 @@ def transform_frontmatter(fm_str, adapter, is_agent=False):
         # Handle YAML list continuation (for agent tools/skills)
         if in_yaml_list:
             if stripped.startswith("- "):
-                if yaml_list_key == "tools":
+                if yaml_list_key == "stripped_skip":
+                    continue
+                elif yaml_list_key == "tools":
+                    if not transform_tools_to:
+                        continue
                     tool_name = stripped[2:].strip()
                     mapped = transform_tool(tool_name, tool_map)
                     new_lines.append(f"  - {mapped}")
@@ -97,6 +101,10 @@ def transform_frontmatter(fm_str, adapter, is_agent=False):
 
         # Skip stripped keys
         if key and key in strip_keys:
+            val = stripped.split(":", 1)[1].strip()
+            if not val:
+                in_yaml_list = True
+                yaml_list_key = "stripped_skip"
             continue
 
         # Transform 'tools:' field
