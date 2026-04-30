@@ -392,6 +392,14 @@ def inline_agent_into_skill(skill_content, agent_defs, adapter):
     # Append agent definitions section
     parts = [skill_content.rstrip()]
     parts.append("\n\n---\n")
+    if adapter.get("harness") == "codex":
+        parts.append("## Codex 실행 규칙\n")
+        parts.append("- `spawn_agent` 의 custom `agent_ref` 는 사용하지 않습니다.\n")
+        parts.append("- `spawn_agent` 는 default agent 로 호출합니다.\n")
+        parts.append("- `fork_context` 는 `false` 로 둡니다.\n")
+        parts.append("- `message` 에 이 스킬의 \"프롬프트 구성\" 값과 아래 참조 에이전트 정의 전체를 함께 포함합니다.\n")
+        parts.append("- 호출 후 `wait_agent` 로 완료를 기다리고, 에이전트가 반환한 summary 만 수정 없이 전달합니다.\n")
+        parts.append("\n")
     parts.append("## 참조 에이전트 정의\n")
     parts.append("아래는 이 스킬이 spawn_agent로 호출하는 에이전트의 전체 지침입니다.\n")
     parts.append("spawn_agent 호출 시 이 내용을 프롬프트로 전달하세요.\n")
