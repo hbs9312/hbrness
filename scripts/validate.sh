@@ -10,6 +10,46 @@ err() { echo "  ERROR: $1"; ERRORS=$((ERRORS + 1)); }
 warn() { echo "  WARN:  $1"; }
 ok() { echo "  OK:    $1"; }
 
+is_harness_gated_out() {
+  local file="$1"
+  local harness="$2"
+  local result
+
+  result=$(awk -v harness="$harness" '
+    BEGIN { found = 0; allowed = 0; in_list = 0 }
+    NR > 40 { exit }
+    /^---$/ && NR > 1 { exit }
+    /^harness:/ {
+      found = 1
+      val = $0
+      sub(/^harness:[[:space:]]*/, "", val)
+      gsub(/[\[\]",]/, " ", val)
+      if (val != "") {
+        n = split(val, parts, /[[:space:]]+/)
+        for (i = 1; i <= n; i++) {
+          if (parts[i] == harness) allowed = 1
+        }
+        exit
+      }
+      in_list = 1
+      next
+    }
+    in_list && /^[[:space:]]*-[[:space:]]*/ {
+      item = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", item)
+      gsub(/[\[\]",]/, " ", item)
+      if (item == harness) allowed = 1
+      next
+    }
+    in_list && $0 !~ /^[[:space:]]*$/ { exit }
+    END {
+      if (!found || allowed) print "no"; else print "yes"
+    }
+  ' "$file")
+
+  [ "$result" = "yes" ]
+}
+
 echo "========================================"
 echo "Validating hbrness build outputs"
 echo "========================================"
@@ -180,6 +220,53 @@ for harness in claude codex; do
     if [ "$dangling_found" -eq 0 ]; then
       ok "No dangling YAML list items in Codex Markdown frontmatter"
     fi
+
+    dispatcher_missing=0
+    while IFS= read -r skill_file; do
+      if grep -Eq 'spawn_agent로 `[a-z][-a-z]+:[a-z][-a-z]+`' "$skill_file"; then
+        if ! grep -q "참조 에이전트 정의" "$skill_file"; then
+          err "Codex dispatcher skill references plugin agent without inlined definition: $skill_file"
+          dispatcher_missing=1
+        fi
+      fi
+    done < <(find "$harness_dir" -name "SKILL.md" 2>/dev/null)
+    if [ "$dispatcher_missing" -eq 0 ]; then
+      ok "Codex dispatcher skills include referenced agent definitions"
+    fi
+
+    raw_agent_ref=$(grep -Rnl 'agent_ref:' "$harness_dir" --include="*.md" 2>/dev/null | head -5 || true)
+    if [ -n "$raw_agent_ref" ]; then
+      err "Found raw agent_ref usage in Codex output:"
+      echo "$raw_agent_ref" | while read -r f; do echo "    $f"; done
+    else
+      ok "No raw agent_ref usage in Codex output"
+    fi
+
+    missing_agent_links=0
+    while IFS= read -r agent_src; do
+      if is_harness_gated_out "$agent_src" "codex"; then
+        continue
+      fi
+
+      rel="${agent_src#$PLUGINS_DIR/}"
+      plugin="${rel%%/*}"
+      agent_rel="${rel#*/agents/}"
+
+      if [[ "$agent_rel" != */AGENT.common.md ]]; then
+        err "Codex source agent is not directory-form and cannot be installed deterministically: $agent_src"
+        missing_agent_links=1
+        continue
+      fi
+
+      agent_dir="${agent_rel%/AGENT.common.md}"
+      if [ ! -f "$harness_dir/$plugin/agents/$agent_dir/AGENT.md" ]; then
+        err "Codex source agent missing installable dist directory: $agent_src"
+        missing_agent_links=1
+      fi
+    done < <(find "$PLUGINS_DIR" -path "*/agents/*" -name "*.common.md" 2>/dev/null)
+    if [ "$missing_agent_links" -eq 0 ]; then
+      ok "Codex source agents are directory-form and installable"
+    fi
   fi
 
   # Manifest check
@@ -201,17 +288,9 @@ for harness in claude codex; do
   source_total=$(find "$PLUGINS_DIR" -name "SKILL.common.md" 2>/dev/null | wc -l | tr -d ' ')
   gated_out=0
   while IFS= read -r skill_src; do
-    # Read lines 1..20 of frontmatter; if 'harness:' line exists and doesn't include current harness, count as gated out
-    hdr=$(head -20 "$skill_src" 2>/dev/null)
-    harness_line=$(echo "$hdr" | awk -F: '/^harness:/{print $0; exit}')
-    if [ -z "$harness_line" ]; then
-      continue
+    if is_harness_gated_out "$skill_src" "$harness"; then
+      gated_out=$((gated_out + 1))
     fi
-    # If the line's value contains the current harness name, keep it; otherwise gated out
-    if echo "$harness_line" | grep -q "$harness"; then
-      continue
-    fi
-    gated_out=$((gated_out + 1))
   done < <(find "$PLUGINS_DIR" -name "SKILL.common.md" 2>/dev/null)
   expected_count=$((source_total - gated_out))
 
@@ -224,6 +303,27 @@ for harness in claude codex; do
     fi
   else
     err "Skill count mismatch: expected $expected_count (source=$source_total, gated-out=$gated_out) != $dist_count $harness"
+  fi
+
+  # Agent count parity (accounting for 'harness:' gate in source frontmatter)
+  agent_source_total=$(find "$PLUGINS_DIR" -path "*/agents/*" -name "*.common.md" 2>/dev/null | wc -l | tr -d ' ')
+  agent_gated_out=0
+  while IFS= read -r agent_src; do
+    if is_harness_gated_out "$agent_src" "$harness"; then
+      agent_gated_out=$((agent_gated_out + 1))
+    fi
+  done < <(find "$PLUGINS_DIR" -path "*/agents/*" -name "*.common.md" 2>/dev/null)
+  agent_expected_count=$((agent_source_total - agent_gated_out))
+
+  agent_dist_count=$(find "$harness_dir" -path "*/agents/*" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$agent_expected_count" -eq "$agent_dist_count" ]; then
+    if [ "$agent_gated_out" -gt 0 ]; then
+      ok "Agent count matches: $agent_expected_count expected (source=$agent_source_total, gated-out=$agent_gated_out) = $agent_dist_count $harness"
+    else
+      ok "Agent count matches: $agent_source_total source = $agent_dist_count $harness"
+    fi
+  else
+    err "Agent count mismatch: expected $agent_expected_count (source=$agent_source_total, gated-out=$agent_gated_out) != $agent_dist_count $harness"
   fi
 done
 
