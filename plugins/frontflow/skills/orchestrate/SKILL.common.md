@@ -1,0 +1,35 @@
+---
+name: orchestrate
+description: Codex에서 frontflow 프론트엔드 구현 전체 워크플로우를 시작합니다. "프론트엔드 구현 시작", "구현 워크플로우" 요청 시 사용.
+harness: [codex]
+tools: [sub-agent]
+---
+
+# frontflow 워크플로우 시작 — 오케스트레이터 디스패처
+
+이 스킬은 Codex에서 frontflow 오케스트레이터를 시작하는 진입점입니다.
+직접 구현하지 않고, 기존 오케스트레이터 에이전트를 격리 컨텍스트로 호출합니다.
+
+## 실행 계약
+
+- 이 스킬은 dispatcher 입니다. 직접 구현하지 않습니다.
+- 반드시 `frontflow:orchestrator` 에이전트를 격리 컨텍스트로 호출합니다.
+- 호출 프롬프트에는 아래 "프롬프트 구성" 값을 빠짐없이 포함합니다.
+- 빌드 산출물이 참조 에이전트 정의를 포함하므로 해당 지침 전체도 호출 프롬프트에 포함합니다.
+- 에이전트가 반환한 summary 를 수정하지 않고 그대로 출력합니다.
+
+## 에이전트 호출
+
+서브에이전트로 `frontflow:orchestrator` 에이전트를 호출합니다.
+
+프롬프트 구성:
+
+```text
+사용자 요청: {$ARGUMENTS 원문}
+프론트엔드 프로젝트 컨텍스트: ${SKILL_DIR}/../../context/frontend.md
+작업 원칙: 기존 frontflow 오케스트레이터 지침을 따른다.
+```
+
+## 결과 전달
+
+에이전트가 반환한 summary 를 그대로 출력합니다.
