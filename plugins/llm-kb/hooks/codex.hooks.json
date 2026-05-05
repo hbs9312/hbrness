@@ -1,12 +1,12 @@
 {
   "hooks": {
-    "SessionStart": [
+    "Stop": [
       {
         "matcher": null,
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"./hooks/fetch-templates.py\""
+            "command": "LLM_KB_HARNESS=codex python3 \"./hooks/kb-judge.py\""
           }
         ]
       }

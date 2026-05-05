@@ -42,7 +42,7 @@ Invocation afterwards: `/ghflow:review-pr`, `/specflow:generate-fs`, etc.
 | Harness | Default | What hbrness does | What you do |
 |---|---|---|---|
 | Claude | marketplace-only | builds `~/.claude/plugins/marketplaces/hbrness/` | `/plugin marketplace add <path>` + `/plugin install <name>@hbrness` |
-| Codex  | user-level | symlinks into `~/.codex/skills/<plugin>-<name>` | nothing — already live after restart |
+| Codex  | user-level | symlinks into `~/.codex/skills/<plugin>-<name>`; hook-capable plugins are also registered as local Codex plugins | restart Codex |
 
 ### Flags
 
@@ -81,7 +81,7 @@ hbrness install   <harness> [plugin]    # register plugin (claude) or symlink (c
 hbrness uninstall <harness> [plugin]    # clean both plugin and user-level installs
 hbrness list      <harness>             # show what's installed
 hbrness plugins   <harness>             # show what's built in dist/
-hbrness doctor    [harness]             # scan for dangling links, stale hooks
+hbrness doctor    [harness]             # scan links, hooks, and Codex plugin wiring
 hbrness repair    [harness]             # apply auto-fixes for issues doctor finds
 hbrness update                          # git pull + rebuild + refresh (clone), or upgrade hint (npm)
 hbrness --help
@@ -91,13 +91,23 @@ Options:
 - `--dry-run` — print the plan without touching the filesystem
 - `--json` — machine-readable output
 - `--mode <plugin|user-level>` — override the default install mode
-- `--no-hooks` — (user-level mode) skip merging plugin hooks into `~/.claude/settings.json`
+- `--no-hooks` — (user-level mode) skip hook wiring (`~/.claude/settings.json` merge for Claude, local plugin registration for Codex)
 
 ### Hooks
 
 When a Claude plugin ships a `hooks/hooks.json`, `hbrness install claude <plugin>` also merges its entries into `~/.claude/settings.json` under the matching event (e.g. `SessionStart`). Each injected entry is tagged with an `_hbrness` sentinel so uninstall removes only hbrness-owned entries and leaves the rest of your hook configuration untouched. A timestamped backup (`settings.json.hbrness-bak.<ts>`) is written before every modification. Use `--no-hooks` to opt out.
 
-Codex hook merging is not supported yet.
+When a Codex plugin ships a root `hooks.json`, `hbrness install codex <plugin>` keeps the normal user-level skill symlinks and also registers the plugin through Codex's local plugin marketplace:
+
+- `~/plugins/<plugin>` symlink → `dist/codex/<plugin>`
+- `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>` copy of `dist/codex/<plugin>`
+- `~/.agents/plugins/marketplace.json` entry
+- `~/.codex/config.toml` `[plugins."<plugin>@hbrness"] enabled = true` (or the existing local marketplace name if one is already present)
+- `~/.codex/config.toml` `[features] codex_hooks = true` and `plugin_hooks = true`
+
+Hook command paths in the Codex cache copy are rewritten from plugin-relative paths like `./hooks/...` to absolute paths because Codex executes hooks from the active workspace, not the plugin root.
+
+Use `--no-hooks` to skip this Codex local-plugin registration.
 
 Restart the harness (Claude Code / Codex) after install or uninstall so it picks up new skills.
 

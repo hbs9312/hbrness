@@ -1,0 +1,8 @@
+{
+  "name": "llm-kb",
+  "version": "0.1.0",
+  "description": "도구 무관 개인 지식 베이스(LLM Wiki). Stop 훅이 사용자의 질문 흐름을 감지해 일반 지식이라 판단되면 백그라운드 워커가 한국어 단일 노트로 ~/.hbrness/llm-kb/ 에 누적 저장하고, 사용자는 /kb-search /kb-list /kb-save 슬래시 스킬로 다시 꺼내본다. claude·codex 어느 하네스에서 동작하든 같은 KB 디렉토리를 공유한다.",
+  "author": {
+    "name": "hbs9312"
+  }
+}

@@ -106,9 +106,9 @@
    - `actions/checkout@v4`, `setup-node@v4`, `setup-python@v5` 가 Node 20 기반이라 deprecation 경고
    - 2026-06-02 부터 Node 24 강제 적용. 그 전에 action 최신 버전 확인 or `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` 환경변수 설정
 
-6. **Codex hooks 병합** (조건부)
-   - 당장은 지장 없음 (자세한 내용 주의사항 §3.4 참조)
-   - Codex가 hooks.json 로드 규약을 공식화하면 그때 구현
+6. **Codex hook-capable plugin smoke**
+   - `llm-kb` 이후 Codex root `hooks.json` 산출과 local marketplace 등록 경로가 생김
+   - 남은 작업은 실제 Codex 재시작 후 hook fire 여부를 smoke 하는 것
 
 ### 🟢 여유 생길 때
 
@@ -164,12 +164,13 @@
 - 해결: 업그레이드 후 **`hbrness install <harness>` 재실행** (README에 명시 필요 — todo §2.1)
 - `hbrness doctor` 가 dangling을 찾아주고 `repair`가 정리해주긴 함
 
-### 3.4 Codex hooks는 구현 안 돼 있음. 그래도 기능엔 지장 없음
+### 3.4 Codex hooks는 local plugin registration 경로를 사용
 
-- 훅을 가진 플러그인은 **ghflow 하나뿐** (`fetch-templates.py`)
-- `create-issue` / `create-pr` 스킬에 훅 미실행 시 **fallback 경로** 명시됨 (자유 양식으로 진행할지 물음)
-- Codex의 `hooks.json` 로드 규약 자체가 공식 문서에 없어서, 구현해도 발동될지 불확실
-- 결정: 공식 규약이 드러나면 그때 구현
+- user-level skill symlink만으로는 Codex가 plugin root `hooks.json` 을 로드하지 않는다.
+- hook-capable Codex 플러그인은 추가로 `~/plugins/<plugin>` symlink, `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>` copy, `~/.agents/plugins/marketplace.json`, `~/.codex/config.toml` enable 항목과 `[features] codex_hooks = true`, `plugin_hooks = true` 를 설치한다.
+- Codex hook command 는 workspace cwd 에서 실행되므로 cache copy 의 `hooks.json` 안 `./hooks/...` 같은 plugin-relative 경로는 install 시 absolute path 로 rewrite 한다.
+- 스킬 discoverability는 기존 `~/.codex/skills/<plugin>-<name>` symlink가 계속 담당하고, 훅 로드는 Codex local plugin registration이 담당한다.
+- 실제 훅 발화는 Codex 재시작 후 smoke 필요.
 
 ### 3.5 Hooks 병합 시 `_hbrness` 센티넬이 유일한 소유권 표식
 

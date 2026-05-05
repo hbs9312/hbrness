@@ -267,6 +267,40 @@ for harness in claude codex; do
     if [ "$missing_agent_links" -eq 0 ]; then
       ok "Codex source agents are directory-form and installable"
     fi
+
+    missing_skills_manifest=0
+    while IFS= read -r plugin_dir; do
+      manifest="$plugin_dir/.codex-plugin/plugin.json"
+      if [ -d "$plugin_dir/skills" ] && ! grep -q '"skills": "./skills/"' "$manifest"; then
+        err "Codex plugin with skills missing manifest skills field: $plugin_dir"
+        missing_skills_manifest=1
+      fi
+    done < <(find "$harness_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+    if [ "$missing_skills_manifest" -eq 0 ]; then
+      ok "Codex plugin manifests expose skills directories"
+    fi
+
+    bad_hooks=0
+    for plugin_src in "$PLUGINS_DIR"/*/; do
+      plugin_name=$(basename "$plugin_src")
+      [ -d "$plugin_src/hooks" ] || continue
+      if [ ! -f "$harness_dir/$plugin_name/hooks.json" ]; then
+        err "Codex hook-capable plugin missing root hooks.json: $harness_dir/$plugin_name"
+        bad_hooks=1
+      fi
+      manifest="$harness_dir/$plugin_name/.codex-plugin/plugin.json"
+      if [ -f "$manifest" ] && ! grep -q '"hooks": "./hooks.json"' "$manifest"; then
+        err "Codex hook-capable plugin missing manifest hooks field: $manifest"
+        bad_hooks=1
+      fi
+      if [ -f "$harness_dir/$plugin_name/hooks/hooks.json" ]; then
+        err "Codex hook config should be root hooks.json, not hooks/hooks.json: $harness_dir/$plugin_name"
+        bad_hooks=1
+      fi
+    done
+    if [ "$bad_hooks" -eq 0 ]; then
+      ok "Codex hook configs are emitted at plugin root"
+    fi
   fi
 
   # Manifest check

@@ -15,8 +15,11 @@ const HARNESS_ROOT_VAR = {
 
 /** Read a plugin's hooks.json. Returns null if missing. Throws on parse error. */
 function loadPluginHooks(pluginDir) {
-  const hooksPath = path.join(pluginDir, 'hooks', 'hooks.json');
-  if (!fs.existsSync(hooksPath)) return null;
+  const hooksPath = [
+    path.join(pluginDir, 'hooks.json'),
+    path.join(pluginDir, 'hooks', 'hooks.json'),
+  ].find((p) => fs.existsSync(p));
+  if (!hooksPath) return null;
   const raw = fs.readFileSync(hooksPath, 'utf8');
   try {
     return JSON.parse(raw);
