@@ -25,6 +25,10 @@
     "{HARNESS_HOME}": "~/.codex",
     "{HARNESS_NAME}": "codex",
     "{HBRNESS_HOME}": "~/.hbrness",
+    "{CLAUDE_MEMORY_PREFIX}": "~/.claude/projects",
+    "{CLAUDE_MEMORY_SUFFIX}": "/memory",
+    "{CODEX_MEMORY_PREFIX}": "~/.codex/memories",
+    "{CODEX_MEMORY_SUFFIX}": "",
     "서브에이전트로": "spawn_agent로",
     "harness_spawn({": "spawn_agent({",
     "tools: sub-agent": "tools: spawn_agent"

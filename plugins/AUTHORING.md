@@ -107,6 +107,19 @@ mkdir -p ~/.hbrness/reviews/{owner}/{repo}
 | `{HARNESS_HOME}` | `~/.claude` | `~/.codex` |
 | `{HARNESS_NAME}` | `claude` | `codex` |
 | `{HBRNESS_HOME}` | `~/.hbrness` | `~/.hbrness` |
+| `{CLAUDE_MEMORY_PREFIX}` | `~/.claude/projects` | `~/.claude/projects` |
+| `{CLAUDE_MEMORY_SUFFIX}` | `/memory` | `/memory` |
+| `{CODEX_MEMORY_PREFIX}` | `~/.codex/memories` | `~/.codex/memories` |
+| `{CODEX_MEMORY_SUFFIX}` | (빈 문자열) | (빈 문자열) |
+
+`{CLAUDE_MEMORY_*}`/`{CODEX_MEMORY_*}` 는 **양쪽 도구의 자동로드 MEMORY.md 위치를 동시에 참조**할 때 사용한다. 두 도구 메모리 디렉토리 구조가 비대칭이므로 (`projects/<key>/memory` vs `memories/<key>`) prefix/suffix 두 토막으로 끊어 쓴다. 본문 사용 형태:
+
+```text
+{CLAUDE_MEMORY_PREFIX}/<computed-key>{CLAUDE_MEMORY_SUFFIX}/MEMORY.md
+{CODEX_MEMORY_PREFIX}/<computed-key>{CODEX_MEMORY_SUFFIX}/MEMORY.md
+```
+
+이 두 placeholder 쌍은 양쪽 adapter 에 **동일한 값**으로 등록되어 있어, claude/codex 어느 빌드에서도 양쪽 경로가 모두 노출된다. 한쪽만 갱신해야 하는 일반 스킬은 `{HARNESS_HOME}` 으로 자기 하네스 경로만 다루면 된다.
 
 **작성 방법 (소스 `.common.md`):**
 ```markdown
@@ -183,3 +196,4 @@ harness: [claude, codex]  # 둘 다 포함 (명시. 생략해도 같은 효과)
 | `xreview:review-bridge` (agent) | 하드코딩된 `~/.claude/plugins/` | `harness: [claude]` (Tier 3) |
 | `dbflow` | n/a | `.e2e/` (Tier 0, 본문 적용 — Phase 1.5.0) |
 | `specflow` 산출물 | 암묵적 project-local | `specs/` (Tier 0) 로 명시 |
+| `sessionflow:handoff` / `:handoff-clear` | standalone `~/.{claude,codex}/skills/handoff*` (도구별 분리 파일) | hbrness 플러그인 흡수, HANDOFF.md = `~/.hbrness/sessionflow/<key>/HANDOFF.md` (Tier 1 공유), MEMORY.md 갱신 = 새 `{CLAUDE_MEMORY_*}` / `{CODEX_MEMORY_*}` placeholder (Tier 2) |
