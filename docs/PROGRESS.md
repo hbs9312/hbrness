@@ -113,9 +113,8 @@
 ### 🟢 여유 생길 때
 
 7. **자동화 테스트 프레임워크 도입**
-   - Node 내장 `node:test` 도입
-   - `tests/codex-local-plugin.test.js` 가 임시 HOME 에서 Codex hook-capable plugin install → doctor clean → fault injection → repair 회복 경로를 검증
-   - 남은 작업은 Claude hook merge, generic installer, update 경로까지 테스트 범위 확대
+   - 현재는 수동 smoke + CI smoke만 있음
+   - Vitest / node:test 등 도입 후 installer/hooks/doctor 유닛 테스트 작성
 
 8. **State store**
    - 현재는 심볼릭 target path 스캔 + `_hbrness` 센티넬로 상태 추론

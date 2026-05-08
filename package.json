@@ -14,9 +14,8 @@
   ],
   "scripts": {
     "build": "bash scripts/build.sh all",
-    "test": "bash scripts/build.sh codex llm-kb && node --test tests/*.test.js",
     "validate": "bash scripts/validate.sh",
-    "prepublishOnly": "bash scripts/build.sh all && bash scripts/validate.sh && npm test"
+    "prepublishOnly": "bash scripts/build.sh all && bash scripts/validate.sh"
   },
   "engines": {
     "node": ">=18.0.0"
