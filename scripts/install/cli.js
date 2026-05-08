@@ -24,7 +24,7 @@ Usage:
   hbrness uninstall <harness> [plugin]     Remove installed hbrness plugin + user-level symlinks
   hbrness list <harness>                   List currently installed items
   hbrness plugins <harness>                List built plugins in dist/
-  hbrness doctor [harness]                 Scan for dangling links, stale hooks, and Codex hook plugin wiring
+  hbrness doctor [harness]                 Scan for dangling links and stale hooks
   hbrness repair [harness]                 Apply fixes for issues doctor finds
   hbrness update                           Pull latest (git clone) or show upgrade hint (npm)
   hbrness --help                           Show this help
@@ -37,7 +37,7 @@ Options:
   --json                                   Machine-readable output
   --mode <plugin|user-level>               Override the default install mode for this command
   --print-only                             (plugin mode) Don't invoke the claude CLI; just print the commands
-  --no-hooks                               (user-level mode) Skip hook wiring
+  --no-hooks                               (user-level mode) Skip merging plugin hooks into settings.json
   --yes, -y                                Skip confirmation prompts (reserved, future use)
 
 Examples:
@@ -319,9 +319,6 @@ function printRuns(title, runs, flags) {
         added: '✓',
         installed: '✓',
         created: '✓',
-        copied: '✓',
-        updated: '✓',
-        enabled: '✓',
         exists: '·',
         ok: '·',
         skipped: '·',
@@ -348,17 +345,6 @@ function formatOpDetail(r) {
     const backup = r.backup ? ` · backup: ${relPath(r.backup)}` : '';
     return `${relPath(r.target)}  [${events || 'no events'}]${backup}`;
   }
-  if (r.action === 'codex-plugin-link') return `${relPath(r.target)}  →  ${relPath(r.source)}`;
-  if (r.action === 'codex-plugin-unlink') return relPath(r.target);
-  if (r.action === 'codex-cache-copy') return `${relPath(r.target)}  ←  ${relPath(r.source)}`;
-  if (r.action === 'codex-cache-remove') return relPath(r.target);
-  if (r.action === 'codex-marketplace')
-    return `${relPath(r.target)}  [${r.plugin}@${r.marketplace}]`;
-  if (r.action === 'codex-marketplace-remove')
-    return `${relPath(r.target)}  [${r.plugin}@${r.marketplace}]`;
-  if (r.action === 'codex-enable')
-    return `${relPath(r.target)}  [${r.plugin}@${r.marketplace}]`;
-  if (r.action === 'codex-disable') return `${relPath(r.target)}  [${r.plugin}]`;
   if (r.action === 'setup-marketplace')
     return `${relPath(r.target)}  [${r.count} plugins]`;
   if (r.action === 'claude-marketplace-add')

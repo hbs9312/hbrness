@@ -257,10 +257,6 @@ def generate_manifest(plugin_dir, output_dir, adapter):
         "description": meta["description"],
         "author": meta.get("author", ""),
     }
-    if adapter.get("harness") == "codex" and os.path.isdir(os.path.join(output_dir, "skills")):
-        manifest["skills"] = "./skills/"
-    if adapter.get("harness") == "codex" and os.path.isfile(os.path.join(output_dir, "hooks.json")):
-        manifest["hooks"] = "./hooks.json"
 
     manifest_path = os.path.join(manifest_dir, "plugin.json")
     with open(manifest_path, "w") as f:
@@ -313,41 +309,18 @@ def handle_mcp(plugin_dir, output_dir, adapter):
 
 
 def handle_hooks(plugin_dir, output_dir, adapter, repo_root):
-    """Copy harness-specific hook configuration.
+    """Copy harness-specific hook configuration."""
+    hooks_source = adapter.get("hooks_source")
+    if not hooks_source:
+        return
 
-    Resolution order (first hit wins):
-      1. ``<plugin>/hooks/<harness>.hooks.json`` — plugin-local override
-      2. ``adapters/hooks/<harness>.hooks.json`` — repo-wide default referenced
-         by ``hooks_source`` in the adapter
-    """
+    # Check if this plugin has hooks
     hooks_dir = os.path.join(plugin_dir, "hooks")
     if not os.path.isdir(hooks_dir):
         return
 
-    harness = adapter.get("harness", "")
-    src = None
-
-    # 1. Plugin-local override (preferred)
-    if harness:
-        local = os.path.join(hooks_dir, f"{harness}.hooks.json")
-        if os.path.exists(local):
-            src = local
-
-    # 2. Repo-wide default
-    if src is None:
-        hooks_source = adapter.get("hooks_source")
-        if hooks_source:
-            candidate = os.path.join(repo_root, hooks_source)
-            if os.path.exists(candidate):
-                src = candidate
-
-    if src is None:
-        return
-
-    if harness == "codex":
-        # Native Codex plugins expect hook config at the plugin root. The hook
-        # implementation scripts still live under hooks/.
-        shutil.copy2(src, os.path.join(output_dir, "hooks.json"))
+    src = os.path.join(repo_root, hooks_source)
+    if not os.path.exists(src):
         return
 
     dst_hooks_dir = os.path.join(output_dir, "hooks")
@@ -485,7 +458,6 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
 
     # Walk source and process files
     for root, dirs, files in os.walk(plugin_dir):
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
         rel_root = os.path.relpath(root, plugin_dir)
 
         # Skip entire subtree if it's under a gated-out skill/agent dir
@@ -493,8 +465,6 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
             continue
 
         for fname in files:
-            if fname.endswith((".pyc", ".pyo")):
-                continue
             src_path = os.path.join(root, fname)
             rel_path = os.path.join(rel_root, fname) if rel_root != "." else fname
 
@@ -531,26 +501,19 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
                 transform_file(src_path, dst_path, adapter, is_agent=True)
                 continue
 
-            # Plugin-local hook configs are handled by handle_hooks() — never
-            # copy raw `<harness>.hooks.json` files into dist (they'd shadow or
-            # contaminate the renamed canonical hooks/hooks.json).
-            if fname.endswith(".hooks.json"):
-                continue
-
             # Copy all other files as-is (subtree-level gating already filtered above)
             dst_path = os.path.join(output_dir, rel_path)
             os.makedirs(os.path.dirname(dst_path), exist_ok=True)
             shutil.copy2(src_path, dst_path)
+
+    # Generate manifest
+    generate_manifest(plugin_dir, output_dir, adapter)
 
     # Handle MCP
     handle_mcp(plugin_dir, output_dir, adapter)
 
     # Handle hooks
     handle_hooks(plugin_dir, output_dir, adapter, repo_root)
-
-    # Generate manifest after optional companion surfaces are emitted so Codex
-    # can discover entries like root hooks.json via manifest fields.
-    generate_manifest(plugin_dir, output_dir, adapter)
 
     # Count outputs
     skill_count = sum(1 for r, d, f in os.walk(output_dir) for fn in f if fn == "SKILL.md")

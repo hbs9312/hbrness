@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"./hooks/fetch-templates.py\""
+            "command": "python3 \"${CODEX_PLUGIN_ROOT}/hooks/fetch-templates.py\""
           }
         ]
       }

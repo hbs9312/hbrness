@@ -3,9 +3,6 @@ const path = require('path');
 const { distDir, harnessTargets } = require('./paths.js');
 const { readSettings, SETTINGS_PATH } = require('./settings.js');
 const { SENTINEL } = require('./hooks.js');
-const codexLocalPlugin = require('./codex-local-plugin.js');
-
-const CODEX_CACHE_MARKER_FILE = '.hbrness-origin';
 
 /**
  * Issue shape:
@@ -27,9 +24,6 @@ function diagnose({ harnesses = ['claude', 'codex'] } = {}) {
   if (harnesses.includes('claude')) {
     issues.push(...scanHooks());
     issues.push(...scanBackups());
-  }
-  if (harnesses.includes('codex')) {
-    issues.push(...scanCodexLocalPlugins());
   }
   return issues;
 }
@@ -161,282 +155,12 @@ function scanBackups() {
   return issues;
 }
 
-function scanCodexLocalPlugins() {
-  const issues = [];
-  const config = readCodexConfig();
-  const hookPlugins = enabledHbrnessCodexHookPlugins(config);
-  if (hookPlugins.length === 0) return issues;
-
-  for (const feature of ['codex_hooks', 'plugin_hooks']) {
-    if (config.features[feature] !== true) {
-      issues.push({
-        type: 'codex-feature-disabled',
-        severity: 'error',
-        harness: 'codex',
-        detail: `~/.codex/config.toml must set [features] ${feature} = true for plugin hooks`,
-        fix: {
-          action: 'reinstall-codex-plugin',
-          plugin: hookPlugins[0].plugin,
-          pluginDir: hookPlugins[0].pluginDir,
-        },
-      });
-    }
-  }
-
-  for (const entry of hookPlugins) {
-    issues.push(...scanCodexPluginInstall(entry));
-  }
-  return issues;
-}
-
-function enabledHbrnessCodexHookPlugins(config) {
-  const out = [];
-  const codexDist = distDir('codex');
-  for (const section of config.plugins) {
-    if (!section.enabled) continue;
-    if (section.marketplace !== codexLocalPlugin.MARKETPLACE_NAME) continue;
-    const pluginDir = path.join(codexDist, section.plugin);
-    if (!fs.existsSync(path.join(pluginDir, 'hooks.json'))) continue;
-    out.push({
-      plugin: section.plugin,
-      marketplace: section.marketplace,
-      pluginDir,
-    });
-  }
-  return out;
-}
-
-function scanCodexPluginInstall(entry) {
-  const issues = [];
-  const { plugin, marketplace, pluginDir } = entry;
-  const manifest = readJsonSafe(path.join(pluginDir, '.codex-plugin', 'plugin.json'), {});
-  const version = String(manifest.version || '0.0.0');
-  const fix = { action: 'reinstall-codex-plugin', plugin, pluginDir };
-
-  const localLink = path.join(codexLocalPlugin.USER_PLUGINS_DIR, plugin);
-  if (!isSymlinkTo(localLink, pluginDir)) {
-    issues.push({
-      type: 'codex-local-plugin-link',
-      severity: 'warn',
-      harness: 'codex',
-      plugin,
-      detail: `${localLink} should symlink to ${pluginDir}`,
-      fix,
-    });
-  }
-
-  const marketplaceIssue = scanCodexMarketplaceEntry(plugin, marketplace, fix);
-  if (marketplaceIssue) issues.push(marketplaceIssue);
-
-  const cacheRoot = path.join(codexLocalPlugin.CODEX_PLUGIN_CACHE_DIR, marketplace, plugin);
-  const cachePath = path.join(cacheRoot, version);
-  const cacheStat = lstatOrNull(cachePath);
-  if (!cacheStat) {
-    issues.push({
-      type: 'codex-plugin-cache-missing',
-      severity: 'error',
-      harness: 'codex',
-      plugin,
-      detail: `Codex plugin cache missing: ${cachePath}`,
-      fix,
-    });
-    return issues;
-  }
-  if (cacheStat.isSymbolicLink()) {
-    issues.push({
-      type: 'codex-plugin-cache-symlink',
-      severity: 'error',
-      harness: 'codex',
-      plugin,
-      detail: `Codex plugin cache must be a real directory, not a symlink: ${cachePath}`,
-      fix,
-    });
-    return issues;
-  }
-  if (!cacheStat.isDirectory()) {
-    issues.push({
-      type: 'codex-plugin-cache-invalid',
-      severity: 'error',
-      harness: 'codex',
-      plugin,
-      detail: `Codex plugin cache is not a directory: ${cachePath}`,
-      fix,
-    });
-    return issues;
-  }
-  if (!fs.existsSync(path.join(cachePath, CODEX_CACHE_MARKER_FILE))) {
-    issues.push({
-      type: 'codex-plugin-cache-unmarked',
-      severity: 'warn',
-      harness: 'codex',
-      plugin,
-      detail: `Codex plugin cache is not marked as hbrness-managed: ${cachePath}`,
-      fix,
-    });
-  }
-
-  const cachedManifest = readJsonSafe(path.join(cachePath, '.codex-plugin', 'plugin.json'), null);
-  if (!cachedManifest || cachedManifest.hooks !== './hooks.json') {
-    issues.push({
-      type: 'codex-plugin-manifest-hooks',
-      severity: 'error',
-      harness: 'codex',
-      plugin,
-      detail: `Codex cached manifest must contain "hooks": "./hooks.json": ${cachePath}`,
-      fix,
-    });
-  }
-
-  const hooksPath = path.join(cachePath, 'hooks.json');
-  const hooks = readJsonSafe(hooksPath, null);
-  if (!hooks) {
-    issues.push({
-      type: 'codex-plugin-cache-hooks-missing',
-      severity: 'error',
-      harness: 'codex',
-      plugin,
-      detail: `Codex cached hooks.json is missing or invalid: ${hooksPath}`,
-      fix,
-    });
-    return issues;
-  }
-
-  for (const command of collectHookCommands(hooks)) {
-    if (hasPluginRelativePath(command)) {
-      issues.push({
-        type: 'codex-hook-relative-path',
-        severity: 'error',
-        harness: 'codex',
-        plugin,
-        detail: `Codex hook command must use absolute plugin paths because hooks run from workspace cwd: ${command}`,
-        fix,
-      });
-      continue;
-    }
-    const scriptPath = extractScriptPath(command);
-    if (scriptPath && !fs.existsSync(scriptPath)) {
-      issues.push({
-        type: 'codex-hook-missing-script',
-        severity: 'error',
-        harness: 'codex',
-        plugin,
-        detail: `Codex hook command references missing file: ${scriptPath}`,
-        fix,
-      });
-    }
-  }
-
-  return issues;
-}
-
-function scanCodexMarketplaceEntry(plugin, marketplace, fix) {
-  const payload = readJsonSafe(codexLocalPlugin.MARKETPLACE_PATH, null);
-  const found = payload
-    && payload.name === marketplace
-    && Array.isArray(payload.plugins)
-    && payload.plugins.some((p) => p && p.name === plugin && p.source && p.source.path === `./plugins/${plugin}`);
-  if (found) return null;
-  return {
-    type: 'codex-marketplace-entry',
-    severity: 'warn',
-    harness: 'codex',
-    plugin,
-    detail: `${codexLocalPlugin.MARKETPLACE_PATH} should contain ${plugin}@${marketplace}`,
-    fix,
-  };
-}
-
-function readCodexConfig() {
-  const filePath = codexLocalPlugin.CODEX_CONFIG_PATH;
-  const raw = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
-  const plugins = [];
-  const features = {};
-  let current = null;
-
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    const pluginMatch = trimmed.match(/^\[plugins\."([^"]+)"\]$/);
-    if (pluginMatch) {
-      const key = pluginMatch[1];
-      const at = key.lastIndexOf('@');
-      current = {
-        type: 'plugin',
-        key,
-        plugin: at === -1 ? key : key.slice(0, at),
-        marketplace: at === -1 ? 'unknown' : key.slice(at + 1),
-        enabled: false,
-      };
-      plugins.push(current);
-      continue;
-    }
-    if (trimmed === '[features]') {
-      current = { type: 'features' };
-      continue;
-    }
-    if (/^\[/.test(trimmed)) {
-      current = null;
-      continue;
-    }
-    const kv = trimmed.match(/^([A-Za-z0-9_.-]+)\s*=\s*(true|false)\s*$/);
-    if (!kv || !current) continue;
-    if (current.type === 'plugin' && kv[1] === 'enabled') {
-      current.enabled = kv[2] === 'true';
-    } else if (current.type === 'features') {
-      features[kv[1]] = kv[2] === 'true';
-    }
-  }
-  return { plugins, features };
-}
-
-function readJsonSafe(filePath, fallback) {
-  try {
-    if (!fs.existsSync(filePath)) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (_e) {
-    return fallback;
-  }
-}
-
-function lstatOrNull(filePath) {
-  try {
-    return fs.lstatSync(filePath);
-  } catch (_e) {
-    return null;
-  }
-}
-
-function isSymlinkTo(linkPath, targetPath) {
-  const stat = lstatOrNull(linkPath);
-  if (!stat || !stat.isSymbolicLink()) return false;
-  const link = fs.readlinkSync(linkPath);
-  const resolved = path.isAbsolute(link) ? link : path.resolve(path.dirname(linkPath), link);
-  return resolved === targetPath;
-}
-
-function collectHookCommands(value, out = []) {
-  if (Array.isArray(value)) {
-    for (const item of value) collectHookCommands(item, out);
-    return out;
-  }
-  if (!value || typeof value !== 'object') return out;
-  for (const [key, child] of Object.entries(value)) {
-    if (key === 'command' && typeof child === 'string') out.push(child);
-    else collectHookCommands(child, out);
-  }
-  return out;
-}
-
-function hasPluginRelativePath(command) {
-  return /(^|[\s"'])\.\/(hooks|scripts|assets|bin)\//.test(command);
-}
-
 /**
  * Apply repair fixes for a list of issues.
  * Returns { results: [{ issue, status, error? }] }
  */
 function repair(issues, { dryRun = false } = {}) {
   const results = [];
-  const repairedCodexPlugins = new Set();
   // Re-read settings once; we'll flush at most once at the end.
   let settingsMutated = false;
   let settings = null;
@@ -488,20 +212,6 @@ function repair(issues, { dryRun = false } = {}) {
           pruned += 1;
         }
         results.push({ issue, status: pruned > 0 ? 'fixed' : 'already-clean', pruned });
-      } else if (issue.fix.action === 'reinstall-codex-plugin') {
-        if (repairedCodexPlugins.has(issue.fix.plugin)) {
-          results.push({ issue, status: 'already-clean' });
-          continue;
-        }
-        const plan = codexLocalPlugin.planInstall({
-          plugin: issue.fix.plugin,
-          pluginDir: issue.fix.pluginDir,
-        });
-        const ops = codexLocalPlugin.applyInstall(plan, { dryRun: false });
-        const failed = ops.find((op) => op.status === 'error');
-        if (failed) throw new Error(failed.error || `failed to reinstall ${issue.fix.plugin}`);
-        repairedCodexPlugins.add(issue.fix.plugin);
-        results.push({ issue, status: 'fixed', operations: ops.length });
       } else {
         results.push({ issue, status: 'unknown-fix' });
       }

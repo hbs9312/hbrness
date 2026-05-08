@@ -7,7 +7,6 @@ const {
   requirePluginBuilt,
 } = require('./paths.js');
 const hooksModule = require('./hooks.js');
-const codexLocalPlugin = require('./codex-local-plugin.js');
 const registry = require('./plugin-registry.js');
 const claudeCli = require('./claude-cli.js');
 
@@ -284,9 +283,7 @@ function planInstallUserLevel({ harness, plugin, pluginDir }) {
   }
 
   const hooksPlan = hooksModule.planHooksInstall({ harness, plugin, pluginDir });
-  const codexPluginPlan =
-    harness === 'codex' ? codexLocalPlugin.planInstall({ plugin, pluginDir }) : null;
-  return { ops, mode: 'user-level', hooksPlan, codexPluginPlan };
+  return { ops, mode: 'user-level', hooksPlan };
 }
 
 function applyInstallUserLevel({ plan, results, dryRun, skipHooks, harness, plugin, pluginDir }) {
@@ -335,10 +332,6 @@ function applyInstallUserLevel({ plan, results, dryRun, skipHooks, harness, plug
       }
     }
   }
-
-  if (!skipHooks && harness === 'codex' && plan.codexPluginPlan) {
-    results.push(...codexLocalPlugin.applyInstall(plan.codexPluginPlan, { dryRun }));
-  }
 }
 
 function planUninstallUserLevel({ harness, plugin }) {
@@ -373,10 +366,8 @@ function planUninstallUserLevel({ harness, plugin }) {
 
   const hooksPlan =
     harness === 'claude' ? hooksModule.planHooksUninstall({ plugin }) : { events: [] };
-  const codexPluginPlan =
-    harness === 'codex' ? codexLocalPlugin.planUninstall({ plugin }) : null;
 
-  return { ops, mode: 'user-level', hooksPlan, codexPluginPlan };
+  return { ops, mode: 'user-level', hooksPlan };
 }
 
 function applyUninstallUserLevel({ plan, results, dryRun, skipHooks, harness, plugin }) {
@@ -413,9 +404,6 @@ function applyUninstallUserLevel({ plan, results, dryRun, skipHooks, harness, pl
         error: err.message,
       });
     }
-  }
-  if (!skipHooks && harness === 'codex' && plan.codexPluginPlan) {
-    results.push(...codexLocalPlugin.applyUninstall(plan.codexPluginPlan, { dryRun }));
   }
 }
 
@@ -486,7 +474,6 @@ function planInstall({ harness, plugin, mode, printOnly = false }) {
     mode: 'user-level',
     ops: inner.ops,
     hooksPlan: inner.hooksPlan,
-    codexPluginPlan: inner.codexPluginPlan,
   };
 }
 
@@ -543,11 +530,7 @@ function planUninstall({ harness, plugin, printOnly = false }) {
   const plugin_ =
     harness === 'claude' ? planUninstallClaudePlugin({ plugin, printOnly }) : { ops: [] };
 
-  const hasWork =
-    userLevel.ops.length
-    + plugin_.ops.length
-    + (userLevel.hooksPlan?.events?.length || 0)
-    + (userLevel.codexPluginPlan?.ops?.length || 0) > 0;
+  const hasWork = userLevel.ops.length + plugin_.ops.length + (userLevel.hooksPlan?.events?.length || 0) > 0;
   if (!hasWork) {
     return {
       harness,
@@ -561,7 +544,6 @@ function planUninstall({ harness, plugin, printOnly = false }) {
         },
       ],
       hooksPlan: userLevel.hooksPlan,
-      codexPluginPlan: userLevel.codexPluginPlan,
       pluginRegistryOps: plugin_.ops,
     };
   }
@@ -572,7 +554,6 @@ function planUninstall({ harness, plugin, printOnly = false }) {
     mode: 'cleanup',
     ops: userLevel.ops,
     hooksPlan: userLevel.hooksPlan,
-    codexPluginPlan: userLevel.codexPluginPlan,
     pluginRegistryOps: plugin_.ops,
     pluginRegistryPrintOnly: plugin_.printOnly,
   };
