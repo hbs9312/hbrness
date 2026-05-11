@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "planflow plan.json schema",
+  "type": "object",
+  "required": ["title", "questions"],
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "lang": { "enum": ["ko", "en"], "default": "ko" },
+    "status": { "enum": ["draft", "review", "approved"], "default": "draft" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+
+    "overview": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "goal": { "$ref": "#/$defs/i18nString" },
+        "scope_in": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
+        "scope_out": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
+        "success_criteria": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
+        "risks": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } }
+      }
+    },
+
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "$ref": "#/$defs/i18nString" },
+          "duration": { "type": "string" },
+          "depends_on": { "type": "array", "items": { "type": "string" } },
+          "tasks": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
+          "files": {
+            "description": "이 phase 가 만지는 파일들. 추상적 의도(tasks)와 구분되는 구체 임팩트.",
+            "type": "array",
+            "items": { "$ref": "#/$defs/fileChange" }
+          }
+        }
+      }
+    },
+
+    "files_touched": {
+      "description": "(optional) phase 분류가 어색할 때 사용하는 top-level 변경 파일 목록. phases[].files 가 우선.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/fileChange" }
+    },
+
+    "diagrams": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "enum": ["mermaid", "image"] },
+          "title": { "$ref": "#/$defs/i18nString" },
+          "code": { "type": "string" },
+          "src": { "type": "string" },
+          "alt": { "$ref": "#/$defs/i18nString" }
+        }
+      }
+    },
+
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+          "round": { "type": "integer", "minimum": 1, "default": 1 },
+          "group": { "$ref": "#/$defs/i18nString" },
+          "type": {
+            "enum": ["text", "textarea", "number", "slider", "radio", "checkbox", "select", "toggle", "date", "tag-input"]
+          },
+          "label": { "$ref": "#/$defs/i18nString" },
+          "context": { "$ref": "#/$defs/i18nString" },
+          "required": { "type": "boolean", "default": false },
+          "default": {},
+          "placeholder": { "$ref": "#/$defs/i18nString" },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "step": { "type": "number" },
+          "unit": { "type": "string" },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["value"],
+              "additionalProperties": false,
+              "properties": {
+                "value": { "type": ["string", "number", "boolean"] },
+                "label": { "$ref": "#/$defs/i18nString" }
+              }
+            }
+          },
+          "answer": {},
+          "answered_at": { "type": "string" }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "i18nString": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ko": { "type": "string" },
+            "en": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "fileChange": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "change_type": { "enum": ["add", "modify", "delete", "rename"], "default": "modify" },
+        "summary": { "$ref": "#/$defs/i18nString" }
+      }
+    }
+  }
+}

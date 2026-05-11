@@ -1,0 +1,293 @@
+{
+  "title": "결제 모듈 리팩터링",
+  "slug": "payment-refactor",
+  "lang": "ko",
+  "status": "draft",
+  "created_at": "2026-05-11",
+
+  "overview": {
+    "goal": "결제 처리 로직을 도메인 서비스 + 인프라 어댑터로 분리하여 PG 교체 가능성을 확보한다.",
+    "scope_in": [
+      "PaymentService 인터페이스 추출",
+      "TossPayments 어댑터 분리",
+      "환불 플로우 도메인 로직 정리"
+    ],
+    "scope_out": [
+      "신규 PG 추가 (다음 마일스톤)",
+      "프론트엔드 결제 UI 변경"
+    ],
+    "success_criteria": [
+      "기존 통합 테스트 100% 통과",
+      "PG 교체 시 PaymentService 외부 코드 변경 0건",
+      "p99 결제 처리 시간 +5ms 이내"
+    ],
+    "risks": [
+      "환불 멱등키 변경 시 정합성 깨질 수 있음",
+      "프로덕션 배포 직후 트랜잭션 dual-write 윈도우"
+    ]
+  },
+
+  "phases": [
+    {
+      "id": "P1",
+      "name": "인터페이스 추출",
+      "duration": "2d",
+      "tasks": [
+        "PaymentService 인터페이스 정의",
+        "기존 구현을 어댑터로 분리",
+        "DI 컨테이너 등록"
+      ],
+      "files": [
+        { "path": "src/payment/payment.service.ts", "change_type": "modify", "summary": "인터페이스 분리, 어댑터 위임" },
+        { "path": "src/payment/adapters/toss.adapter.ts", "change_type": "add", "summary": "TossPayments 호출 격리" }
+      ]
+    },
+    {
+      "id": "P2",
+      "name": "환불 플로우 분리",
+      "duration": "3d",
+      "depends_on": ["P1"],
+      "tasks": [
+        "RefundService 도메인 서비스 신설",
+        "환불 멱등키 정책 통일",
+        "통합 테스트 추가"
+      ],
+      "files": [
+        { "path": "src/payment/refund.service.ts", "change_type": "add", "summary": "환불 도메인 로직" },
+        { "path": "src/payment/legacy-refund.ts", "change_type": "delete", "summary": "RefundService 로 흡수" },
+        { "path": "test/payment/integration.test.ts", "change_type": "modify", "summary": "신규 환불 플로우 케이스 추가" }
+      ]
+    },
+    {
+      "id": "P3",
+      "name": "정리 및 배포",
+      "duration": "1d",
+      "depends_on": ["P2"],
+      "tasks": [
+        "Deprecation 주석",
+        "feature flag 점진 롤아웃",
+        "모니터링 대시보드 점검"
+      ]
+    }
+  ],
+
+  "files_touched": [
+    { "path": "docs/runbooks/payment-rollout.md", "change_type": "add", "summary": "롤아웃 단계별 체크리스트 (P3 보조 산출물)" }
+  ],
+
+  "diagrams": [
+    {
+      "type": "mermaid",
+      "title": "결제 도메인 구조",
+      "code": "sequenceDiagram\n  participant C as Client\n  participant S as PaymentService\n  participant A as TossAdapter\n  participant R as RefundService\n  C->>S: charge(order)\n  S->>A: requestPayment\n  A-->>S: paymentId\n  S-->>C: ok\n  C->>S: refund(orderId)\n  S->>R: createRefund\n  R->>A: cancelPayment\n  A-->>R: ok\n  R-->>C: refundId"
+    }
+  ],
+
+  "questions": [
+    {
+      "id": "q_pg_strategy",
+      "round": 1,
+      "group": "Infra",
+      "type": "radio",
+      "label": "PG 추상화 수준은?",
+      "context": "전체 인터페이스를 추상화하면 교체 비용은 낮지만 구현이 무거워집니다. 결제·환불만 추상화하는 안과 트레이드오프.",
+      "required": true,
+      "default": "minimal",
+      "options": [
+        { "value": "full", "label": "전체 (charge/refund/inquiry/webhook 모두)" },
+        { "value": "minimal", "label": "최소 (charge + refund 만)" },
+        { "value": "deferred", "label": "지금은 보류, 다음 마일스톤" }
+      ],
+      "answer": "minimal",
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_idempotency_key",
+      "round": 1,
+      "group": "Domain",
+      "type": "select",
+      "label": "환불 멱등키 형식",
+      "context": "기존: order_id+timestamp. 새 정책 후보 중 하나를 골라주세요.",
+      "required": true,
+      "options": [
+        { "value": "order_uuid", "label": "order_id + uuid v7" },
+        { "value": "refund_uuid", "label": "refund_id (uuid v7)" },
+        { "value": "client_token", "label": "클라이언트 제공 토큰" }
+      ],
+      "answer": "refund_uuid",
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_rollout_pct",
+      "round": 1,
+      "group": "Rollout",
+      "type": "slider",
+      "label": "초기 feature flag 비율 (%)",
+      "context": "새 코드 경로의 초기 트래픽 비중. 너무 낮으면 검증이 느리고, 너무 높으면 리스크.",
+      "required": true,
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "default": 10,
+      "unit": "%",
+      "answer": 25,
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_metrics",
+      "round": 1,
+      "group": "Observability",
+      "type": "checkbox",
+      "label": "배포 시 모니터링할 지표",
+      "context": "여러 개 선택 가능. 알림은 분리 설정.",
+      "default": ["latency_p99", "error_rate"],
+      "options": [
+        { "value": "latency_p99", "label": "결제 p99 latency" },
+        { "value": "error_rate", "label": "에러율" },
+        { "value": "refund_lag", "label": "환불 처리 지연" },
+        { "value": "throughput", "label": "throughput (TPS)" }
+      ],
+      "answer": ["latency_p99", "error_rate", "refund_lag"],
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_dual_write",
+      "round": 1,
+      "group": "Migration",
+      "type": "toggle",
+      "label": "이전 코드 경로 dual-write?",
+      "context": "켜면 신·구 양쪽으로 기록 → 비교 검증 가능. 끄면 단순 교체.",
+      "default": true,
+      "placeholder": "켜면 검증 1주 후 구 경로 제거",
+      "answer": true,
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_target_release",
+      "round": 1,
+      "group": "Schedule",
+      "type": "date",
+      "label": "목표 릴리스 날짜",
+      "context": "P1+P2+P3 합계 약 6일 + 검증 기간.",
+      "default": "2026-05-25",
+      "answer": "2026-05-28",
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_feature_flag_name",
+      "round": 1,
+      "group": "Rollout",
+      "type": "text",
+      "label": "feature flag 이름",
+      "context": "기존 컨벤션: `payment_*` 프리픽스",
+      "default": "payment_refactor_v2",
+      "placeholder": "예: payment_refactor_v2",
+      "answer": "payment_refactor_v2",
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_concerns",
+      "round": 1,
+      "group": "Open",
+      "type": "textarea",
+      "label": "추가로 우려되는 점이나 고려사항",
+      "context": "자유롭게. 빈 칸 가능.",
+      "answer": "",
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_stakeholders",
+      "round": 1,
+      "group": "Comm",
+      "type": "tag-input",
+      "label": "사전 공유할 팀/사람",
+      "context": "Enter 또는 쉼표로 추가",
+      "default": ["payments-team", "qa"],
+      "answer": ["payments-team", "qa", "platform-sre"],
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+    {
+      "id": "q_max_retries",
+      "round": 1,
+      "group": "Domain",
+      "type": "number",
+      "label": "환불 재시도 횟수 상한",
+      "context": "외부 PG 일시 장애 대비. 4xx 응답은 재시도 제외.",
+      "min": 0,
+      "max": 10,
+      "step": 1,
+      "default": 3,
+      "answer": 3,
+      "answered_at": "2026-05-11T03:14:22Z"
+    },
+
+    {
+      "id": "q_refund_idempotency_window",
+      "round": 2,
+      "group": "Domain",
+      "type": "slider",
+      "label": "환불 멱등키 보존 기간 (일)",
+      "context": "round 1 에서 refund_uuid 로 결정 → 보존 기간 정책 필요. 너무 짧으면 재시도 충돌, 너무 길면 저장 비용.",
+      "required": true,
+      "min": 1,
+      "max": 90,
+      "step": 1,
+      "default": 14,
+      "unit": "days"
+    },
+    {
+      "id": "q_rollout_steps",
+      "round": 2,
+      "group": "Rollout",
+      "type": "radio",
+      "label": "25% 이후 롤아웃 단계",
+      "context": "round 1 에서 시작 25% 결정. 그 다음 단계 페이스를 어떻게 잡을지.",
+      "required": true,
+      "default": "gradual",
+      "options": [
+        { "value": "aggressive", "label": "공격적: 25 → 50 → 100 (각 1일 간격)" },
+        { "value": "gradual", "label": "점진: 25 → 50 → 75 → 100 (각 2일 간격)" },
+        { "value": "cautious", "label": "보수적: 25 → 50 (3일 후 결정)" }
+      ]
+    },
+    {
+      "id": "q_kill_switch",
+      "round": 2,
+      "group": "Rollout",
+      "type": "checkbox",
+      "label": "kill switch 트리거 조건",
+      "context": "어떤 지표가 임계치를 넘으면 자동으로 0% 로 회수할지. 복수 선택 가능.",
+      "required": true,
+      "default": ["error_rate_spike"],
+      "options": [
+        { "value": "error_rate_spike", "label": "에러율 5% 초과 (5분)" },
+        { "value": "p99_degraded", "label": "p99 latency 2배 이상 악화" },
+        { "value": "refund_failure", "label": "환불 실패율 1% 초과" },
+        { "value": "manual_only", "label": "자동 비활성화 — 수동 회수만" }
+      ]
+    },
+    {
+      "id": "q_dual_write_cleanup",
+      "round": 2,
+      "group": "Migration",
+      "type": "select",
+      "label": "dual-write 종료 기준",
+      "context": "round 1 에서 dual-write 활성. 어떤 시점에 구 경로 제거할지.",
+      "required": true,
+      "options": [
+        { "value": "1w_clean", "label": "1주간 diff 0건 시" },
+        { "value": "2w_clean", "label": "2주간 diff 0건 시" },
+        { "value": "manual_review", "label": "수동 리뷰 후" }
+      ]
+    },
+    {
+      "id": "q_runbook_owner",
+      "round": 2,
+      "group": "Comm",
+      "type": "text",
+      "label": "런북 작성 담당자 (Slack handle)",
+      "context": "롤아웃 단계별 체크리스트 / 롤백 절차 / on-call 알림 룰을 문서화할 사람.",
+      "placeholder": "예: @sangmin"
+    }
+  ]
+}

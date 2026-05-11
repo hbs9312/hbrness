@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="{{LANG}}" data-theme="auto">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{{TITLE}} · planflow</title>
+<style>
+  :root {
+    --c-bg: #ffffff;
+    --c-bg-soft: #f7f8fa;
+    --c-bg-card: #ffffff;
+    --c-bg-elevated: #ffffff;
+    --c-border: #e4e6eb;
+    --c-border-strong: #c8ccd2;
+    --c-text: #1f2328;
+    --c-text-muted: #6b7280;
+    --c-text-subtle: #9aa0a6;
+    --c-accent: #2563eb;
+    --c-accent-soft: #dbeafe;
+    --c-success: #16a34a;
+    --c-success-soft: #dcfce7;
+    --c-warn: #d97706;
+    --c-warn-soft: #fef3c7;
+    --c-danger: #dc2626;
+    --c-danger-soft: #fee2e2;
+    --c-add: #16a34a;
+    --c-modify: #2563eb;
+    --c-delete: #dc2626;
+    --c-rename: #7c3aed;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard Variable", Pretendard, system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html[data-theme="dark"] {
+    --c-bg: #0f1115;
+    --c-bg-soft: #161922;
+    --c-bg-card: #1a1d26;
+    --c-bg-elevated: #20242e;
+    --c-border: #2a2e38;
+    --c-border-strong: #3a3f4b;
+    --c-text: #e6e8eb;
+    --c-text-muted: #9aa0a6;
+    --c-text-subtle: #6b7280;
+    --c-accent: #60a5fa;
+    --c-accent-soft: #1e3a5f;
+    --c-success: #4ade80;
+    --c-success-soft: #14532d;
+    --c-warn: #fbbf24;
+    --c-warn-soft: #78350f;
+    --c-danger: #f87171;
+    --c-danger-soft: #7f1d1d;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.3);
+  }
+  @media (prefers-color-scheme: dark) {
+    html[data-theme="auto"] {
+      --c-bg: #0f1115; --c-bg-soft: #161922; --c-bg-card: #1a1d26; --c-bg-elevated: #20242e;
+      --c-border: #2a2e38; --c-border-strong: #3a3f4b;
+      --c-text: #e6e8eb; --c-text-muted: #9aa0a6; --c-text-subtle: #6b7280;
+      --c-accent: #60a5fa; --c-accent-soft: #1e3a5f;
+      --c-success: #4ade80; --c-success-soft: #14532d;
+      --c-warn: #fbbf24; --c-warn-soft: #78350f;
+      --c-danger: #f87171; --c-danger-soft: #7f1d1d;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--c-bg-soft);
+    color: var(--c-text);
+    line-height: 1.55;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--c-accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: var(--font-mono); font-size: 13px; }
+
+  /* Header */
+  .header {
+    position: sticky; top: 0; z-index: 30;
+    background: var(--c-bg);
+    border-bottom: 1px solid var(--c-border);
+    padding: var(--space-3) var(--space-5);
+    display: flex; align-items: center; gap: var(--space-4);
+  }
+  .header h1 {
+    margin: 0; font-size: 17px; font-weight: 600;
+    flex: 0 1 auto; max-width: 50%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .header .meta { color: var(--c-text-muted); font-size: 13px; }
+  .header .progress-area { flex: 1; display: flex; align-items: center; gap: var(--space-2); justify-content: flex-end; }
+  .progress-bar {
+    width: 180px; height: 6px; background: var(--c-bg-soft);
+    border: 1px solid var(--c-border); border-radius: 999px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; background: var(--c-accent);
+    transition: width 0.25s ease;
+  }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    background: var(--c-bg-soft); color: var(--c-text-muted); border: 1px solid var(--c-border);
+  }
+  .badge[data-status="draft"] { background: var(--c-warn-soft); color: var(--c-warn); border-color: transparent; }
+  .badge[data-status="review"] { background: var(--c-accent-soft); color: var(--c-accent); border-color: transparent; }
+  .badge[data-status="approved"] { background: var(--c-success-soft); color: var(--c-success); border-color: transparent; }
+
+  .icon-btn {
+    background: transparent; border: 1px solid var(--c-border);
+    padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer;
+    color: var(--c-text); font-size: 14px;
+  }
+  .icon-btn:hover { background: var(--c-bg-soft); }
+
+  /* Layout */
+  .layout {
+    display: grid; grid-template-columns: 220px 1fr;
+    gap: var(--space-6);
+    max-width: 1180px; margin: 0 auto;
+    padding: var(--space-5) var(--space-5) 120px;
+  }
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; }
+    .toc { position: static !important; max-height: none !important; }
+  }
+
+  /* TOC */
+  .toc {
+    position: sticky; top: 72px;
+    align-self: start;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    padding: var(--space-3);
+    font-size: 13px;
+  }
+  .toc-title { font-weight: 600; color: var(--c-text-muted); text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; margin-bottom: var(--space-2); }
+  .toc a {
+    display: block; padding: 6px 10px; border-radius: var(--radius-sm);
+    color: var(--c-text-muted); text-decoration: none;
+  }
+  .toc a:hover { background: var(--c-bg); color: var(--c-text); }
+  .toc a.active { background: var(--c-accent-soft); color: var(--c-accent); font-weight: 500; }
+
+  /* Sections */
+  section {
+    margin-bottom: var(--space-7);
+    scroll-margin-top: 80px;
+  }
+  section h2 {
+    margin: 0 0 var(--space-4); font-size: 20px; font-weight: 600;
+    display: flex; align-items: center; gap: var(--space-2);
+  }
+  section h2 .count { font-size: 13px; color: var(--c-text-muted); font-weight: 400; }
+  .section-row { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .section-row h2 { margin: 0; }
+  .view-toggle {
+    margin-left: auto; display: inline-flex;
+    background: var(--c-bg-soft); border: 1px solid var(--c-border);
+    border-radius: var(--radius-sm); padding: 2px;
+  }
+  .view-btn {
+    background: transparent; border: none; padding: 5px 12px;
+    border-radius: 4px; cursor: pointer;
+    color: var(--c-text-muted); font-size: 13px; font-family: inherit;
+    transition: all 0.15s;
+  }
+  .view-btn:hover { color: var(--c-text); }
+  .view-btn.active {
+    background: var(--c-bg); color: var(--c-text); font-weight: 500;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .card {
+    background: var(--c-bg-card);
+    border: 1px solid var(--c-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Overview — stacked sections (no cards) */
+  .overview-stack { display: flex; flex-direction: column; gap: var(--space-5); }
+  .ov-block { padding-left: var(--space-3); border-left: 3px solid var(--c-border); }
+  .ov-title {
+    margin: 0 0 var(--space-2);
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--c-text-muted); font-weight: 600;
+  }
+  .ov-body { color: var(--c-text); font-size: 14.5px; line-height: 1.65; }
+  .ov-text { margin: 0; }
+  .ov-list { margin: 0; padding-left: 20px; }
+  .ov-list li + li { margin-top: 4px; }
+  .ov-block.goal { border-left-color: var(--c-accent); }
+  .ov-block.goal .ov-title { color: var(--c-accent); }
+  .ov-block.scope-in { border-left-color: var(--c-success); }
+  .ov-block.scope-in .ov-title { color: var(--c-success); }
+  .ov-block.scope-out { border-left-color: var(--c-border-strong); }
+  .ov-block.criteria { border-left-color: var(--c-success); }
+  .ov-block.criteria .ov-title { color: var(--c-success); }
+  .ov-block.risks { border-left-color: var(--c-danger); }
+  .ov-block.risks .ov-title { color: var(--c-danger); }
+
+  /* Phases */
+  .phases-list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .phase {
+    display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-3);
+    align-items: start; padding: var(--space-3) var(--space-4);
+  }
+  .phase-marker {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--c-accent-soft); color: var(--c-accent);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 13px;
+  }
+  .phase-name { font-weight: 600; }
+  .phase-duration { color: var(--c-text-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .phase-tasks { margin: 4px 0 0; padding-left: 18px; color: var(--c-text-muted); font-size: 14px; }
+  .phase-tasks li + li { margin-top: 2px; }
+  .phase-deps { font-size: 12px; color: var(--c-text-subtle); margin-top: 4px; }
+  .phase-content { min-width: 0; }
+  .phase-sub-title {
+    margin-top: var(--space-3);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--c-text-subtle); font-weight: 600;
+  }
+  .phase-sub-title-files {
+    margin-top: var(--space-3); padding-top: var(--space-3);
+    border-top: 1px dashed var(--c-border);
+  }
+  .phase-files { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+  .phase-file {
+    display: flex; align-items: baseline; gap: var(--space-2);
+    font-size: 13px; flex-wrap: wrap; min-width: 0;
+  }
+  .phase-file .path { font-family: var(--font-mono); color: var(--c-text); word-break: break-all; }
+  .phase-file .summary { color: var(--c-text-muted); }
+
+  /* Files */
+  .files-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .files-table th, .files-table td { text-align: left; padding: 10px var(--space-3); border-bottom: 1px solid var(--c-border); }
+  .files-table th { font-weight: 600; color: var(--c-text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .files-table tr:last-child td { border-bottom: none; }
+  .files-table .path { font-family: var(--font-mono); font-size: 13px; }
+  .change-chip {
+    display: inline-block; padding: 2px 8px; border-radius: var(--radius-sm);
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+    width: 64px; text-align: center; flex-shrink: 0;
+  }
+  .change-chip[data-type="add"] { background: var(--c-success-soft); color: var(--c-add); }
+  .change-chip[data-type="modify"] { background: var(--c-accent-soft); color: var(--c-modify); }
+  .change-chip[data-type="delete"] { background: var(--c-danger-soft); color: var(--c-delete); }
+  .change-chip[data-type="rename"] { background: #ede9fe; color: var(--c-rename); }
+  html[data-theme="dark"] .change-chip[data-type="rename"] { background: #4c1d95; color: #c4b5fd; }
+
+  /* Diagrams */
+  .diagram { margin-top: var(--space-3); }
+  .diagram-title { font-weight: 600; margin-bottom: var(--space-2); }
+  .mermaid { background: var(--c-bg-elevated); padding: var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--c-border); overflow-x: auto; }
+  .diagram img { max-width: 100%; height: auto; border-radius: var(--radius-sm); border: 1px solid var(--c-border); }
+
+  /* Decision rounds */
+  .round {
+    margin-bottom: var(--space-4);
+    border: 1px solid var(--c-border); border-radius: var(--radius-md);
+    background: var(--c-bg-card); overflow: hidden;
+  }
+  .round-header {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    cursor: pointer; user-select: none;
+    border-bottom: 1px solid transparent;
+    background: var(--c-bg-card);
+  }
+  body[data-view-mode="all"] .round-header { cursor: default; }
+  body[data-view-mode="all"] .round-chevron { display: none; }
+  /* "한번에" 모드: 라운드 구분 자체 제거 (헤더 숨김 + 박스 풀어 평평하게) */
+  body[data-view-mode="all"] .round-header { display: none; }
+  body[data-view-mode="all"] .round {
+    border: none; box-shadow: none; background: transparent;
+    margin-bottom: 0; border-radius: 0; overflow: visible;
+  }
+  body[data-view-mode="all"] .round[data-state="active"] {
+    border: none; box-shadow: none;
+  }
+  body[data-view-mode="all"] .round-body { padding: 0; }
+  body[data-view-mode="all"] .q { margin-bottom: var(--space-3); }
+  body[data-view-mode="all"] .round + .round .q:first-child { margin-top: 0; }
+  .round[data-open="true"] .round-header { border-bottom-color: var(--c-border); }
+  .round-chevron { width: 16px; transition: transform 0.2s; color: var(--c-text-muted); }
+  .round[data-open="true"] .round-chevron { transform: rotate(90deg); }
+  .round-title { font-weight: 600; flex: 1; }
+  .round-status {
+    font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 500;
+  }
+  .round-status[data-state="active"] { background: var(--c-accent-soft); color: var(--c-accent); }
+  .round-status[data-state="answered"] { background: var(--c-success-soft); color: var(--c-success); }
+  .round-status[data-state="pending"] { background: var(--c-bg-soft); color: var(--c-text-muted); border: 1px solid var(--c-border); }
+  .round-body { padding: var(--space-4); display: none; }
+  .round[data-open="true"] .round-body { display: block; }
+  .round[data-state="active"] { border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
+
+  /* Question card */
+  .q {
+    background: var(--c-bg-soft);
+    border: 1px solid var(--c-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+  .q:last-child { margin-bottom: 0; }
+  .q-label { font-weight: 600; margin-bottom: var(--space-1); display: flex; align-items: baseline; gap: var(--space-2); }
+  .q-required { color: var(--c-danger); font-weight: 700; }
+  .q-group {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--c-text-muted); font-weight: 600;
+  }
+  .q-context {
+    color: var(--c-text-muted); font-size: 13px;
+    margin-bottom: var(--space-3);
+    border-left: 2px solid var(--c-border); padding-left: var(--space-3);
+  }
+  .q-input { margin-top: var(--space-2); }
+  .q[data-readonly="true"] { background: transparent; }
+  .q[data-readonly="true"] .q-input { display: none; }
+  .q-answer-display {
+    display: none; margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--c-success-soft); color: var(--c-success);
+    border-radius: var(--radius-sm); font-weight: 500;
+    word-break: break-word;
+  }
+  .q[data-readonly="true"] .q-answer-display { display: block; }
+
+  /* Form controls */
+  .input, .textarea, .select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--c-border);
+    border-radius: var(--radius-sm);
+    background: var(--c-bg);
+    color: var(--c-text);
+    font-family: inherit; font-size: 14px;
+  }
+  .textarea { resize: vertical; min-height: 80px; }
+  .input:focus, .textarea:focus, .select:focus { outline: 2px solid var(--c-accent); outline-offset: -1px; border-color: var(--c-accent); }
+
+  .opt-group { display: flex; flex-direction: column; gap: 6px; }
+  .opt {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: 8px 12px; border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+    background: var(--c-bg); cursor: pointer;
+  }
+  .opt:hover { background: var(--c-bg-soft); border-color: var(--c-border-strong); }
+  .opt input { margin: 0; accent-color: var(--c-accent); }
+  .opt-label { flex: 1; }
+
+  .slider-wrap { display: flex; align-items: center; gap: var(--space-3); }
+  .slider { flex: 1; accent-color: var(--c-accent); }
+  .slider-val {
+    min-width: 60px; text-align: right;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    color: var(--c-accent); font-weight: 600;
+  }
+
+  .toggle-row { display: flex; align-items: center; gap: var(--space-3); }
+  .toggle {
+    position: relative; width: 42px; height: 24px;
+    background: var(--c-border); border-radius: 999px; cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 20px; height: 20px; background: white; border-radius: 50%;
+    transition: transform 0.2s; box-shadow: var(--shadow-sm);
+  }
+  .toggle input { display: none; }
+  .toggle[data-on="true"] { background: var(--c-accent); }
+  .toggle[data-on="true"]::after { transform: translateX(18px); }
+
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-sm); min-height: 38px; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; background: var(--c-accent-soft); color: var(--c-accent); border-radius: var(--radius-sm); font-size: 13px; }
+  .tag button { background: none; border: none; color: inherit; cursor: pointer; padding: 0; font-size: 14px; line-height: 1; }
+  .tag-input-field { flex: 1; min-width: 100px; border: none; outline: none; background: transparent; color: var(--c-text); font-size: 14px; padding: 4px; }
+
+  /* Submit row */
+  .submit-row { display: flex; justify-content: flex-end; gap: var(--space-3); margin-top: var(--space-4); }
+  .btn {
+    padding: 8px 16px; border-radius: var(--radius-sm);
+    border: 1px solid var(--c-border); background: var(--c-bg);
+    color: var(--c-text); cursor: pointer; font-weight: 500; font-size: 14px;
+    font-family: inherit;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .btn:hover { background: var(--c-bg-soft); }
+  .btn-primary { background: var(--c-accent); color: white; border-color: var(--c-accent); }
+  .btn-primary:hover { filter: brightness(1.05); background: var(--c-accent); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Ask Claude */
+  .ask {
+    margin-top: var(--space-6);
+    padding: var(--space-4);
+  }
+  .ask-input-row { display: flex; gap: var(--space-2); margin-top: var(--space-2); align-items: stretch; }
+  .ask-input-row .textarea { flex: 1; min-width: 0; }
+  .ask-log { margin-top: var(--space-3); display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+  .ask-item { display: flex; gap: var(--space-3); padding: 8px 12px; background: var(--c-bg-soft); border-radius: var(--radius-sm); font-size: 13px; }
+  .ask-time { color: var(--c-text-subtle); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .ask-text { flex: 1; word-break: break-word; }
+  .ask-status { color: var(--c-success); font-size: 12px; }
+
+  /* Footer */
+  .footer {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+    background: var(--c-bg); border-top: 1px solid var(--c-border);
+    padding: var(--space-3) var(--space-5);
+    display: flex; align-items: center; gap: var(--space-3);
+  }
+  .footer .summary { color: var(--c-text-muted); font-size: 13px; }
+  .footer .summary strong { color: var(--c-text); }
+  .footer .actions { margin-left: auto; display: flex; gap: var(--space-2); }
+
+  .toast {
+    position: fixed; top: 80px; right: 24px; z-index: 100;
+    padding: 10px 16px; background: var(--c-text); color: var(--c-bg);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+    opacity: 0; transform: translateY(-8px); transition: all 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  .empty { color: var(--c-text-subtle); font-style: italic; }
+</style>
+</head>
+<body data-plan-slug="{{PLAN_SLUG}}" data-helper-port="{{HELPER_PORT}}" data-lang="{{LANG}}" data-total-questions="{{TOTAL_QUESTIONS}}">
+
+<header class="header">
+  <h1>{{TITLE}}</h1>
+  <span class="badge" data-status="{{STATUS}}">{{STATUS_LABEL}}</span>
+  <span class="meta">{{CREATED_AT}}</span>
+  <div class="progress-area">
+    <span class="meta" id="progressLabel">0 / {{TOTAL_QUESTIONS}}</span>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width: 0%"></div></div>
+    <button class="icon-btn" id="themeToggle" title="Toggle theme">◐</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc card">
+    <div class="toc-title" data-i18n-ko="목차" data-i18n-en="Contents">목차</div>
+    {{{TOC_HTML}}}
+  </nav>
+
+  <main>
+    {{{OVERVIEW_HTML}}}
+    {{{PHASES_HTML}}}
+    {{{FILES_HTML}}}
+    {{{DIAGRAMS_HTML}}}
+
+    <section id="decisions">
+      <div class="section-row">
+        <h2><span data-i18n-ko="결정사항" data-i18n-en="Decisions">결정사항</span> <span class="count" id="decisionsCount"></span></h2>
+        <div class="view-toggle" role="tablist" aria-label="View mode">
+          <button class="view-btn" data-view="rounds" data-i18n-ko="라운드별" data-i18n-en="By round">라운드별</button>
+          <button class="view-btn" data-view="all" data-i18n-ko="한번에" data-i18n-en="All at once">한번에</button>
+        </div>
+      </div>
+      {{{ROUNDS_HTML}}}
+    </section>
+
+    <section id="ask" class="card ask">
+      <h2 style="margin-top:0"><span data-i18n-ko="Claude에게 질문하기" data-i18n-en="Ask Claude">Claude에게 질문하기</span></h2>
+      <div class="q-context" data-i18n-ko="추가 정보가 필요하거나 계획에 의문이 있으면 여기서 보내세요. ⌘+Enter 로 전송." data-i18n-en="Send a follow-up question to Claude. ⌘+Enter to send.">
+        추가 정보가 필요하거나 계획에 의문이 있으면 여기서 보내세요. ⌘+Enter 로 전송.
+      </div>
+      <div class="ask-input-row">
+        <textarea class="textarea" id="askInput" rows="2" placeholder=""></textarea>
+        <button class="btn btn-primary" id="askSend" data-i18n-ko="보내기" data-i18n-en="Send">보내기</button>
+      </div>
+      <div class="ask-log" id="askLog"></div>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <span class="summary" id="footerSummary"></span>
+  <div class="actions">
+    <button class="btn" id="copyJson" data-i18n-ko="JSON 복사" data-i18n-en="Copy JSON">JSON 복사</button>
+    <button class="btn btn-primary" id="submitActiveRound" data-i18n-ko="현재 라운드 제출" data-i18n-en="Submit Round">현재 라운드 제출</button>
+  </div>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const body = document.body;
+  const PLAN_SLUG = body.dataset.planSlug;
+  const HELPER_PORT = body.dataset.helperPort;
+  const LANG = body.dataset.lang || 'ko';
+  const HELPER_BASE = `http://localhost:${HELPER_PORT}`;
+  const STORAGE_KEY = `planflow:${PLAN_SLUG}:answers`;
+  const THEME_KEY = `planflow:${PLAN_SLUG}:theme`;
+
+  const toast = (msg) => {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 1800);
+  };
+
+  // --- i18n: replace text where data-i18n-* matches LANG
+  document.querySelectorAll(`[data-i18n-${LANG}]`).forEach((el) => {
+    const txt = el.getAttribute(`data-i18n-${LANG}`);
+    if (txt) el.textContent = txt;
+  });
+  document.querySelectorAll(`[data-i18n-placeholder-${LANG}]`).forEach((el) => {
+    const txt = el.getAttribute(`data-i18n-placeholder-${LANG}`);
+    if (txt) el.placeholder = txt;
+  });
+
+  // --- Theme toggle (auto → light → dark → auto)
+  const root = document.documentElement;
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme) root.dataset.theme = savedTheme;
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    const cur = root.dataset.theme || 'auto';
+    const next = cur === 'auto' ? 'light' : cur === 'light' ? 'dark' : 'auto';
+    root.dataset.theme = next;
+    localStorage.setItem(THEME_KEY, next);
+    toast(`Theme: ${next}`);
+  });
+
+  // --- Round open/close + state
+  const rounds = document.querySelectorAll('.round');
+  rounds.forEach((r) => {
+    r.querySelector('.round-header').addEventListener('click', () => {
+      if (document.body.dataset.viewMode === 'all') return;
+      r.dataset.open = r.dataset.open === 'true' ? 'false' : 'true';
+    });
+  });
+
+  // --- View mode toggle (rounds-only vs all-at-once)
+  const VIEW_KEY = `planflow:${PLAN_SLUG}:view`;
+  const applyView = (mode) => {
+    document.body.dataset.viewMode = mode;
+    document.querySelectorAll('.view-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.view === mode);
+    });
+    document.querySelectorAll('.round').forEach((r) => {
+      if (mode === 'all') r.dataset.open = 'true';
+      else r.dataset.open = r.dataset.state === 'active' ? 'true' : 'false';
+    });
+  };
+  document.querySelectorAll('.view-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      localStorage.setItem(VIEW_KEY, b.dataset.view);
+      applyView(b.dataset.view);
+    });
+  });
+  applyView(localStorage.getItem(VIEW_KEY) || 'rounds');
+
+  // --- Slider value sync
+  document.querySelectorAll('.slider').forEach((s) => {
+    const valEl = s.parentElement.querySelector('.slider-val');
+    const unit = s.dataset.unit || '';
+    const sync = () => { valEl.textContent = s.value + (unit ? ` ${unit}` : ''); };
+    s.addEventListener('input', sync); sync();
+  });
+
+  // --- Toggle widget (clickable, syncs hidden checkbox)
+  document.querySelectorAll('.toggle').forEach((t) => {
+    const input = t.querySelector('input');
+    const sync = () => { t.dataset.on = input.checked ? 'true' : 'false'; };
+    t.addEventListener('click', () => { input.checked = !input.checked; sync(); updateProgress(); });
+    sync();
+  });
+
+  // --- Tag input
+  document.querySelectorAll('.tag-input-wrap').forEach((wrap) => {
+    const field = wrap.querySelector('.tag-input-field');
+    const hidden = wrap.querySelector('input[type="hidden"]');
+    const renderTags = () => {
+      const tags = JSON.parse(hidden.value || '[]');
+      wrap.querySelectorAll('.tag').forEach((t) => t.remove());
+      tags.forEach((tag, i) => {
+        const span = document.createElement('span');
+        span.className = 'tag';
+        span.innerHTML = `<span></span><button type="button" aria-label="remove">×</button>`;
+        span.querySelector('span').textContent = tag;
+        span.querySelector('button').addEventListener('click', () => {
+          const cur = JSON.parse(hidden.value || '[]');
+          cur.splice(i, 1);
+          hidden.value = JSON.stringify(cur);
+          renderTags();
+          updateProgress();
+        });
+        wrap.insertBefore(span, field);
+      });
+    };
+    field.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ',') && field.value.trim()) {
+        e.preventDefault();
+        const cur = JSON.parse(hidden.value || '[]');
+        cur.push(field.value.trim());
+        hidden.value = JSON.stringify(cur);
+        field.value = '';
+        renderTags();
+        updateProgress();
+      }
+    });
+    renderTags();
+  });
+
+  // --- Hydrate from localStorage (preserve answers across reloads)
+  const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  const setAnswerInDOM = (qid, value) => {
+    const root = document.querySelector(`.q[data-qid="${qid}"]`);
+    if (!root) return;
+    const t = root.dataset.type;
+    if (t === 'text' || t === 'textarea' || t === 'number' || t === 'date' || t === 'select') {
+      const inp = root.querySelector('[name]');
+      if (inp != null && value != null) inp.value = value;
+    } else if (t === 'slider') {
+      const inp = root.querySelector('input[type="range"]');
+      if (inp && value != null) { inp.value = value; inp.dispatchEvent(new Event('input')); }
+    } else if (t === 'radio') {
+      const inp = root.querySelector(`input[type="radio"][value="${CSS.escape(String(value))}"]`);
+      if (inp) inp.checked = true;
+    } else if (t === 'checkbox') {
+      const arr = Array.isArray(value) ? value : [];
+      root.querySelectorAll('input[type="checkbox"]').forEach((c) => {
+        c.checked = arr.includes(c.value);
+      });
+    } else if (t === 'toggle') {
+      const inp = root.querySelector('input[type="checkbox"]');
+      if (inp) { inp.checked = !!value; inp.dispatchEvent(new Event('change')); }
+      const tw = root.querySelector('.toggle');
+      if (tw) tw.dataset.on = inp && inp.checked ? 'true' : 'false';
+    } else if (t === 'tag-input') {
+      const hidden = root.querySelector('input[type="hidden"]');
+      if (hidden) {
+        hidden.value = JSON.stringify(Array.isArray(value) ? value : []);
+        const wrap = hidden.closest('.tag-input-wrap');
+        if (wrap) {
+          wrap.querySelectorAll('.tag').forEach((t) => t.remove());
+          const ev = new Event('hydrate'); wrap.dispatchEvent(ev);
+        }
+      }
+    }
+  };
+  Object.entries(stored).forEach(([k, v]) => setAnswerInDOM(k, v));
+  // re-render tag chips after hydration
+  document.querySelectorAll('.tag-input-wrap').forEach((wrap) => {
+    const hidden = wrap.querySelector('input[type="hidden"]');
+    const tags = JSON.parse(hidden.value || '[]');
+    const field = wrap.querySelector('.tag-input-field');
+    tags.forEach((tag) => {
+      const span = document.createElement('span');
+      span.className = 'tag';
+      span.innerHTML = `<span></span><button type="button" aria-label="remove">×</button>`;
+      span.querySelector('span').textContent = tag;
+      span.querySelector('button').addEventListener('click', () => {
+        const cur = JSON.parse(hidden.value || '[]');
+        const idx = cur.indexOf(tag); if (idx >= 0) cur.splice(idx, 1);
+        hidden.value = JSON.stringify(cur);
+        span.remove();
+        updateProgress();
+      });
+      wrap.insertBefore(span, field);
+    });
+  });
+
+  // --- Collect answers from DOM
+  const collectAnswers = (roundOnly) => {
+    const out = {};
+    const sel = roundOnly ? `.round[data-state="active"] .q` : `.q`;
+    document.querySelectorAll(sel).forEach((root) => {
+      const qid = root.dataset.qid;
+      const t = root.dataset.type;
+      if (root.dataset.readonly === 'true') {
+        // already-answered question; skip (preserved by helper anyway)
+        return;
+      }
+      let val;
+      if (t === 'text' || t === 'textarea' || t === 'date') {
+        val = root.querySelector('[name]')?.value || '';
+        if (!val) return;
+      } else if (t === 'number') {
+        const raw = root.querySelector('[name]')?.value;
+        if (raw === '' || raw == null) return;
+        val = Number(raw);
+      } else if (t === 'slider') {
+        val = Number(root.querySelector('input[type="range"]').value);
+      } else if (t === 'select') {
+        val = root.querySelector('select').value;
+        if (!val) return;
+      } else if (t === 'radio') {
+        const c = root.querySelector('input[type="radio"]:checked');
+        if (!c) return;
+        val = c.value;
+      } else if (t === 'checkbox') {
+        val = Array.from(root.querySelectorAll('input[type="checkbox"]:checked')).map((c) => c.value);
+        if (val.length === 0) return;
+      } else if (t === 'toggle') {
+        val = !!root.querySelector('input[type="checkbox"]').checked;
+      } else if (t === 'tag-input') {
+        val = JSON.parse(root.querySelector('input[type="hidden"]').value || '[]');
+        if (val.length === 0) return;
+      }
+      out[qid] = val;
+    });
+    return out;
+  };
+
+  const persistAnswers = () => {
+    const all = collectAnswers(false);
+    const merged = { ...stored, ...all };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+  };
+
+  // --- Progress
+  const updateProgress = () => {
+    persistAnswers();
+    const total = Number(body.dataset.totalQuestions || 0);
+    const answered = Object.keys(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')).length;
+    document.getElementById('progressLabel').textContent = `${answered} / ${total}`;
+    document.getElementById('progressFill').style.width = total ? `${(answered/total)*100}%` : '0%';
+    const remain = total - answered;
+    document.getElementById('footerSummary').innerHTML =
+      remain > 0
+        ? `<strong>${answered}</strong> / ${total} answered · <strong>${remain}</strong> remaining`
+        : `<strong>All ${total} answered ✓</strong>`;
+  };
+  document.querySelectorAll('input, select, textarea').forEach((el) => {
+    el.addEventListener('change', updateProgress);
+    el.addEventListener('input', updateProgress);
+  });
+  updateProgress();
+
+  // --- Submit active round
+  document.getElementById('submitActiveRound').addEventListener('click', async () => {
+    const activeRound = document.querySelector('.round[data-state="active"]');
+    if (!activeRound) { toast('No active round'); return; }
+    // validate required
+    const missing = [];
+    activeRound.querySelectorAll('.q[data-required="true"]').forEach((q) => {
+      if (q.dataset.readonly === 'true') return;
+      const ans = collectAnswers(true)[q.dataset.qid];
+      if (ans === undefined) missing.push(q.dataset.qid);
+    });
+    if (missing.length) { toast(`Required: ${missing.join(', ')}`); return; }
+
+    const answers = collectAnswers(true);
+    try {
+      const res = await fetch(`${HELPER_BASE}/answers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ round: Number(activeRound.dataset.round || 1), answers }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast('Submitted ✓');
+    } catch (e) {
+      toast('Error: ' + e.message);
+    }
+  });
+
+  // --- Copy JSON
+  document.getElementById('copyJson').addEventListener('click', async () => {
+    const data = collectAnswers(false);
+    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+    toast('Copied to clipboard');
+  });
+
+  // --- Ask Claude
+  const askInput = document.getElementById('askInput');
+  const askLog = document.getElementById('askLog');
+  const sendAsk = async () => {
+    const text = askInput.value.trim();
+    if (!text) return;
+    try {
+      const res = await fetch(`${HELPER_BASE}/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const item = document.createElement('div');
+      item.className = 'ask-item';
+      const t = new Date().toLocaleTimeString();
+      item.innerHTML = `<span class="ask-time"></span><span class="ask-text"></span><span class="ask-status">sent ✓</span>`;
+      item.querySelector('.ask-time').textContent = t;
+      item.querySelector('.ask-text').textContent = text;
+      askLog.prepend(item);
+      askInput.value = '';
+    } catch (e) {
+      toast('Error: ' + e.message);
+    }
+  };
+  document.getElementById('askSend').addEventListener('click', sendAsk);
+  askInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendAsk();
+  });
+
+  // --- TOC active highlight on scroll
+  const tocLinks = document.querySelectorAll('.toc a[href^="#"]');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (e.isIntersecting) {
+        tocLinks.forEach((l) => l.classList.toggle('active', l.getAttribute('href') === '#' + e.target.id));
+      }
+    });
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  document.querySelectorAll('section[id]').forEach((s) => observer.observe(s));
+
+  // --- SSE auto-reload on file change
+  try {
+    const es = new EventSource(`${HELPER_BASE}/events`);
+    es.addEventListener('reload', () => {
+      persistAnswers();
+      // small debounce so the writer can settle
+      setTimeout(() => location.reload(), 250);
+    });
+    es.addEventListener('open', () => {/* connected */});
+  } catch (e) { /* helper offline; no auto-reload */ }
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" onerror="document.querySelectorAll('.mermaid').forEach(el=>{el.style.whiteSpace='pre';el.style.fontFamily='monospace'})"></script>
+<script>
+  if (window.mermaid) {
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';
+    window.mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+  }
+</script>
+</body>
+</html>
