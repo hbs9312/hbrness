@@ -63,19 +63,19 @@ const attr = (s) => esc(s);
 function buildOverview() {
   const o = plan.overview;
   if (!o || Object.keys(o).length === 0) return '';
-  const list = (arr) => (arr && arr.length)
-    ? `<ul class="ov-list">${arr.map((x) => `<li>${esc(i18n(x))}</li>`).join('')}</ul>`
+  const list = (arr, anchorPrefix) => (arr && arr.length)
+    ? `<ul class="ov-list">${arr.map((x, i) => `<li data-anchor-id="${attr(anchorPrefix + '.' + i)}">${esc(i18n(x))}</li>`).join('')}</ul>`
     : `<div class="empty">—</div>`;
 
   const block = (klass, title, body) =>
     `<div class="ov-block ${klass}"><h3 class="ov-title">${esc(title)}</h3><div class="ov-body">${body}</div></div>`;
 
   const parts = [];
-  if (o.goal) parts.push(block('goal', t.goal, `<p class="ov-text">${esc(i18n(o.goal))}</p>`));
-  if (o.scope_in) parts.push(block('scope-in', t.scope_in, list(o.scope_in)));
-  if (o.scope_out) parts.push(block('scope-out', t.scope_out, list(o.scope_out)));
-  if (o.success_criteria) parts.push(block('criteria', t.success, list(o.success_criteria)));
-  if (o.risks) parts.push(block('risks', t.risks, list(o.risks)));
+  if (o.goal) parts.push(block('goal', t.goal, `<p class="ov-text" data-anchor-id="overview.goal">${esc(i18n(o.goal))}</p>`));
+  if (o.scope_in) parts.push(block('scope-in', t.scope_in, list(o.scope_in, 'overview.scope_in')));
+  if (o.scope_out) parts.push(block('scope-out', t.scope_out, list(o.scope_out, 'overview.scope_out')));
+  if (o.success_criteria) parts.push(block('criteria', t.success, list(o.success_criteria, 'overview.success_criteria')));
+  if (o.risks) parts.push(block('risks', t.risks, list(o.risks, 'overview.risks')));
 
   return `
 <section id="overview">
@@ -84,11 +84,12 @@ function buildOverview() {
 </section>`;
 }
 
-function renderFileRows(files) {
+function renderFileRows(files, anchorPrefix) {
   return files.map((f) => {
     const ct = f.change_type || 'modify';
     const summary = i18n(f.summary);
-    return `<li class="phase-file">
+    const aid = `${anchorPrefix}.${f.path}`;
+    return `<li class="phase-file" data-anchor-id="${attr(aid)}">
       <span class="change-chip" data-type="${attr(ct)}">${esc(t.type[ct])}</span>
       <span class="path">${esc(f.path)}</span>${summary ? `<span class="summary">— ${esc(summary)}</span>` : ''}
     </li>`;
@@ -99,16 +100,16 @@ function buildPhases() {
   if (!plan.phases || !plan.phases.length) return '';
   const items = plan.phases.map((p, i) => {
     const tasks = (p.tasks && p.tasks.length)
-      ? `<div class="phase-sub-title">${esc(t.tasks)}</div><ul class="phase-tasks">${p.tasks.map((tk) => `<li>${esc(i18n(tk))}</li>`).join('')}</ul>` : '';
+      ? `<div class="phase-sub-title">${esc(t.tasks)}</div><ul class="phase-tasks">${p.tasks.map((tk, ti) => `<li data-anchor-id="${attr('phase.' + p.id + '.task.' + ti)}">${esc(i18n(tk))}</li>`).join('')}</ul>` : '';
     const files = (p.files && p.files.length)
-      ? `<div class="phase-sub-title phase-sub-title-files">${esc(t.files)}</div><ul class="phase-files">${renderFileRows(p.files)}</ul>` : '';
+      ? `<div class="phase-sub-title phase-sub-title-files">${esc(t.files)}</div><ul class="phase-files">${renderFileRows(p.files, 'phase.' + p.id + '.file')}</ul>` : '';
     const deps = (p.depends_on && p.depends_on.length)
       ? `<div class="phase-deps">${esc(t.depends_on)}: ${p.depends_on.map(esc).join(', ')}</div>` : '';
     return `
       <div class="phase card">
         <div class="phase-marker">${i + 1}</div>
         <div class="phase-content">
-          <div class="phase-name">${esc(i18n(p.name))} <span class="badge" style="margin-left:6px">${esc(p.id)}</span></div>
+          <div class="phase-name" data-anchor-id="${attr('phase.' + p.id + '.name')}">${esc(i18n(p.name))} <span class="badge" style="margin-left:6px">${esc(p.id)}</span></div>
           ${deps}
           ${tasks}
           ${files}
@@ -131,7 +132,7 @@ function buildFiles() {
 <section id="files">
   <h2>${esc(t.files_other)} <span class="count">${plan.files_touched.length}</span></h2>
   <div class="card">
-    <ul class="phase-files">${renderFileRows(plan.files_touched)}</ul>
+    <ul class="phase-files">${renderFileRows(plan.files_touched, 'files')}</ul>
   </div>
 </section>`;
 }
@@ -140,11 +141,12 @@ function buildDiagrams() {
   if (!plan.diagrams || !plan.diagrams.length) return '';
   const items = plan.diagrams.map((d, i) => {
     const title = d.title ? `<div class="diagram-title">${esc(i18n(d.title))}</div>` : '';
+    const aid = `diagram.${i}`;
     if (d.type === 'mermaid') {
-      return `<div class="diagram">${title}<div class="mermaid">${esc(d.code || '')}</div></div>`;
+      return `<div class="diagram" data-anchor-id="${attr(aid)}">${title}<div class="mermaid">${esc(d.code || '')}</div></div>`;
     }
     if (d.type === 'image') {
-      return `<div class="diagram">${title}<img src="${attr(d.src || '')}" alt="${attr(i18n(d.alt))}" /></div>`;
+      return `<div class="diagram" data-anchor-id="${attr(aid)}">${title}<img src="${attr(d.src || '')}" alt="${attr(i18n(d.alt))}" /></div>`;
     }
     return '';
   }).join('');
@@ -331,6 +333,11 @@ const subs = {
   ROUNDS_HTML: buildRounds(),
 };
 
+// Comments serialized for client-side decoration.
+// Safe JSON embedding: replace </ with <\/ to prevent script tag breakout.
+const commentsJson = JSON.stringify(plan.comments || []).replace(/</g, '\\u003c');
+subs.COMMENTS_JSON = commentsJson;
+
 let html = template;
 // {{{NAME}}} — raw HTML
 html = html.replace(/\{\{\{([A-Z_]+)\}\}\}/g, (_, k) => subs[k] ?? '');
@@ -339,4 +346,4 @@ html = html.replace(/\{\{([A-Z_]+)\}\}/g, (_, k) => subs[k] ?? '');
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(outPath, html, 'utf8');
-console.log(`rendered → ${outPath} (${totalQuestions} questions)`);
+console.log(`rendered → ${outPath} (${totalQuestions} questions, ${(plan.comments || []).length} comments)`);

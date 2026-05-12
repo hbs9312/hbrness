@@ -51,6 +51,12 @@
       "items": { "$ref": "#/$defs/fileChange" }
     },
 
+    "comments": {
+      "description": "사용자가 계획 내용 일부에 남긴 리뷰. 텍스트 선택 후 인라인 코멘트로 추가됨. Claude 는 각 comment 의 replies[] 에 답글을 append.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/comment" }
+    },
+
     "diagrams": {
       "type": "array",
       "items": {
@@ -130,6 +136,31 @@
         "path": { "type": "string" },
         "change_type": { "enum": ["add", "modify", "delete", "rename"], "default": "modify" },
         "summary": { "$ref": "#/$defs/i18nString" }
+      }
+    },
+    "comment": {
+      "type": "object",
+      "required": ["id", "anchor_id", "anchor_text", "comment"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "anchor_id": { "type": "string", "description": "render.mjs 가 부여하는 stable unit id (예: phase.P1.task.0)" },
+        "anchor_text": { "type": "string", "description": "선택했을 당시의 텍스트 (orphan 추적/표시용)" },
+        "comment": { "type": "string" },
+        "by": { "enum": ["user", "claude"], "default": "user" },
+        "submitted_at": { "type": "string" },
+        "replies": { "type": "array", "items": { "$ref": "#/$defs/commentReply" } },
+        "resolved": { "type": "boolean", "default": false }
+      }
+    },
+    "commentReply": {
+      "type": "object",
+      "required": ["by", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "by": { "enum": ["user", "claude"] },
+        "text": { "type": "string" },
+        "at": { "type": "string" }
       }
     }
   }

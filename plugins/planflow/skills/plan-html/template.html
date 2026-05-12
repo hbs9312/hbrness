@@ -448,6 +448,156 @@
   .toast.show { opacity: 1; transform: translateY(0); }
 
   .empty { color: var(--c-text-subtle); font-style: italic; }
+
+  /* === Inline Review / Comments === */
+  [data-anchor-id] { position: relative; }
+  [data-anchor-id].has-comments {
+    background: rgba(250, 204, 21, 0.16);
+    outline: 1px dashed rgba(250, 204, 21, 0.55);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  .comment-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    position: absolute; top: -8px; right: -8px;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    background: var(--c-warn); color: #fff;
+    font-size: 11px; font-weight: 700; border-radius: 999px;
+    cursor: pointer; box-shadow: var(--shadow-sm); z-index: 5;
+  }
+  .comment-badge:hover { filter: brightness(1.1); }
+  [data-anchor-id].flash { animation: cflash 1.2s ease; }
+  @keyframes cflash { 0%, 100% { background: rgba(250, 204, 21, 0.16); } 50% { background: rgba(250, 204, 21, 0.45); } }
+
+  .comment-bubble { position: absolute; z-index: 40; }
+  .comment-bubble button {
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--c-accent); color: white; border: none;
+    cursor: pointer; box-shadow: var(--shadow-md); font-size: 13px; font-weight: 500;
+    font-family: inherit;
+  }
+  .comment-bubble button:hover { filter: brightness(1.1); }
+
+  .comment-popover {
+    position: absolute; z-index: 50; width: 380px; max-width: 90vw;
+    background: var(--c-bg); border: 1px solid var(--c-border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+    padding: var(--space-3);
+  }
+  .popover-quote {
+    padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
+    background: rgba(250, 204, 21, 0.12);
+    border-left: 3px solid var(--c-warn);
+    border-radius: 0 4px 4px 0;
+    font-size: 13px; color: var(--c-text-muted);
+    max-height: 80px; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  }
+  .popover-input {
+    width: 100%; min-height: 70px; padding: 8px 12px;
+    border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+    background: var(--c-bg-soft); color: var(--c-text); font-family: inherit; font-size: 14px;
+    resize: vertical;
+  }
+  .popover-input:focus { outline: 2px solid var(--c-accent); outline-offset: -1px; border-color: var(--c-accent); }
+  .popover-actions { display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-2); }
+
+  .comments-toggle {
+    position: fixed; top: 80px; right: 0; z-index: 28;
+    padding: 8px 12px; border: 1px solid var(--c-border); border-right: none;
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    background: var(--c-bg-card); color: var(--c-text);
+    cursor: pointer; box-shadow: var(--shadow-sm);
+    font-size: 14px; font-family: inherit;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .comments-toggle:hover { background: var(--c-bg-soft); }
+  .comments-toggle .count { font-weight: 600; font-size: 12px; }
+  .comments-toggle .count:empty { display: none; }
+  .comments-toggle.has-items { background: var(--c-warn); color: white; border-color: var(--c-warn); }
+  .comments-toggle.has-items:hover { filter: brightness(1.05); background: var(--c-warn); }
+
+  .comments-sidebar {
+    position: fixed; top: 60px; right: 0; bottom: 64px;
+    width: 360px; max-width: 90vw;
+    background: var(--c-bg); border-left: 1px solid var(--c-border);
+    transform: translateX(100%); transition: transform 0.2s ease;
+    z-index: 27; display: flex; flex-direction: column;
+    box-shadow: -4px 0 12px rgba(0,0,0,0.12);
+  }
+  .comments-sidebar.open { transform: translateX(0); }
+  .comments-header {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--c-border);
+  }
+  .comments-header h3 { margin: 0; font-size: 15px; flex: 1; }
+  .comments-body { flex: 1; overflow-y: auto; padding: var(--space-3); }
+  .comments-footer {
+    display: none; padding: var(--space-3); border-top: 1px solid var(--c-border);
+    gap: var(--space-2); justify-content: flex-end;
+  }
+  .csec { margin-bottom: var(--space-4); }
+  .csec h4 {
+    margin: 0 0 var(--space-2);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--c-text-muted); font-weight: 600;
+    display: flex; align-items: center; gap: var(--space-2);
+  }
+  .csec[data-section="resolved"] h4 { cursor: pointer; }
+  .csec-count {
+    padding: 1px 7px; background: var(--c-bg-soft); border-radius: 999px;
+    font-size: 10px; color: var(--c-text); font-weight: 600;
+  }
+  .csec-toggle { margin-left: auto; font-size: 10px; }
+
+  .cc {
+    background: var(--c-bg-card); border: 1px solid var(--c-border);
+    border-radius: var(--radius-sm); padding: var(--space-3);
+    margin-bottom: var(--space-2); font-size: 13px;
+  }
+  .cc-quote {
+    padding: 4px 8px; margin-bottom: 6px;
+    background: rgba(250, 204, 21, 0.10);
+    border-left: 2px solid var(--c-warn);
+    color: var(--c-text-muted); font-size: 12px;
+    border-radius: 0 4px 4px 0;
+    word-break: break-word;
+  }
+  .cc-quote[data-jump-to] { cursor: pointer; }
+  .cc-quote[data-jump-to]:hover { background: rgba(250, 204, 21, 0.20); }
+  .cc-body { color: var(--c-text); word-break: break-word; margin-bottom: var(--space-2); white-space: pre-wrap; }
+  .cc-input {
+    width: 100%; min-height: 56px; padding: 6px 10px; margin-bottom: 6px;
+    border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+    background: var(--c-bg-soft); color: var(--c-text); font-family: inherit; font-size: 13px;
+    resize: vertical;
+  }
+  .cc-reply {
+    margin-top: 6px; padding: 6px 10px;
+    background: var(--c-bg-soft); border-radius: var(--radius-sm);
+    border-left: 3px solid var(--c-accent);
+  }
+  .cc-reply-claude { border-left-color: var(--c-success); }
+  .cc-reply-user { border-left-color: var(--c-accent); }
+  .cc-reply-head {
+    font-size: 11px; font-weight: 600; color: var(--c-text-muted); margin-bottom: 4px;
+  }
+  .cc-time { font-weight: 400; }
+  .cc-reply-body { color: var(--c-text); word-break: break-word; white-space: pre-wrap; }
+  .cc-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+  .cc-action {
+    padding: 4px 10px; border: 1px solid var(--c-border); background: transparent;
+    border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--c-text-muted);
+    font-family: inherit;
+  }
+  .cc-action:hover { background: var(--c-bg-soft); color: var(--c-text); }
+  .cc-action.danger { color: var(--c-danger); border-color: var(--c-danger); }
+  .cc-resolved { opacity: 0.65; }
+  .cc-orphaned { border-style: dashed; border-color: var(--c-danger); }
+  .cc-orphan-tag {
+    display: inline-block; padding: 1px 6px; background: var(--c-danger-soft); color: var(--c-danger);
+    border-radius: 4px; font-size: 10px; margin-left: 6px;
+  }
 </style>
 </head>
 <body data-plan-slug="{{PLAN_SLUG}}" data-helper-port="{{HELPER_PORT}}" data-lang="{{LANG}}" data-total-questions="{{TOTAL_QUESTIONS}}">
@@ -509,6 +659,35 @@
 </footer>
 
 <div class="toast" id="toast"></div>
+
+<!-- Inline review UI -->
+<div class="comment-bubble" id="commentBubble" style="display:none">
+  <button id="commentBubbleBtn" type="button" aria-label="Add comment" data-i18n-ko="💬 코멘트" data-i18n-en="💬 Comment">💬 코멘트</button>
+</div>
+
+<div class="comment-popover" id="commentPopover" style="display:none" role="dialog" aria-label="Add comment">
+  <div class="popover-quote"></div>
+  <textarea class="popover-input" placeholder="" data-i18n-placeholder-ko="이 부분에 대한 코멘트…" data-i18n-placeholder-en="Comment about this…"></textarea>
+  <div class="popover-actions">
+    <button type="button" class="btn" data-action="cancel" data-i18n-ko="취소" data-i18n-en="Cancel">취소</button>
+    <button type="button" class="btn btn-primary" data-action="add" data-i18n-ko="추가" data-i18n-en="Add">추가</button>
+  </div>
+</div>
+
+<button id="commentsToggle" type="button" class="comments-toggle" title="리뷰 코멘트">
+  💬 <span class="count"></span>
+</button>
+
+<aside id="commentsSidebar" class="comments-sidebar" aria-label="Comments">
+  <div class="comments-header">
+    <h3 data-i18n-ko="리뷰 코멘트" data-i18n-en="Review Comments">리뷰 코멘트</h3>
+    <button id="commentsClose" type="button" class="icon-btn" aria-label="Close">✕</button>
+  </div>
+  <div class="comments-body" id="commentsBody"></div>
+  <div class="comments-footer" id="commentsFooter"></div>
+</aside>
+
+<script>window._PLANFLOW_COMMENTS = {{COMMENTS_JSON}};</script>
 
 <script>
 (() => {
@@ -830,6 +1009,280 @@
     });
   }, { rootMargin: '-40% 0px -55% 0px' });
   document.querySelectorAll('section[id]').forEach((s) => observer.observe(s));
+
+  // === Inline Review / Comments ===
+  {
+    const DRAFTS_KEY = `planflow:${PLAN_SLUG}:comment-drafts`;
+    const OPEN_KEY   = `planflow:${PLAN_SLUG}:comments-open`;
+    const RESOLVED_VISIBLE_KEY = `planflow:${PLAN_SLUG}:resolved-visible`;
+
+    const submitted = Array.isArray(window._PLANFLOW_COMMENTS) ? window._PLANFLOW_COMMENTS : [];
+    let drafts = [];
+    try { drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY) || '[]'); } catch { drafts = []; }
+
+    const bubbleEl   = document.getElementById('commentBubble');
+    const popoverEl  = document.getElementById('commentPopover');
+    const sidebarEl  = document.getElementById('commentsSidebar');
+    const toggleEl   = document.getElementById('commentsToggle');
+    const closeEl    = document.getElementById('commentsClose');
+    const sbBody     = document.getElementById('commentsBody');
+    const sbFooter   = document.getElementById('commentsFooter');
+    const btnBubble  = document.getElementById('commentBubbleBtn');
+
+    const saveDrafts = () => localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+    const newId = () => 'c_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
+    const htmlEsc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const tt = (ko, en) => LANG === 'ko' ? ko : en;
+    const fmtTime = (iso) => {
+      if (!iso) return '';
+      try { return new Date(iso).toLocaleString(LANG === 'ko' ? 'ko-KR' : 'en-US', { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }); }
+      catch { return iso; }
+    };
+    const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/(["\\])/g, '\\$1');
+
+    const hideBubble = () => { bubbleEl.style.display = 'none'; bubbleEl.dataset.anchorId = ''; bubbleEl.dataset.anchorText = ''; };
+    const hidePopover = () => { popoverEl.style.display = 'none'; popoverEl.dataset.anchorId = ''; popoverEl.dataset.anchorText = ''; };
+
+    const findAnchor = (node) => {
+      while (node && node !== document.body) {
+        if (node.nodeType === 1 && node.dataset && node.dataset.anchorId) return node;
+        node = node.parentNode;
+      }
+      return null;
+    };
+
+    const openSidebar  = () => { sidebarEl.classList.add('open'); localStorage.setItem(OPEN_KEY, '1'); };
+    const closeSidebar = () => { sidebarEl.classList.remove('open'); localStorage.setItem(OPEN_KEY, '0'); };
+
+    toggleEl.addEventListener('click', () => sidebarEl.classList.contains('open') ? closeSidebar() : openSidebar());
+    closeEl.addEventListener('click', closeSidebar);
+
+    // --- Selection detection
+    document.addEventListener('mouseup', (e) => {
+      if (popoverEl.contains(e.target) || sidebarEl.contains(e.target) || bubbleEl.contains(e.target) || toggleEl.contains(e.target)) return;
+      setTimeout(() => {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed) { hideBubble(); return; }
+        const text = sel.toString().trim();
+        if (!text || text.length < 2) { hideBubble(); return; }
+        const range = sel.getRangeAt(0);
+        const anchor = findAnchor(range.commonAncestorContainer);
+        if (!anchor) { hideBubble(); return; }
+        const rect = range.getBoundingClientRect();
+        bubbleEl.style.display = 'block';
+        bubbleEl.style.top  = (window.scrollY + rect.top - 38) + 'px';
+        bubbleEl.style.left = (window.scrollX + Math.min(rect.right, window.innerWidth - 120)) + 'px';
+        bubbleEl.dataset.anchorId   = anchor.dataset.anchorId;
+        bubbleEl.dataset.anchorText = text.slice(0, 400);
+      }, 10);
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!bubbleEl.contains(e.target) && !popoverEl.contains(e.target)) hideBubble();
+    });
+
+    // --- Bubble → popover
+    btnBubble.addEventListener('click', () => {
+      const aid = bubbleEl.dataset.anchorId;
+      const atext = bubbleEl.dataset.anchorText;
+      if (!aid) return;
+      const top = parseFloat(bubbleEl.style.top) || (window.scrollY + 120);
+      hideBubble();
+      window.getSelection()?.removeAllRanges();
+      popoverEl.style.display = 'block';
+      popoverEl.style.top = (top + 40) + 'px';
+      popoverEl.style.left = '50%';
+      popoverEl.style.transform = 'translateX(-50%)';
+      popoverEl.dataset.anchorId   = aid;
+      popoverEl.dataset.anchorText = atext;
+      popoverEl.querySelector('.popover-quote').textContent = `"${atext}"`;
+      const ta = popoverEl.querySelector('.popover-input');
+      ta.value = '';
+      ta.focus();
+    });
+
+    popoverEl.querySelector('[data-action="cancel"]').addEventListener('click', hidePopover);
+    popoverEl.querySelector('[data-action="add"]').addEventListener('click', () => {
+      const text = popoverEl.querySelector('.popover-input').value.trim();
+      if (!text) { toast(tt('내용을 입력하세요', 'Please enter a comment')); return; }
+      drafts.push({
+        id: newId(),
+        anchor_id: popoverEl.dataset.anchorId,
+        anchor_text: popoverEl.dataset.anchorText,
+        comment: text,
+        created_at: new Date().toISOString(),
+      });
+      saveDrafts();
+      hidePopover();
+      renderSidebar();
+      applyDecorations();
+      openSidebar();
+    });
+    popoverEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') hidePopover();
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) popoverEl.querySelector('[data-action="add"]').click();
+    });
+
+    // --- Render sidebar
+    const renderSidebar = () => {
+      const orphans = submitted.filter((c) => !document.querySelector(`[data-anchor-id="${cssEscape(c.anchor_id || '')}"]`));
+      const orphanIds = new Set(orphans.map((c) => c.id));
+      const active    = submitted.filter((c) => !c.resolved && !orphanIds.has(c.id));
+      const resolved  = submitted.filter((c) =>  c.resolved && !orphanIds.has(c.id));
+      const resolvedVisible = localStorage.getItem(RESOLVED_VISIBLE_KEY) === '1';
+
+      const sections = [];
+      if (drafts.length) {
+        sections.push(`<div class="csec"><h4>${tt('초안','Drafts')} <span class="csec-count">${drafts.length}</span></h4>${drafts.map(renderDraftCard).join('')}</div>`);
+      }
+      sections.push(`<div class="csec"><h4>${tt('진행중','Active')} <span class="csec-count">${active.length}</span></h4>${active.length ? active.map((c) => renderSubmittedCard(c, 'active')).join('') : `<div class="empty">${tt('없음','None')}</div>`}</div>`);
+      if (resolved.length) {
+        sections.push(`<div class="csec ${resolvedVisible?'':'collapsed'}" data-section="resolved"><h4 data-resolved-toggle>${tt('해결됨','Resolved')} <span class="csec-count">${resolved.length}</span> <span class="csec-toggle">${resolvedVisible?'▼':'▶'}</span></h4><div class="csec-body" style="display:${resolvedVisible?'block':'none'}">${resolved.map((c) => renderSubmittedCard(c, 'resolved')).join('')}</div></div>`);
+      }
+      if (orphans.length) {
+        sections.push(`<div class="csec"><h4>${tt('위치 없음','Orphaned')} <span class="csec-count">${orphans.length}</span></h4>${orphans.map((c) => renderSubmittedCard(c, 'orphaned')).join('')}</div>`);
+      }
+      sbBody.innerHTML = sections.join('');
+
+      if (drafts.length) {
+        sbFooter.style.display = 'flex';
+        sbFooter.innerHTML = `<button class="btn" id="discardDrafts">${tt('전체 삭제','Discard all')}</button><button class="btn btn-primary" id="submitDrafts">${tt(drafts.length+'개 모두 제출', 'Submit '+drafts.length)}</button>`;
+        document.getElementById('discardDrafts').addEventListener('click', () => {
+          if (confirm(tt('모든 draft 를 삭제할까요?','Discard all drafts?'))) {
+            drafts = []; saveDrafts(); renderSidebar(); applyDecorations();
+          }
+        });
+        document.getElementById('submitDrafts').addEventListener('click', submitAllDrafts);
+      } else {
+        sbFooter.style.display = 'none';
+        sbFooter.innerHTML = '';
+      }
+
+      // event delegation
+      sbBody.querySelectorAll('[data-resolved-toggle]').forEach((h) => h.addEventListener('click', () => {
+        const sec = h.closest('[data-section]');
+        const body = sec.querySelector('.csec-body');
+        const isOpen = body.style.display !== 'none';
+        body.style.display = isOpen ? 'none' : 'block';
+        sec.classList.toggle('collapsed', isOpen);
+        h.querySelector('.csec-toggle').textContent = isOpen ? '▶' : '▼';
+        localStorage.setItem(RESOLVED_VISIBLE_KEY, isOpen ? '0' : '1');
+      }));
+      sbBody.querySelectorAll('[data-draft-edit]').forEach((el) => el.addEventListener('input', () => {
+        const id = el.dataset.draftEdit;
+        const d = drafts.find((x) => x.id === id);
+        if (d) { d.comment = el.value; saveDrafts(); }
+      }));
+      sbBody.querySelectorAll('[data-draft-delete]').forEach((el) => el.addEventListener('click', () => {
+        drafts = drafts.filter((d) => d.id !== el.dataset.draftDelete);
+        saveDrafts(); renderSidebar(); applyDecorations();
+      }));
+      sbBody.querySelectorAll('[data-resolve]').forEach((el) => el.addEventListener('click', () => {
+        resolveComment(el.dataset.resolve, el.dataset.resolveValue !== 'true');
+      }));
+      sbBody.querySelectorAll('[data-jump-to]').forEach((el) => el.addEventListener('click', () => {
+        const aid = el.dataset.jumpTo;
+        const target = document.querySelector(`[data-anchor-id="${cssEscape(aid)}"]`);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          target.classList.add('flash');
+          setTimeout(() => target.classList.remove('flash'), 1200);
+        }
+      }));
+
+      const totalUnresolved = drafts.length + active.length;
+      toggleEl.querySelector('.count').textContent = totalUnresolved || '';
+      toggleEl.classList.toggle('has-items', totalUnresolved > 0);
+    };
+
+    const renderDraftCard = (d) => `
+      <div class="cc cc-draft" data-anchor-id="${htmlEsc(d.anchor_id)}">
+        <div class="cc-quote" data-jump-to="${htmlEsc(d.anchor_id)}">"${htmlEsc(d.anchor_text)}"</div>
+        <textarea class="cc-input" data-draft-edit="${htmlEsc(d.id)}">${htmlEsc(d.comment)}</textarea>
+        <div class="cc-actions">
+          <button class="cc-action danger" data-draft-delete="${htmlEsc(d.id)}">${tt('삭제','Delete')}</button>
+        </div>
+      </div>`;
+
+    const renderSubmittedCard = (c, state) => {
+      const replies = (c.replies || []).map((r) => `
+        <div class="cc-reply cc-reply-${htmlEsc(r.by)}">
+          <div class="cc-reply-head">${r.by === 'claude' ? 'Claude' : tt('나','Me')} · <span class="cc-time">${htmlEsc(fmtTime(r.at))}</span></div>
+          <div class="cc-reply-body">${htmlEsc(r.text)}</div>
+        </div>`).join('');
+      const isOrphan = state === 'orphaned';
+      const cls = state === 'resolved' ? 'cc-resolved' : (isOrphan ? 'cc-orphaned' : 'cc-active');
+      const quoteAttr = isOrphan ? '' : ` data-jump-to="${htmlEsc(c.anchor_id)}"`;
+      const orphanTag = isOrphan ? ` <span class="cc-orphan-tag">${tt('위치 없음','orphan')}</span>` : '';
+      return `
+        <div class="cc ${cls}" data-comment-id="${htmlEsc(c.id)}" data-anchor-id="${htmlEsc(c.anchor_id)}">
+          <div class="cc-quote"${quoteAttr}>"${htmlEsc(c.anchor_text)}"${orphanTag}</div>
+          <div class="cc-body">${htmlEsc(c.comment)}</div>
+          ${replies}
+          <div class="cc-actions">
+            <button class="cc-action" data-resolve="${htmlEsc(c.id)}" data-resolve-value="${c.resolved ? 'true':'false'}">${c.resolved ? tt('미해결로','Unresolve') : tt('해결됨','Resolve')}</button>
+          </div>
+        </div>`;
+    };
+
+    const resolveComment = async (id, val) => {
+      try {
+        const res = await fetch(`${HELPER_BASE}/resolve`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, resolved: !!val }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const c = submitted.find((x) => x.id === id);
+        if (c) c.resolved = !!val;
+        renderSidebar(); applyDecorations();
+      } catch (e) { toast('Error: ' + e.message); }
+    };
+
+    const submitAllDrafts = async () => {
+      if (!drafts.length) return;
+      try {
+        const res = await fetch(`${HELPER_BASE}/reviews`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ comments: drafts }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        toast(tt(`${drafts.length}개 코멘트 제출됨 ✓`, `${drafts.length} comments submitted ✓`));
+        drafts = []; saveDrafts();
+        // SSE 가 곧 reload 트리거 — 새 submitted 가 반영됨
+        renderSidebar(); applyDecorations();
+      } catch (e) { toast('Error: ' + e.message); }
+    };
+
+    const applyDecorations = () => {
+      document.querySelectorAll('.has-comments').forEach((el) => el.classList.remove('has-comments'));
+      document.querySelectorAll('.comment-badge').forEach((el) => el.remove());
+      const counts = new Map();
+      for (const d of drafts) counts.set(d.anchor_id, (counts.get(d.anchor_id) || 0) + 1);
+      for (const c of submitted) {
+        if (c.resolved) continue;
+        counts.set(c.anchor_id, (counts.get(c.anchor_id) || 0) + 1);
+      }
+      for (const [aid, n] of counts) {
+        const el = document.querySelector(`[data-anchor-id="${cssEscape(aid)}"]`);
+        if (!el) continue;
+        el.classList.add('has-comments');
+        const badge = document.createElement('span');
+        badge.className = 'comment-badge';
+        badge.textContent = n;
+        badge.title = tt(`${n}개 코멘트`, `${n} comments`);
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openSidebar();
+          const card = sidebarEl.querySelector(`.cc[data-anchor-id="${cssEscape(aid)}"]`);
+          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+        el.appendChild(badge);
+      }
+    };
+
+    if (localStorage.getItem(OPEN_KEY) === '1') openSidebar();
+    renderSidebar();
+    applyDecorations();
+  }
 
   // --- SSE auto-reload on file change
   try {

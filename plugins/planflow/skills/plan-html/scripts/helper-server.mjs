@@ -152,6 +152,58 @@ const handleAsk = async (req, res) => {
   sendJson(res, 200, { ok: true });
 };
 
+const handleReviews = async (req, res) => {
+  const body = await readBody(req);
+  let payload;
+  try { payload = JSON.parse(body); } catch { return sendJson(res, 400, { error: 'bad json' }); }
+  const items = Array.isArray(payload.comments) ? payload.comments : [];
+  if (!items.length) return sendJson(res, 400, { error: 'no comments' });
+
+  const plan = readJsonSafe(PLAN_PATH, null);
+  if (!plan) return sendJson(res, 400, { error: 'plan.json missing' });
+  if (!Array.isArray(plan.comments)) plan.comments = [];
+
+  const ts = new Date().toISOString();
+  const accepted = [];
+  for (const c of items) {
+    if (!c || !c.anchor_id || !c.comment) continue;
+    accepted.push({
+      id: c.id || `c_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36)}`,
+      anchor_id: String(c.anchor_id),
+      anchor_text: String(c.anchor_text || ''),
+      comment: String(c.comment),
+      by: 'user',
+      submitted_at: ts,
+      replies: [],
+      resolved: false,
+    });
+  }
+  if (!accepted.length) return sendJson(res, 400, { error: 'no valid comments' });
+  plan.comments.push(...accepted);
+  writeJson(PLAN_PATH, plan);
+
+  tmuxSend(`리뷰 등록됨 [${accepted.length}건]: @${PLAN_PATH}`);
+  sendJson(res, 200, { ok: true, count: accepted.length });
+};
+
+const handleResolve = async (req, res) => {
+  const body = await readBody(req);
+  let payload;
+  try { payload = JSON.parse(body); } catch { return sendJson(res, 400, { error: 'bad json' }); }
+  const id = String(payload.id || '');
+  const resolved = !!payload.resolved;
+  if (!id) return sendJson(res, 400, { error: 'id required' });
+
+  const plan = readJsonSafe(PLAN_PATH, null);
+  if (!plan || !Array.isArray(plan.comments)) return sendJson(res, 400, { error: 'no plan/comments' });
+  const c = plan.comments.find((x) => x.id === id);
+  if (!c) return sendJson(res, 404, { error: 'comment not found' });
+  c.resolved = resolved;
+  writeJson(PLAN_PATH, plan);
+  // no tmux notify — local UX only
+  sendJson(res, 200, { ok: true });
+};
+
 const handleSSE = (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -216,6 +268,8 @@ const server = http.createServer(async (req, res) => {
   if (u.pathname === '/events' && req.method === 'GET') return handleSSE(req, res);
   if (u.pathname === '/answers' && req.method === 'POST') return handleAnswers(req, res);
   if (u.pathname === '/ask' && req.method === 'POST') return handleAsk(req, res);
+  if (u.pathname === '/reviews' && req.method === 'POST') return handleReviews(req, res);
+  if (u.pathname === '/resolve' && req.method === 'POST') return handleResolve(req, res);
 
   if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/index.html')) {
     return serveStatic(INDEX_PATH, res, 'text/html; charset=utf-8');

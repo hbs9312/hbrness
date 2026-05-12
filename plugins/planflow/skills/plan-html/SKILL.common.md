@@ -125,15 +125,28 @@ node ${SKILL_DIR}/scripts/start.mjs "$plan_dir"
 
 ## 5. 사용자 응답 후 흐름
 
-사용자가 브라우저에서 답변/질문을 보내면 helper 가 다음 메시지를 tmux send-keys 로 현재 페인에 입력합니다:
+사용자가 브라우저에서 답변/질문/리뷰를 보내면 helper 가 다음 메시지를 tmux send-keys 로 현재 페인에 입력합니다:
 
-- 답변 제출: `플랜파일을 확인해: <plan_dir>/plan.json`
+- 답변 제출: `플랜파일을 확인해: @<plan.json 절대경로>`
 - 역질문: `사용자 질문: <text>`
+- 리뷰 코멘트 제출: `리뷰 등록됨 [N건]: @<plan.json 절대경로>`
 
 당신은 이 메시지를 받으면:
 
 1. **답변 케이스**: `plan.json` 을 다시 Read → `questions[].answer` 가 채워진 항목 확인 → 다음 라운드가 필요하면 `round: N+1` 으로 새 질문 append → `node ${SKILL_DIR}/scripts/start.mjs "$plan_dir"` 재실행 (helper 가 살아있으면 재사용, 브라우저는 SSE 로 자동 reload)
 2. **역질문 케이스**: `questions.log` 끝줄 또는 send-keys 로 받은 본문에 답변. 새 질문이 있으면 plan.json 에 추가 round 로.
+3. **리뷰 코멘트 케이스**:
+   - `plan.json` Read → `comments[]` 에서 `replies[]` 가 비어있거나 마지막 reply 의 `by` 가 `user` 인 항목을 처리 대상으로 식별
+   - 각 코멘트에 대해:
+     - `comment.anchor_id` 와 `comment.anchor_text` 로 어느 부분에 대한 피드백인지 파악
+     - 피드백이 합리적이면 **plan 본문 자체를 수정** (예: phase tasks 보강, files 추가, overview 갱신). 수정한 부분이 코멘트가 anchor 된 unit 이면 anchor_id 가 깨질 수 있다는 점 인지 — 단순 텍스트 수정은 OK, 단위 자체 삭제 시 코멘트는 orphaned 표시됨.
+     - 해당 `comment.replies[]` 에 다음 형태로 reply 한 줄 append:
+       ```json
+       { "by": "claude", "text": "<답변 내용>", "at": "<ISO timestamp>" }
+       ```
+     - 답변은 짧고 구체적으로. "반영함" / "검토 결과 그대로 두는 게 낫다 — 이유: ..." / "추가 질문: round N 에서 묻겠다" 형태.
+   - 수정/답글 모두 plan.json 한 번에 Write → 파일 watcher 가 감지해 SSE reload
+   - 사용자에게 chat 으로 한 줄 요약: "N개 코멘트 처리 (반영 X / 보류 Y)"
 
 ## 6. 종료
 
