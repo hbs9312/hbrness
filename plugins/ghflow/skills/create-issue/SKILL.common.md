@@ -23,19 +23,17 @@ GitHub 이슈를 조직/레포의 이슈 템플릿에 맞춰 생성한다. 사�
 
 ### 1. 템플릿 로딩
 
-템플릿은 **세션 시작 시 ghflow SessionStart 훅이** 현재 레포와 조직의 `.github` 레포에서 미리 가져와 파일로 저장해 둔다. 이 스킬은 자체 캐싱을 하지 않고, 훅이 남긴 파일을 그대로 읽어 사용한다.
+스킬 시작 시 `fetch-templates.py` 헬퍼를 직접 실행하여 현재 레포와 조직 `.github` 레포의 이슈/PR 템플릿을 가져온다. 결과는 `/tmp/ghflow/<slug>/templates.json` 에 기록되며, 이 스킬은 그 파일을 읽어 사용한다. 자동 SessionStart 훅에 의존하지 않는다.
 
-**읽어야 할 경로:**
 ```bash
+# 1) 템플릿 fetch (현재 레포 + 조직 .github 자동 병합, 실패 시 silent)
+python3 "${PLUGIN_ROOT}/hooks/fetch-templates.py"
+
+# 2) 결과 파일 읽기
 REPO_ID=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-SLUG=$(echo "$REPO_ID" | tr '/' '_' | sed 's|_|__|')  # "org/repo" → "org__repo"
+SLUG="$(echo "$REPO_ID" | sed 's|/|__|')"   # "org/repo" → "org__repo"
 TEMPLATES_FILE="/tmp/ghflow/${SLUG}/templates.json"
-```
-
-또는 더 간단히:
-```bash
-SLUG="$(echo "$REPO_ID" | sed 's|/|__|')"
-cat "/tmp/ghflow/${SLUG}/templates.json"
+cat "$TEMPLATES_FILE"
 ```
 
 **파일 구조:**
@@ -61,8 +59,8 @@ cat "/tmp/ghflow/${SLUG}/templates.json"
 
 **템플릿 조회 규칙:**
 - `issue_templates` 배열만 사용 (PR용은 create-pr에서 사용)
-- 현재 레포와 조직 `.github` 레포 템플릿이 병합되어 있으며, 파일명이 겹치면 **현재 레포가 우선**한다 (훅이 처리함)
-- 이 파일이 없거나 `issue_templates`가 비어 있으면: 사용자에게 "세션 시작 훅이 아직 실행되지 않았거나 템플릿을 찾지 못했습니다. 세션을 재시작하거나 템플릿 없이 진행할지 물어봐주세요"라고 안내하고 계속할지 확인한다. 계속하면 자유 양식으로 본문을 작성한다.
+- 현재 레포와 조직 `.github` 레포 템플릿이 병합되어 있으며, 파일명이 겹치면 **현재 레포가 우선**한다 (`fetch-templates.py`가 처리함)
+- 이 파일이 없거나 `issue_templates`가 비어 있으면: `gh` 인증이 만료됐거나 레포에 이슈 템플릿이 정의돼 있지 않을 수 있다. 사용자에게 "이슈 템플릿을 찾지 못했습니다. 자유 양식으로 본문을 작성해도 될까요?"라고 묻고 동의하면 자유 양식으로 진행한다.
 
 ### 2. 사용자 의도 파악 및 템플릿 선택
 
@@ -142,5 +140,5 @@ gh issue create \
 ## 주의사항
 
 - 이슈 생성 대상 레포는 기본적으로 현재 작업 디렉토리의 레포이다. 사용자가 다른 레포를 지정하면 해당 레포에 생성한다.
-- 템플릿은 **세션 시작 시점 기준**으로 고정된다. 세션 중 템플릿이 원격에서 변경돼도 반영되지 않는다. 최신 상태로 다시 받고 싶으면 세션을 재시작한다.
-- 템플릿의 YAML frontmatter(name, title, labels, assignees)는 훅이 파싱해 메타데이터로 제공하며, `body`는 frontmatter 이후의 마크다운 본문이다.
+- 템플릿은 스킬이 실행될 때마다 fetch 되므로 항상 원격 최신 상태를 반영한다.
+- 템플릿의 YAML frontmatter(name, title, labels, assignees)는 `fetch-templates.py`가 파싱해 메타데이터로 제공하며, `body`는 frontmatter 이후의 마크다운 본문이다.

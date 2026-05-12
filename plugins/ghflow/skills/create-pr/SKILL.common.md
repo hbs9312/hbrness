@@ -4,16 +4,16 @@ model: sonnet
 description: >
   This skill should be used when the user asks to "create pr", "make pr", "open pull request",
   "PR 올려줘", "PR 만들어줘", "풀리퀘 생성", or invokes /create-pr.
-  It creates a GitHub Pull Request using the PR template fetched at session start by the
-  ghflow SessionStart hook (from the current repo and the org's .github repo).
+  It creates a GitHub Pull Request using the PR template fetched on demand by the skill
+  itself (from the current repo and the org's .github repo).
   Usage: /create-pr [base-branch] [--draft] [--assignee <login>] [message]
 ---
 
 # Create PR Skill
 
-Create a GitHub Pull Request using a PR template that was fetched at session start by the
-ghflow SessionStart hook. This skill does **not** fetch or cache templates itself — it reads
-the hook output directly.
+Create a GitHub Pull Request using a PR template fetched on demand from the current repo
+and the org's `.github` repo. The skill invokes the shared `fetch-templates.py` helper at
+the start of execution, so templates always reflect the latest remote state.
 
 ## Arguments
 
@@ -92,14 +92,17 @@ Collect information needed to fill in the PR:
    git diff --name-status {base}...HEAD
    ```
 
-### Step 4: Load PR Template from Hook Output
+### Step 4: Fetch and Load PR Template
 
-The ghflow SessionStart hook has already fetched PR templates from both the current repo and
-the org's `.github` repo, and written them to a JSON file. This skill does not fetch or cache
-templates — it reads the hook output directly.
+Invoke the shared template fetcher, then read its JSON output. The fetcher pulls PR templates
+from both the current repo and the org's `.github` repo and picks the current repo when both
+exist. It is fast and silent on failure.
 
-**Read path:**
+**Fetch + read:**
 ```bash
+# Always fetch fresh; output is /tmp/ghflow/<slug>/templates.json.
+python3 "${PLUGIN_ROOT}/hooks/fetch-templates.py"
+
 REPO_ID=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 SLUG=$(echo "$REPO_ID" | sed 's|/|__|')
 TEMPLATES_FILE="/tmp/ghflow/${SLUG}/templates.json"
@@ -118,11 +121,11 @@ TEMPLATES_FILE="/tmp/ghflow/${SLUG}/templates.json"
 ```
 
 **Selection rules:**
-1. The hook already picks a single source: current repo wins over org `.github` — you will only ever see entries from one source in `pr_templates`.
+1. The fetcher already picks a single source: current repo wins over org `.github` — you will only ever see entries from one source in `pr_templates`.
 2. **Single entry** (single-file form like `.github/PULL_REQUEST_TEMPLATE.md`): use it directly.
 3. **Multiple entries** (directory form like `.github/PULL_REQUEST_TEMPLATE/*.md`): infer the best match from the user's `[message]` / branch name / commits, then confirm the choice in Step 7's preview. If inference is ambiguous, present the list (template name derived from `path` filename, e.g. `feature.md` → "Feature") and let the user pick before filling in.
 4. If `pr_templates` is empty or the templates file does not exist:
-   - Inform the user that no PR template was found (hook may not have run, gh may be unauthenticated, or no template exists).
+   - Inform the user that no PR template was found (gh may be unauthenticated, no template exists, or the fetcher failed).
    - Ask whether to proceed with a freeform body generated from commits/diff, or abort.
 
 ### Step 5: Fill In the Template
@@ -179,8 +182,8 @@ After successful creation, display the PR URL to the user.
 
 ## Guidelines
 
-- Never fetch templates yourself — always read from `/tmp/ghflow/<slug>/templates.json` produced by the SessionStart hook.
-- Template freshness is **session-scoped**: if the remote template changes during the session, the change is not reflected. The user must restart the session to pick up updates.
+- Always invoke `fetch-templates.py` at the start of the skill — do not implement parallel template-fetching logic inline.
+- Templates are refreshed per skill invocation, so changes pushed to the template files are picked up on the next run.
 - Respect the template's original formatting and structure when filling it in.
 - Do not modify checkbox items — leave them for the user to manage.
 - If the template contains sections that don't apply to the current changes, write "N/A" or leave them empty rather than removing them.
