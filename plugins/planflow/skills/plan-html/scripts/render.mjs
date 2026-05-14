@@ -77,10 +77,33 @@ function buildOverview() {
     ? `<ul class="ov-list">${arr.map((x, i) => `<li data-anchor-id="${attr(anchorPrefix + '.' + i)}">${esc(i18n(x))}</li>`).join('')}</ul>`
     : `<div class="empty">—</div>`;
 
-  const block = (klass, title, body) =>
-    `<div class="ov-block ${klass}"><h3 class="ov-title">${esc(title)}</h3><div class="ov-body">${body}</div></div>`;
+  // Render prose with paragraph breaks (\n\n) and bullet detection.
+  // Each blank-line-separated block becomes its own <p>, <ul>, or <ol>.
+  const proseHtml = (text) => {
+    const blocks = String(text || '').split(/\n[ \t]*\n+/).map((b) => b.trim()).filter(Boolean);
+    if (!blocks.length) return '';
+    return blocks.map((b) => {
+      const lines = b.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (lines.length > 1 && lines.every((l) => /^[-*]\s+/.test(l))) {
+        const items = lines.map((l) => `<li>${esc(l.replace(/^[-*]\s+/, ''))}</li>`).join('');
+        return `<ul class="ov-bullets">${items}</ul>`;
+      }
+      if (lines.length > 1 && lines.every((l) => /^(\(\d+\)|\d+[.)])\s+/.test(l))) {
+        const items = lines.map((l) => `<li>${esc(l.replace(/^(\(\d+\)|\d+[.)])\s+/, ''))}</li>`).join('');
+        return `<ol class="ov-bullets">${items}</ol>`;
+      }
+      return `<p class="ov-text">${esc(lines.join(' '))}</p>`;
+    }).join('');
+  };
+
+  // Anchor is placed on the outer block so existing comments anchored to
+  // "overview.<key>" keep resolving even after we split prose into paragraphs.
+  const block = (klass, title, body, anchorId) => {
+    const anchorAttr = anchorId ? ` data-anchor-id="${attr(anchorId)}"` : '';
+    return `<div class="ov-block ${klass}"${anchorAttr}><h3 class="ov-title">${esc(title)}</h3><div class="ov-body">${body}</div></div>`;
+  };
   const prose = (key, title, klass) =>
-    o[key] ? block(`prose ${klass}`, title, `<p class="ov-text" data-anchor-id="overview.${attr(key)}">${esc(i18n(o[key]))}</p>`) : '';
+    o[key] ? block(`prose ${klass}`, title, proseHtml(i18n(o[key])), `overview.${key}`) : '';
 
   const parts = [];
   const proseParts = [
@@ -89,7 +112,7 @@ function buildOverview() {
     prose('proposed_approach', t.proposed_approach, 'proposed-approach'),
   ].filter(Boolean);
   parts.push(...proseParts);
-  if (o.goal) parts.push(block('goal', t.goal, `<p class="ov-text" data-anchor-id="overview.goal">${esc(i18n(o.goal))}</p>`));
+  if (o.goal) parts.push(block('goal', t.goal, proseHtml(i18n(o.goal)), 'overview.goal'));
   if (o.review_focus) parts.push(block('review-focus', t.review_focus, list(o.review_focus, 'overview.review_focus')));
   if (o.scope_in) parts.push(block('scope-in', t.scope_in, list(o.scope_in, 'overview.scope_in')));
   if (o.scope_out) parts.push(block('scope-out', t.scope_out, list(o.scope_out, 'overview.scope_out')));
