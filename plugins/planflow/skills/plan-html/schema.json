@@ -16,7 +16,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "summary": { "$ref": "#/$defs/i18nString" },
+        "current_state": { "$ref": "#/$defs/i18nString" },
+        "proposed_approach": { "$ref": "#/$defs/i18nString" },
         "goal": { "$ref": "#/$defs/i18nString" },
+        "review_focus": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
         "scope_in": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
         "scope_out": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
         "success_criteria": { "type": "array", "items": { "$ref": "#/$defs/i18nString" } },
@@ -88,9 +92,15 @@
           },
           "label": { "$ref": "#/$defs/i18nString" },
           "context": { "$ref": "#/$defs/i18nString" },
+          "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+          "recommendation": { "$ref": "#/$defs/i18nString" },
+          "tradeoffs": { "type": "array", "items": { "$ref": "#/$defs/tradeoff" } },
           "required": { "type": "boolean", "default": false },
           "default": {},
           "placeholder": { "$ref": "#/$defs/i18nString" },
+          "allow_other": { "type": "boolean", "default": false },
+          "other_label": { "$ref": "#/$defs/i18nString" },
+          "other_placeholder": { "$ref": "#/$defs/i18nString" },
           "min": { "type": "number" },
           "max": { "type": "number" },
           "step": { "type": "number" },
@@ -127,6 +137,24 @@
           }
         }
       ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["summary"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "summary": { "$ref": "#/$defs/i18nString" }
+      }
+    },
+    "tradeoff": {
+      "type": "object",
+      "required": ["impact"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": ["string", "number", "boolean"] },
+        "impact": { "$ref": "#/$defs/i18nString" }
+      }
     },
     "fileChange": {
       "type": "object",

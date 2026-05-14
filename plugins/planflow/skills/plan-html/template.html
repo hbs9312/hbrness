@@ -196,20 +196,32 @@
     box-shadow: var(--shadow-sm);
   }
 
-  /* Overview — stacked sections (no cards) */
-  .overview-stack { display: flex; flex-direction: column; gap: var(--space-5); }
+  /* Overview — prose-first sections (no cards) */
+  .overview-stack { display: flex; flex-direction: column; gap: var(--space-4); }
   .ov-block { padding-left: var(--space-3); border-left: 3px solid var(--c-border); }
+  .ov-block.prose {
+    padding: 0 0 0 var(--space-4);
+    border-left-width: 4px;
+  }
   .ov-title {
     margin: 0 0 var(--space-2);
     font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--c-text-muted); font-weight: 600;
   }
   .ov-body { color: var(--c-text); font-size: 14.5px; line-height: 1.65; }
+  .ov-block.prose .ov-body { font-size: 15px; line-height: 1.75; }
   .ov-text { margin: 0; }
   .ov-list { margin: 0; padding-left: 20px; }
   .ov-list li + li { margin-top: 4px; }
+  .ov-block.summary { border-left-color: var(--c-accent); }
+  .ov-block.summary .ov-title { color: var(--c-accent); }
+  .ov-block.current-state { border-left-color: var(--c-border-strong); }
+  .ov-block.proposed-approach { border-left-color: var(--c-success); }
+  .ov-block.proposed-approach .ov-title { color: var(--c-success); }
   .ov-block.goal { border-left-color: var(--c-accent); }
   .ov-block.goal .ov-title { color: var(--c-accent); }
+  .ov-block.review-focus { border-left-color: var(--c-warn); }
+  .ov-block.review-focus .ov-title { color: var(--c-warn); }
   .ov-block.scope-in { border-left-color: var(--c-success); }
   .ov-block.scope-in .ov-title { color: var(--c-success); }
   .ov-block.scope-out { border-left-color: var(--c-border-strong); }
@@ -337,6 +349,49 @@
     margin-bottom: var(--space-3);
     border-left: 2px solid var(--c-border); padding-left: var(--space-3);
   }
+  .q-meta {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    margin: var(--space-3) 0;
+  }
+  .q-meta-block {
+    padding: var(--space-3);
+    border: 1px solid var(--c-border);
+    border-radius: var(--radius-sm);
+    background: var(--c-bg);
+    font-size: 13px;
+  }
+  .q-meta-title {
+    margin-bottom: 6px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--c-text-subtle); font-weight: 700;
+  }
+  .q-meta-block p { margin: 0; color: var(--c-text-muted); }
+  .q-evidence-list, .q-tradeoff-list {
+    margin: 0; padding: 0; list-style: none;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .q-evidence-list li, .q-tradeoff-list li {
+    display: flex; align-items: baseline; gap: var(--space-2);
+    color: var(--c-text-muted);
+  }
+  .q-evidence-path, .q-tradeoff-value {
+    flex-shrink: 0;
+    max-width: 48%;
+    overflow-wrap: anywhere;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    background: var(--c-bg-soft);
+    color: var(--c-text);
+    border: 1px solid var(--c-border);
+    font-size: 12px;
+  }
+  .q-evidence-path { font-family: var(--font-mono); }
+  .q-recommendation {
+    border-color: var(--c-success);
+    background: var(--c-success-soft);
+  }
+  .q-recommendation .q-meta-title,
+  .q-recommendation p { color: var(--c-success); }
   .q-input { margin-top: var(--space-2); }
   .q[data-readonly="true"] { background: transparent; }
   .q[data-readonly="true"] .q-input { display: none; }
@@ -371,6 +426,17 @@
   .opt:hover { background: var(--c-bg-soft); border-color: var(--c-border-strong); }
   .opt input { margin: 0; accent-color: var(--c-accent); }
   .opt-label { flex: 1; }
+  .opt-other {
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .opt-other .opt-label { flex: 0 0 auto; }
+  .opt-other-input {
+    flex: 1 1 220px;
+    min-width: 180px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
 
   .slider-wrap { display: flex; align-items: center; gap: var(--space-3); }
   .slider { flex: 1; accent-color: var(--c-accent); }
@@ -765,13 +831,27 @@
     s.addEventListener('input', sync); sync();
   });
 
-  // --- Toggle widget (clickable, syncs hidden checkbox)
-  document.querySelectorAll('.toggle').forEach((t) => {
-    const input = t.querySelector('input');
-    const sync = () => { t.dataset.on = input.checked ? 'true' : 'false'; };
-    t.addEventListener('click', () => { input.checked = !input.checked; sync(); updateProgress(); });
-    sync();
-  });
+	  // --- Toggle widget (clickable, syncs hidden checkbox)
+	  document.querySelectorAll('.toggle').forEach((t) => {
+	    const input = t.querySelector('input');
+	    const sync = () => { t.dataset.on = input.checked ? 'true' : 'false'; };
+	    t.addEventListener('click', () => { input.checked = !input.checked; sync(); updateProgress(); });
+	    sync();
+	  });
+
+	  // --- Custom option inputs for radio/checkbox questions
+	  document.querySelectorAll('.opt-other').forEach((opt) => {
+	    const choice = opt.querySelector('input[type="radio"], input[type="checkbox"]');
+	    const field = opt.querySelector('[data-other-input]');
+	    if (!choice || !field) return;
+	    field.addEventListener('focus', () => {
+	      choice.checked = true;
+	      updateProgress();
+	    });
+	    field.addEventListener('input', () => {
+	      if (field.value.trim()) choice.checked = true;
+	    });
+	  });
 
   // --- Tag input
   document.querySelectorAll('.tag-input-wrap').forEach((wrap) => {
@@ -821,15 +901,35 @@
     } else if (t === 'slider') {
       const inp = root.querySelector('input[type="range"]');
       if (inp && value != null) { inp.value = value; inp.dispatchEvent(new Event('input')); }
-    } else if (t === 'radio') {
-      const inp = root.querySelector(`input[type="radio"][value="${CSS.escape(String(value))}"]`);
-      if (inp) inp.checked = true;
-    } else if (t === 'checkbox') {
-      const arr = Array.isArray(value) ? value : [];
-      root.querySelectorAll('input[type="checkbox"]').forEach((c) => {
-        c.checked = arr.includes(c.value);
-      });
-    } else if (t === 'toggle') {
+	    } else if (t === 'radio') {
+	      const inp = root.querySelector(`input[type="radio"]:not([data-other-radio])[value="${CSS.escape(String(value))}"]`);
+	      if (inp) {
+	        inp.checked = true;
+	      } else if (value != null) {
+	        const other = root.querySelector('[data-other-radio]');
+	        const field = root.querySelector('[data-other-input]');
+	        if (other && field) {
+	          other.checked = true;
+	          field.value = String(value);
+	        }
+	      }
+	    } else if (t === 'checkbox') {
+	      const arr = Array.isArray(value) ? value : [];
+	      const unmatched = [];
+	      root.querySelectorAll('input[type="checkbox"]:not([data-other-checkbox])').forEach((c) => {
+	        c.checked = arr.includes(c.value);
+	      });
+	      arr.forEach((v) => {
+	        const match = root.querySelector(`input[type="checkbox"]:not([data-other-checkbox])[value="${CSS.escape(String(v))}"]`);
+	        if (!match) unmatched.push(String(v));
+	      });
+	      const other = root.querySelector('[data-other-checkbox]');
+	      const field = root.querySelector('[data-other-input]');
+	      if (other && field && unmatched.length) {
+	        other.checked = true;
+	        field.value = unmatched.join(', ');
+	      }
+	    } else if (t === 'toggle') {
       const inp = root.querySelector('input[type="checkbox"]');
       if (inp) { inp.checked = !!value; inp.dispatchEvent(new Event('change')); }
       const tw = root.querySelector('.toggle');
@@ -892,13 +992,21 @@
       } else if (t === 'select') {
         val = root.querySelector('select').value;
         if (!val) return;
-      } else if (t === 'radio') {
-        const c = root.querySelector('input[type="radio"]:checked');
-        if (!c) return;
-        val = c.value;
-      } else if (t === 'checkbox') {
-        val = Array.from(root.querySelectorAll('input[type="checkbox"]:checked')).map((c) => c.value);
-        if (val.length === 0) return;
+	      } else if (t === 'radio') {
+	        const c = root.querySelector('input[type="radio"]:checked');
+	        if (!c) return;
+	        if (c.dataset.otherRadio != null) {
+	          val = root.querySelector('[data-other-input]')?.value.trim() || '';
+	          if (!val) return;
+	        } else {
+	          val = c.value;
+	        }
+	      } else if (t === 'checkbox') {
+	        val = Array.from(root.querySelectorAll('input[type="checkbox"]:checked:not([data-other-checkbox])')).map((c) => c.value);
+	        const other = root.querySelector('[data-other-checkbox]');
+	        const otherVal = root.querySelector('[data-other-input]')?.value.trim() || '';
+	        if (other && other.checked && otherVal) val.push(otherVal);
+	        if (val.length === 0) return;
       } else if (t === 'toggle') {
         val = !!root.querySelector('input[type="checkbox"]').checked;
       } else if (t === 'tag-input') {

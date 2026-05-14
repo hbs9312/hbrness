@@ -25,19 +25,27 @@ const lang = plan.lang === 'en' ? 'en' : 'ko';
 const T = {
   ko: {
     overview: '개요', goal: '목표', scope_in: '포함 범위', scope_out: '제외 범위',
-    success: '성공 기준', risks: '리스크',
+    summary: '요약', current_state: '현재 파악', proposed_approach: '접근 방향',
+    review_focus: '검토 포인트', success: '성공 기준', risks: '리스크',
     phases: '단계', files: '변경 파일', files_other: '기타 변경 파일', diagrams: '다이어그램', decisions: '결정사항',
     round: '라운드', answered: '답변 완료', active: '답변 대기', pending: '대기',
     required: '필수', no_questions: '질문 없음', depends_on: '선행', tasks: '할 일',
+    evidence: '확인한 근거', recommendation: '추천', tradeoffs: '트레이드오프',
+    other: '직접 입력',
+    other_placeholder: '원하는 답변 입력',
     type: { add: 'ADD', modify: 'MODIFY', delete: 'DELETE', rename: 'RENAME' },
     status: { draft: '초안', review: '검토중', approved: '승인됨' },
   },
   en: {
     overview: 'Overview', goal: 'Goal', scope_in: 'In Scope', scope_out: 'Out of Scope',
-    success: 'Success Criteria', risks: 'Risks',
+    summary: 'Summary', current_state: 'Current State', proposed_approach: 'Approach',
+    review_focus: 'Review Focus', success: 'Success Criteria', risks: 'Risks',
     phases: 'Phases', files: 'Files', files_other: 'Other Files', diagrams: 'Diagrams', decisions: 'Decisions',
     round: 'Round', answered: 'Answered', active: 'Active', pending: 'Pending',
     required: 'required', no_questions: 'No questions', depends_on: 'depends on', tasks: 'Tasks',
+    evidence: 'Evidence', recommendation: 'Recommendation', tradeoffs: 'Tradeoffs',
+    other: 'Other',
+    other_placeholder: 'Enter a custom answer',
     type: { add: 'ADD', modify: 'MODIFY', delete: 'DELETE', rename: 'RENAME' },
     status: { draft: 'Draft', review: 'Review', approved: 'Approved' },
   },
@@ -69,9 +77,18 @@ function buildOverview() {
 
   const block = (klass, title, body) =>
     `<div class="ov-block ${klass}"><h3 class="ov-title">${esc(title)}</h3><div class="ov-body">${body}</div></div>`;
+  const prose = (key, title, klass) =>
+    o[key] ? block(`prose ${klass}`, title, `<p class="ov-text" data-anchor-id="overview.${attr(key)}">${esc(i18n(o[key]))}</p>`) : '';
 
   const parts = [];
+  const proseParts = [
+    prose('summary', t.summary, 'summary'),
+    prose('current_state', t.current_state, 'current-state'),
+    prose('proposed_approach', t.proposed_approach, 'proposed-approach'),
+  ].filter(Boolean);
+  parts.push(...proseParts);
   if (o.goal) parts.push(block('goal', t.goal, `<p class="ov-text" data-anchor-id="overview.goal">${esc(i18n(o.goal))}</p>`));
+  if (o.review_focus) parts.push(block('review-focus', t.review_focus, list(o.review_focus, 'overview.review_focus')));
   if (o.scope_in) parts.push(block('scope-in', t.scope_in, list(o.scope_in, 'overview.scope_in')));
   if (o.scope_out) parts.push(block('scope-out', t.scope_out, list(o.scope_out, 'overview.scope_out')));
   if (o.success_criteria) parts.push(block('criteria', t.success, list(o.success_criteria, 'overview.success_criteria')));
@@ -159,11 +176,65 @@ function buildDiagrams() {
 
 // ── Question rendering ───────────────────────────────────────────────────────
 
+function optionLabel(q, value) {
+  const match = (q.options || []).find((o) => Object.is(o.value, value));
+  return match ? (i18n(match.label) || String(match.value)) : String(value);
+}
+
+function optionValues(q) {
+  return new Set((q.options || []).map((o) => String(o.value)));
+}
+
+function renderOtherControl(q, kind, defaultOtherValue) {
+  if (!q.allow_other) return '';
+  const label = i18n(q.other_label) || t.other;
+  const placeholder = i18n(q.other_placeholder) || t.other_placeholder;
+  const checked = defaultOtherValue ? 'checked' : '';
+  const inputValue = defaultOtherValue ? ` value="${attr(defaultOtherValue)}"` : '';
+  const input = `<input class="input opt-other-input" type="text" data-other-input placeholder="${attr(placeholder)}"${inputValue} />`;
+  if (kind === 'radio') {
+    return `<label class="opt opt-other"><input type="radio" name="${attr(q.id)}" value="__other__" data-other-radio ${checked} /><span class="opt-label">${esc(label)}</span>${input}</label>`;
+  }
+  return `<label class="opt opt-other"><input type="checkbox" name="${attr(q.id)}" value="__other__" data-other-checkbox ${checked} /><span class="opt-label">${esc(label)}</span>${input}</label>`;
+}
+
+function renderQuestionMeta(q) {
+  const blocks = [];
+  if (Array.isArray(q.evidence) && q.evidence.length) {
+    const items = q.evidence.map((ev, i) => {
+      const pathHtml = ev.path ? `<span class="q-evidence-path">${esc(ev.path)}</span>` : '';
+      return `<li data-anchor-id="${attr('question.' + q.id + '.evidence.' + i)}">${pathHtml}<span>${esc(i18n(ev.summary))}</span></li>`;
+    }).join('');
+    blocks.push(`<div class="q-meta-block q-evidence">
+      <div class="q-meta-title">${esc(t.evidence)}</div>
+      <ul class="q-evidence-list">${items}</ul>
+    </div>`);
+  }
+  if (q.recommendation) {
+    blocks.push(`<div class="q-meta-block q-recommendation" data-anchor-id="${attr('question.' + q.id + '.recommendation')}">
+      <div class="q-meta-title">${esc(t.recommendation)}</div>
+      <p>${esc(i18n(q.recommendation))}</p>
+    </div>`);
+  }
+  if (Array.isArray(q.tradeoffs) && q.tradeoffs.length) {
+    const items = q.tradeoffs.map((tr, i) => {
+      const valueHtml = tr.value !== undefined ? `<span class="q-tradeoff-value">${esc(optionLabel(q, tr.value))}</span>` : '';
+      return `<li data-anchor-id="${attr('question.' + q.id + '.tradeoff.' + i)}">${valueHtml}<span>${esc(i18n(tr.impact))}</span></li>`;
+    }).join('');
+    blocks.push(`<div class="q-meta-block q-tradeoffs">
+      <div class="q-meta-title">${esc(t.tradeoffs)}</div>
+      <ul class="q-tradeoff-list">${items}</ul>
+    </div>`);
+  }
+  return blocks.length ? `<div class="q-meta">${blocks.join('')}</div>` : '';
+}
+
 function renderQuestion(q) {
   const isAnswered = q.answer !== undefined;
   const required = q.required ? `<span class="q-required" title="${esc(t.required)}">*</span>` : '';
   const group = q.group ? `<span class="q-group">${esc(i18n(q.group))}</span>` : '';
   const ctx = q.context ? `<div class="q-context">${esc(i18n(q.context))}</div>` : '';
+  const meta = renderQuestionMeta(q);
 
   let inputHtml = '';
   switch (q.type) {
@@ -196,18 +267,22 @@ function renderQuestion(q) {
       break;
     }
     case 'radio': {
+      const values = optionValues(q);
+      const defaultOther = q.default != null && !values.has(String(q.default)) ? String(q.default) : '';
       const opts = (q.options || []).map((o, i) =>
         `<label class="opt"><input type="radio" name="${attr(q.id)}" value="${attr(o.value)}" ${q.default === o.value ? 'checked' : ''} /><span class="opt-label">${esc(i18n(o.label) || o.value)}</span></label>`
       ).join('');
-      inputHtml = `<div class="opt-group">${opts}</div>`;
+      inputHtml = `<div class="opt-group">${opts}${renderOtherControl(q, 'radio', defaultOther)}</div>`;
       break;
     }
     case 'checkbox': {
       const defaults = Array.isArray(q.default) ? q.default : [];
+      const values = optionValues(q);
+      const defaultOther = defaults.filter((v) => !values.has(String(v))).map(String).join(', ');
       const opts = (q.options || []).map((o) =>
         `<label class="opt"><input type="checkbox" name="${attr(q.id)}" value="${attr(o.value)}" ${defaults.includes(o.value) ? 'checked' : ''} /><span class="opt-label">${esc(i18n(o.label) || o.value)}</span></label>`
       ).join('');
-      inputHtml = `<div class="opt-group">${opts}</div>`;
+      inputHtml = `<div class="opt-group">${opts}${renderOtherControl(q, 'checkbox', defaultOther)}</div>`;
       break;
     }
     case 'toggle':
@@ -230,8 +305,9 @@ function renderQuestion(q) {
     ? `<div class="q-answer-display">${esc(formatAnswer(q.answer))}</div>` : '';
 
   return `<div class="q" data-qid="${attr(q.id)}" data-type="${attr(q.type)}" data-required="${q.required ? 'true' : 'false'}" data-readonly="${isAnswered ? 'true' : 'false'}">
-    <div class="q-label">${group}<span>${esc(i18n(q.label))}</span>${required}</div>
+    <div class="q-label">${group}<span data-anchor-id="${attr('question.' + q.id + '.label')}">${esc(i18n(q.label))}</span>${required}</div>
     ${ctx}
+    ${meta}
     <div class="q-input">${inputHtml}</div>
     ${answerDisplay}
   </div>`;

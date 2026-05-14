@@ -1,293 +1,165 @@
 {
-  "title": "결제 모듈 리팩터링",
-  "slug": "payment-refactor",
+  "title": "plan-html 코드 조사 기반 계획서 개선",
+  "slug": "plan-html-code-aware-review",
   "lang": "ko",
-  "status": "draft",
-  "created_at": "2026-05-11",
+  "status": "review",
+  "created_at": "2026-05-12",
 
   "overview": {
-    "goal": "결제 처리 로직을 도메인 서비스 + 인프라 어댑터로 분리하여 PG 교체 가능성을 확보한다.",
-    "scope_in": [
-      "PaymentService 인터페이스 추출",
-      "TossPayments 어댑터 분리",
-      "환불 플로우 도메인 로직 정리"
-    ],
-    "scope_out": [
-      "신규 PG 추가 (다음 마일스톤)",
-      "프론트엔드 결제 UI 변경"
+    "summary": "plan-html을 코드베이스 조사 후 검토용 계획서를 만드는 도구로 개선한다. 사용자는 이미 확인된 상태와 제안 방향을 짧게 읽고, 코드로 판단할 수 없는 결정사항만 답변한다.",
+    "current_state": "현재 plan-html은 계획을 HTML로 보여주고 질문을 수집할 수 있지만, 코드 조사 결과를 어디까지 사용자에게 노출할지 기준이 약하다. 그래서 결과가 승인용 계획서보다 구현 로그나 질문지처럼 길어질 수 있다.",
+    "proposed_approach": "계획 작성 전에 필요한 코드 구조를 확인하고, 개요는 사용자-visible 변화와 검토 포인트 중심으로 짧게 작성한다. 세부 파일과 구현 근거는 질문 카드나 phase의 파일 목록으로 분리한다.",
+    "review_focus": [
+      "개요의 정보량이 승인 판단에 충분한지",
+      "새 overview 필드가 기존 plan.json과 하위 호환되는지",
+      "결정사항 카드의 근거/추천/트레이드오프가 과하지 않은지"
     ],
     "success_criteria": [
-      "기존 통합 테스트 100% 통과",
-      "PG 교체 시 PaymentService 외부 코드 변경 0건",
-      "p99 결제 처리 시간 +5ms 이내"
+      "기존 sample plan과 새 schema plan이 모두 렌더링된다",
+      "새 결정 메타데이터가 HTML에 표시된다",
+      "build/validate 스크립트가 통과한다"
     ],
     "risks": [
-      "환불 멱등키 변경 시 정합성 깨질 수 있음",
-      "프로덕션 배포 직후 트랜잭션 dual-write 윈도우"
+      "스킬 지침이 길어져 실제 에이전트가 핵심 규칙을 놓칠 수 있음",
+      "질문 카드가 복잡해져 사용자가 결정 입력보다 설명 읽기에 더 많은 시간을 쓸 수 있음"
     ]
   },
 
   "phases": [
     {
       "id": "P1",
-      "name": "인터페이스 추출",
-      "duration": "2d",
+      "name": "스킬 지침과 스키마 확장",
+      "duration": "0.5d",
       "tasks": [
-        "PaymentService 인터페이스 정의",
-        "기존 구현을 어댑터로 분리",
-        "DI 컨테이너 등록"
+        "코드베이스 조사 우선 흐름을 스킬 지침에 추가",
+        "서술형 overview 필드와 결정 메타데이터를 optional schema로 추가",
+        "기존 plan.json 호환성을 유지"
       ],
       "files": [
-        { "path": "src/payment/payment.service.ts", "change_type": "modify", "summary": "인터페이스 분리, 어댑터 위임" },
-        { "path": "src/payment/adapters/toss.adapter.ts", "change_type": "add", "summary": "TossPayments 호출 격리" }
+        { "path": "plugins/planflow/skills/plan-html/SKILL.common.md", "change_type": "modify", "summary": "코드 조사 기반 계획 작성 규칙 추가" },
+        { "path": "plugins/planflow/skills/plan-html/schema.json", "change_type": "modify", "summary": "overview와 questions optional 필드 확장" }
       ]
     },
     {
       "id": "P2",
-      "name": "환불 플로우 분리",
-      "duration": "3d",
+      "name": "렌더링 개선",
+      "duration": "0.5d",
       "depends_on": ["P1"],
       "tasks": [
-        "RefundService 도메인 서비스 신설",
-        "환불 멱등키 정책 통일",
-        "통합 테스트 추가"
+        "overview를 문단 중심으로 렌더링",
+        "질문 카드에 근거, 추천, 트레이드오프 블록 추가",
+        "인라인 코멘트 anchor를 새 필드에도 부여"
       ],
       "files": [
-        { "path": "src/payment/refund.service.ts", "change_type": "add", "summary": "환불 도메인 로직" },
-        { "path": "src/payment/legacy-refund.ts", "change_type": "delete", "summary": "RefundService 로 흡수" },
-        { "path": "test/payment/integration.test.ts", "change_type": "modify", "summary": "신규 환불 플로우 케이스 추가" }
+        { "path": "plugins/planflow/skills/plan-html/scripts/render.mjs", "change_type": "modify", "summary": "새 필드를 HTML로 렌더링" },
+        { "path": "plugins/planflow/skills/plan-html/template.html", "change_type": "modify", "summary": "문단형 개요와 질문 메타 UI 스타일 추가" }
       ]
     },
     {
       "id": "P3",
-      "name": "정리 및 배포",
-      "duration": "1d",
+      "name": "예시와 배포 산출물 갱신",
+      "duration": "0.5d",
       "depends_on": ["P2"],
       "tasks": [
-        "Deprecation 주석",
-        "feature flag 점진 롤아웃",
-        "모니터링 대시보드 점검"
+        "sample plan을 코드 조사 기반 예시로 교체",
+        "README에 새 사용 흐름을 문서화",
+        "planflow dist 산출물을 재빌드하고 검증"
+      ],
+      "files": [
+        { "path": "plugins/planflow/skills/plan-html/examples/sample-plan.json", "change_type": "modify", "summary": "새 필드 사용 예시" },
+        { "path": "plugins/planflow/README.md", "change_type": "modify", "summary": "조사 기반 검토 루프 설명 추가" }
       ]
     }
-  ],
-
-  "files_touched": [
-    { "path": "docs/runbooks/payment-rollout.md", "change_type": "add", "summary": "롤아웃 단계별 체크리스트 (P3 보조 산출물)" }
   ],
 
   "diagrams": [
     {
       "type": "mermaid",
-      "title": "결제 도메인 구조",
-      "code": "sequenceDiagram\n  participant C as Client\n  participant S as PaymentService\n  participant A as TossAdapter\n  participant R as RefundService\n  C->>S: charge(order)\n  S->>A: requestPayment\n  A-->>S: paymentId\n  S-->>C: ok\n  C->>S: refund(orderId)\n  S->>R: createRefund\n  R->>A: cancelPayment\n  A-->>R: ok\n  R-->>C: refundId"
+      "title": "계획 작성 흐름",
+      "code": "flowchart LR\n  A[\"사용자 요청\"] --> B[\"코드베이스 조사\"]\n  B --> C[\"서술형 계획 작성\"]\n  C --> D[\"결정사항만 질문\"]\n  D --> E[\"답변/코멘트 반영\"]\n  E --> F[\"최종 계획 승인\"]"
     }
   ],
 
   "questions": [
     {
-      "id": "q_pg_strategy",
+      "id": "q_overview_shape",
       "round": 1,
-      "group": "Infra",
+      "group": "Review UX",
       "type": "radio",
-      "label": "PG 추상화 수준은?",
-      "context": "전체 인터페이스를 추상화하면 교체 비용은 낮지만 구현이 무거워집니다. 결제·환불만 추상화하는 안과 트레이드오프.",
-      "required": true,
-      "default": "minimal",
-      "options": [
-        { "value": "full", "label": "전체 (charge/refund/inquiry/webhook 모두)" },
-        { "value": "minimal", "label": "최소 (charge + refund 만)" },
-        { "value": "deferred", "label": "지금은 보류, 다음 마일스톤" }
+      "label": "개요 섹션은 어떤 구조로 보여줄까요?",
+      "context": "현재 렌더러는 overview 배열을 거의 그대로 불렛으로 보여줍니다. 계획서처럼 읽히려면 상단을 서술형으로 바꾸는 편이 좋습니다.",
+      "evidence": [
+        { "path": "plugins/planflow/skills/plan-html/schema.json", "summary": "overview가 기존에는 goal과 배열 필드만 허용" },
+        { "path": "plugins/planflow/skills/plan-html/scripts/render.mjs", "summary": "buildOverview가 배열 필드를 ul/li로 렌더링" }
       ],
-      "answer": "minimal",
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_idempotency_key",
-      "round": 1,
-      "group": "Domain",
-      "type": "select",
-      "label": "환불 멱등키 형식",
-      "context": "기존: order_id+timestamp. 새 정책 후보 중 하나를 골라주세요.",
+      "recommendation": "summary/current_state/proposed_approach를 상단 문단으로 보여주고 기존 불렛은 보조 정보로 유지합니다.",
       "required": true,
+      "default": "prose_first",
+      "allow_other": true,
+      "other_label": "다른 구조",
+      "other_placeholder": "예: 현재 구조 / 변경 방향 / 확인 필요 사항",
       "options": [
-        { "value": "order_uuid", "label": "order_id + uuid v7" },
-        { "value": "refund_uuid", "label": "refund_id (uuid v7)" },
-        { "value": "client_token", "label": "클라이언트 제공 토큰" }
+        { "value": "prose_first", "label": "서술형 중심" },
+        { "value": "mixed_cards", "label": "문단과 불렛을 같은 비중으로 카드화" },
+        { "value": "bullet_only", "label": "기존 불렛 구조 유지" }
       ],
-      "answer": "refund_uuid",
-      "answered_at": "2026-05-11T03:14:22Z"
+      "tradeoffs": [
+        { "value": "prose_first", "impact": "사람이 읽기 좋고 코드 조사 결과를 자연스럽게 설명할 수 있지만 작성 지침이 조금 길어진다." },
+        { "value": "mixed_cards", "impact": "스캔성은 좋지만 화면이 카드 위주로 복잡해질 수 있다." },
+        { "value": "bullet_only", "impact": "변경량은 작지만 지금의 문제인 질문지 같은 인상을 크게 줄이기 어렵다." }
+      ]
     },
     {
-      "id": "q_rollout_pct",
+      "id": "q_research_depth",
       "round": 1,
-      "group": "Rollout",
-      "type": "slider",
-      "label": "초기 feature flag 비율 (%)",
-      "context": "새 코드 경로의 초기 트래픽 비중. 너무 낮으면 검증이 느리고, 너무 높으면 리스크.",
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "step": 5,
-      "default": 10,
-      "unit": "%",
-      "answer": 25,
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_metrics",
-      "round": 1,
-      "group": "Observability",
-      "type": "checkbox",
-      "label": "배포 시 모니터링할 지표",
-      "context": "여러 개 선택 가능. 알림은 분리 설정.",
-      "default": ["latency_p99", "error_rate"],
-      "options": [
-        { "value": "latency_p99", "label": "결제 p99 latency" },
-        { "value": "error_rate", "label": "에러율" },
-        { "value": "refund_lag", "label": "환불 처리 지연" },
-        { "value": "throughput", "label": "throughput (TPS)" }
-      ],
-      "answer": ["latency_p99", "error_rate", "refund_lag"],
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_dual_write",
-      "round": 1,
-      "group": "Migration",
-      "type": "toggle",
-      "label": "이전 코드 경로 dual-write?",
-      "context": "켜면 신·구 양쪽으로 기록 → 비교 검증 가능. 끄면 단순 교체.",
-      "default": true,
-      "placeholder": "켜면 검증 1주 후 구 경로 제거",
-      "answer": true,
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_target_release",
-      "round": 1,
-      "group": "Schedule",
-      "type": "date",
-      "label": "목표 릴리스 날짜",
-      "context": "P1+P2+P3 합계 약 6일 + 검증 기간.",
-      "default": "2026-05-25",
-      "answer": "2026-05-28",
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_feature_flag_name",
-      "round": 1,
-      "group": "Rollout",
-      "type": "text",
-      "label": "feature flag 이름",
-      "context": "기존 컨벤션: `payment_*` 프리픽스",
-      "default": "payment_refactor_v2",
-      "placeholder": "예: payment_refactor_v2",
-      "answer": "payment_refactor_v2",
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_concerns",
-      "round": 1,
-      "group": "Open",
-      "type": "textarea",
-      "label": "추가로 우려되는 점이나 고려사항",
-      "context": "자유롭게. 빈 칸 가능.",
-      "answer": "",
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_stakeholders",
-      "round": 1,
-      "group": "Comm",
-      "type": "tag-input",
-      "label": "사전 공유할 팀/사람",
-      "context": "Enter 또는 쉼표로 추가",
-      "default": ["payments-team", "qa"],
-      "answer": ["payments-team", "qa", "platform-sre"],
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-    {
-      "id": "q_max_retries",
-      "round": 1,
-      "group": "Domain",
-      "type": "number",
-      "label": "환불 재시도 횟수 상한",
-      "context": "외부 PG 일시 장애 대비. 4xx 응답은 재시도 제외.",
-      "min": 0,
-      "max": 10,
-      "step": 1,
-      "default": 3,
-      "answer": 3,
-      "answered_at": "2026-05-11T03:14:22Z"
-    },
-
-    {
-      "id": "q_refund_idempotency_window",
-      "round": 2,
-      "group": "Domain",
-      "type": "slider",
-      "label": "환불 멱등키 보존 기간 (일)",
-      "context": "round 1 에서 refund_uuid 로 결정 → 보존 기간 정책 필요. 너무 짧으면 재시도 충돌, 너무 길면 저장 비용.",
-      "required": true,
-      "min": 1,
-      "max": 90,
-      "step": 1,
-      "default": 14,
-      "unit": "days"
-    },
-    {
-      "id": "q_rollout_steps",
-      "round": 2,
-      "group": "Rollout",
+      "group": "Workflow",
       "type": "radio",
-      "label": "25% 이후 롤아웃 단계",
-      "context": "round 1 에서 시작 25% 결정. 그 다음 단계 페이스를 어떻게 잡을지.",
+      "label": "계획 작성 전 코드베이스 조사는 어느 정도 강제할까요?",
+      "context": "사용자가 원하는 흐름은 먼저 코드베이스를 파악하고, 결정이 필요한 부분만 묻는 방식입니다.",
+      "evidence": [
+        { "path": "plugins/planflow/skills/plan-html/SKILL.common.md", "summary": "기존 지침은 자연어 계획 구조화와 질문 작성 규칙이 중심" }
+      ],
+      "recommendation": "관련 파일 검색, 주요 진입점 읽기, 근거 파일 요약까지 표준 절차로 요구합니다.",
       "required": true,
-      "default": "gradual",
+      "default": "standard",
       "options": [
-        { "value": "aggressive", "label": "공격적: 25 → 50 → 100 (각 1일 간격)" },
-        { "value": "gradual", "label": "점진: 25 → 50 → 75 → 100 (각 2일 간격)" },
-        { "value": "cautious", "label": "보수적: 25 → 50 (3일 후 결정)" }
+        { "value": "standard", "label": "표준 조사 필수" },
+        { "value": "light", "label": "파일 검색 중심의 경량 조사" },
+        { "value": "opt_in", "label": "사용자가 요청할 때만 조사" }
+      ],
+      "tradeoffs": [
+        { "value": "standard", "impact": "계획 품질과 신뢰도는 높지만 첫 응답까지 시간이 늘어난다." },
+        { "value": "light", "impact": "빠르게 생성되지만 현재 구조 해석이 얕아질 수 있다." },
+        { "value": "opt_in", "impact": "기존 속도는 유지되지만 사용자가 지적한 문제를 기본값으로 해결하지 못한다." }
       ]
     },
     {
-      "id": "q_kill_switch",
-      "round": 2,
-      "group": "Rollout",
+      "id": "q_decision_metadata",
+      "round": 1,
+      "group": "Decision Cards",
       "type": "checkbox",
-      "label": "kill switch 트리거 조건",
-      "context": "어떤 지표가 임계치를 넘으면 자동으로 0% 로 회수할지. 복수 선택 가능.",
+      "label": "결정사항 카드에 어떤 보조 정보를 표시할까요?",
+      "context": "결정사항은 코드에서 확인한 사실과 추천안을 함께 보여줘야 사용자가 검토받는 느낌을 받을 수 있습니다.",
+      "evidence": [
+        { "path": "plugins/planflow/skills/plan-html/scripts/render.mjs", "summary": "renderQuestion은 현재 label/context/input/answer만 렌더링" },
+        { "path": "plugins/planflow/skills/plan-html/template.html", "summary": "질문 카드 스타일에 근거나 추천 블록이 없음" }
+      ],
+      "recommendation": "근거, 추천, 트레이드오프를 모두 표시하되 optional로 두어 간단한 질문에는 생략할 수 있게 합니다.",
       "required": true,
-      "default": ["error_rate_spike"],
+      "default": ["evidence", "recommendation", "tradeoffs"],
+      "allow_other": true,
+      "other_label": "추가 표시 항목",
+      "other_placeholder": "예: 영향받는 파일 요약",
       "options": [
-        { "value": "error_rate_spike", "label": "에러율 5% 초과 (5분)" },
-        { "value": "p99_degraded", "label": "p99 latency 2배 이상 악화" },
-        { "value": "refund_failure", "label": "환불 실패율 1% 초과" },
-        { "value": "manual_only", "label": "자동 비활성화 — 수동 회수만" }
+        { "value": "evidence", "label": "확인한 근거" },
+        { "value": "recommendation", "label": "추천안" },
+        { "value": "tradeoffs", "label": "선택지별 영향" }
+      ],
+      "tradeoffs": [
+        { "value": "evidence", "impact": "질문의 출처가 명확해지지만 카드가 길어진다." },
+        { "value": "recommendation", "impact": "사용자가 기본 승인하기 쉬워지지만 추천 품질 책임이 커진다." },
+        { "value": "tradeoffs", "impact": "선택 판단이 쉬워지지만 옵션이 많은 질문에서는 정보량이 늘어난다." }
       ]
-    },
-    {
-      "id": "q_dual_write_cleanup",
-      "round": 2,
-      "group": "Migration",
-      "type": "select",
-      "label": "dual-write 종료 기준",
-      "context": "round 1 에서 dual-write 활성. 어떤 시점에 구 경로 제거할지.",
-      "required": true,
-      "options": [
-        { "value": "1w_clean", "label": "1주간 diff 0건 시" },
-        { "value": "2w_clean", "label": "2주간 diff 0건 시" },
-        { "value": "manual_review", "label": "수동 리뷰 후" }
-      ]
-    },
-    {
-      "id": "q_runbook_owner",
-      "round": 2,
-      "group": "Comm",
-      "type": "text",
-      "label": "런북 작성 담당자 (Slack handle)",
-      "context": "롤아웃 단계별 체크리스트 / 롤백 절차 / on-call 알림 룰을 문서화할 사람.",
-      "placeholder": "예: @sangmin"
     }
   ]
 }
