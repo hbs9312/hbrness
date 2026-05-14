@@ -6,31 +6,27 @@
 <title>{{TITLE}} · planflow</title>
 <style>
   :root {
-    --c-bg: #f8faf9;
-    --c-bg-soft: #eef2f1;
+    --c-bg: #ffffff;
+    --c-bg-soft: #f7f8fa;
     --c-bg-card: #ffffff;
-    --c-bg-elevated: #f3f6f5;
-    --c-border: #c9d1cf;
-    --c-border-strong: #aeb9b7;
-    --c-text: #37353e;
-    --c-text-muted: #5f6068;
-    --c-text-subtle: #858a8c;
-    --c-accent: #715a5a;
-    --c-accent-soft: #eee7e5;
-    --c-on-accent: #ffffff;
-    --c-success: #4f6f63;
-    --c-success-soft: #e6eeeb;
-    --c-warn: #8a633b;
-    --c-warn-soft: #f1e8dc;
-    --c-warn-rgb: 138, 99, 59;
-    --c-on-warn: #ffffff;
-    --c-danger: #9a4b4b;
-    --c-danger-soft: #f1dfdf;
-    --c-add: #4f6f63;
-    --c-modify: #715a5a;
-    --c-delete: #9a4b4b;
-    --c-rename: #5b5866;
-    --c-rename-soft: #e7e6ea;
+    --c-bg-elevated: #ffffff;
+    --c-border: #e4e6eb;
+    --c-border-strong: #c8ccd2;
+    --c-text: #1f2328;
+    --c-text-muted: #6b7280;
+    --c-text-subtle: #9aa0a6;
+    --c-accent: #2563eb;
+    --c-accent-soft: #dbeafe;
+    --c-success: #16a34a;
+    --c-success-soft: #dcfce7;
+    --c-warn: #d97706;
+    --c-warn-soft: #fef3c7;
+    --c-danger: #dc2626;
+    --c-danger-soft: #fee2e2;
+    --c-add: #16a34a;
+    --c-modify: #2563eb;
+    --c-delete: #dc2626;
+    --c-rename: #7c3aed;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04);
     --radius-sm: 6px;
@@ -48,45 +44,35 @@
     --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   html[data-theme="dark"] {
-    --c-bg: #37353e;
-    --c-bg-soft: #302e37;
-    --c-bg-card: #44444e;
-    --c-bg-elevated: #4b4b55;
-    --c-border: #575762;
-    --c-border-strong: #715a5a;
-    --c-text: #f1f4f3;
-    --c-text-muted: #d3dad9;
-    --c-text-subtle: #9da3a2;
-    --c-accent: #d3dad9;
-    --c-accent-soft: #56525b;
-    --c-on-accent: #37353e;
-    --c-success: #a8c5b6;
-    --c-success-soft: #425249;
-    --c-warn: #d0aa83;
-    --c-warn-soft: #594738;
-    --c-warn-rgb: 208, 170, 131;
-    --c-on-warn: #37353e;
-    --c-danger: #e1a09a;
-    --c-danger-soft: #5d3d40;
-    --c-add: #a8c5b6;
-    --c-modify: #d3dad9;
-    --c-delete: #e1a09a;
-    --c-rename: #d8c7c7;
-    --c-rename-soft: #51474f;
+    --c-bg: #0f1115;
+    --c-bg-soft: #161922;
+    --c-bg-card: #1a1d26;
+    --c-bg-elevated: #20242e;
+    --c-border: #2a2e38;
+    --c-border-strong: #3a3f4b;
+    --c-text: #e6e8eb;
+    --c-text-muted: #9aa0a6;
+    --c-text-subtle: #6b7280;
+    --c-accent: #60a5fa;
+    --c-accent-soft: #1e3a5f;
+    --c-success: #4ade80;
+    --c-success-soft: #14532d;
+    --c-warn: #fbbf24;
+    --c-warn-soft: #78350f;
+    --c-danger: #f87171;
+    --c-danger-soft: #7f1d1d;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.3);
   }
   @media (prefers-color-scheme: dark) {
     html[data-theme="auto"] {
-      --c-bg: #37353e; --c-bg-soft: #302e37; --c-bg-card: #44444e; --c-bg-elevated: #4b4b55;
-      --c-border: #575762; --c-border-strong: #715a5a;
-      --c-text: #f1f4f3; --c-text-muted: #d3dad9; --c-text-subtle: #9da3a2;
-      --c-accent: #d3dad9; --c-accent-soft: #56525b; --c-on-accent: #37353e;
-      --c-success: #a8c5b6; --c-success-soft: #425249;
-      --c-warn: #d0aa83; --c-warn-soft: #594738; --c-warn-rgb: 208, 170, 131; --c-on-warn: #37353e;
-      --c-danger: #e1a09a; --c-danger-soft: #5d3d40;
-      --c-add: #a8c5b6; --c-modify: #d3dad9; --c-delete: #e1a09a;
-      --c-rename: #d8c7c7; --c-rename-soft: #51474f;
+      --c-bg: #0f1115; --c-bg-soft: #161922; --c-bg-card: #1a1d26; --c-bg-elevated: #20242e;
+      --c-border: #2a2e38; --c-border-strong: #3a3f4b;
+      --c-text: #e6e8eb; --c-text-muted: #9aa0a6; --c-text-subtle: #6b7280;
+      --c-accent: #60a5fa; --c-accent-soft: #1e3a5f;
+      --c-success: #4ade80; --c-success-soft: #14532d;
+      --c-warn: #fbbf24; --c-warn-soft: #78350f;
+      --c-danger: #f87171; --c-danger-soft: #7f1d1d;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);
       --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.3);
     }
@@ -283,7 +269,8 @@
   .change-chip[data-type="add"] { background: var(--c-success-soft); color: var(--c-add); }
   .change-chip[data-type="modify"] { background: var(--c-accent-soft); color: var(--c-modify); }
   .change-chip[data-type="delete"] { background: var(--c-danger-soft); color: var(--c-delete); }
-  .change-chip[data-type="rename"] { background: var(--c-rename-soft); color: var(--c-rename); }
+  .change-chip[data-type="rename"] { background: #ede9fe; color: var(--c-rename); }
+  html[data-theme="dark"] .change-chip[data-type="rename"] { background: #4c1d95; color: #c4b5fd; }
 
   /* Diagrams */
   .diagram { margin-top: var(--space-3); }
@@ -497,7 +484,7 @@
   }
   .toggle::after {
     content: ''; position: absolute; top: 2px; left: 2px;
-    width: 20px; height: 20px; background: var(--c-bg); border-radius: 50%;
+    width: 20px; height: 20px; background: white; border-radius: 50%;
     transition: transform 0.2s; box-shadow: var(--shadow-sm);
   }
   .toggle input { display: none; }
@@ -519,7 +506,7 @@
     white-space: nowrap; flex-shrink: 0;
   }
   .btn:hover { background: var(--c-bg-soft); }
-  .btn-primary { background: var(--c-accent); color: var(--c-on-accent); border-color: var(--c-accent); }
+  .btn-primary { background: var(--c-accent); color: white; border-color: var(--c-accent); }
   .btn-primary:hover { filter: brightness(1.05); background: var(--c-accent); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -580,8 +567,8 @@
   /* === Inline Review / Comments === */
   [data-anchor-id] { position: relative; }
   [data-anchor-id].has-comments {
-    background: rgba(var(--c-warn-rgb), 0.16);
-    outline: 1px dashed rgba(var(--c-warn-rgb), 0.55);
+    background: rgba(250, 204, 21, 0.16);
+    outline: 1px dashed rgba(250, 204, 21, 0.55);
     outline-offset: 2px;
     border-radius: 3px;
   }
@@ -589,18 +576,18 @@
     display: inline-flex; align-items: center; justify-content: center;
     position: absolute; top: -8px; right: -8px;
     min-width: 18px; height: 18px; padding: 0 5px;
-    background: var(--c-warn); color: var(--c-on-warn);
+    background: var(--c-warn); color: #fff;
     font-size: 11px; font-weight: 700; border-radius: 999px;
     cursor: pointer; box-shadow: var(--shadow-sm); z-index: 5;
   }
   .comment-badge:hover { filter: brightness(1.1); }
   [data-anchor-id].flash { animation: cflash 1.2s ease; }
-  @keyframes cflash { 0%, 100% { background: rgba(var(--c-warn-rgb), 0.16); } 50% { background: rgba(var(--c-warn-rgb), 0.45); } }
+  @keyframes cflash { 0%, 100% { background: rgba(250, 204, 21, 0.16); } 50% { background: rgba(250, 204, 21, 0.45); } }
 
   .comment-bubble { position: absolute; z-index: 40; }
   .comment-bubble button {
     padding: 6px 12px; border-radius: 999px;
-    background: var(--c-accent); color: var(--c-on-accent); border: none;
+    background: var(--c-accent); color: white; border: none;
     cursor: pointer; box-shadow: var(--shadow-md); font-size: 13px; font-weight: 500;
     font-family: inherit;
   }
@@ -614,7 +601,7 @@
   }
   .popover-quote {
     padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
-    background: rgba(var(--c-warn-rgb), 0.12);
+    background: rgba(250, 204, 21, 0.12);
     border-left: 3px solid var(--c-warn);
     border-radius: 0 4px 4px 0;
     font-size: 13px; color: var(--c-text-muted);
@@ -725,14 +712,14 @@
   }
   .cc-quote {
     padding: 4px 8px; margin-bottom: 6px;
-    background: rgba(var(--c-warn-rgb), 0.10);
+    background: rgba(250, 204, 21, 0.10);
     border-left: 2px solid var(--c-warn);
     color: var(--c-text-muted); font-size: 12px;
     border-radius: 0 4px 4px 0;
     word-break: break-word;
   }
   .cc-quote[data-jump-to] { cursor: pointer; }
-  .cc-quote[data-jump-to]:hover { background: rgba(var(--c-warn-rgb), 0.20); }
+  .cc-quote[data-jump-to]:hover { background: rgba(250, 204, 21, 0.20); }
   .cc-body { color: var(--c-text); word-break: break-word; margin-bottom: var(--space-2); white-space: pre-wrap; }
   .cc-input {
     width: 100%; min-height: 56px; padding: 6px 10px; margin-bottom: 6px;

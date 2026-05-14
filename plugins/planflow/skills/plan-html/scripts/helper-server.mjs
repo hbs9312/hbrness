@@ -64,14 +64,28 @@ const sendJson = (res, code, obj) => {
 
 const send404 = (res) => { res.writeHead(404); res.end('not found'); };
 
+const isCodexSession = () => Boolean(process.env.CODEX_THREAD_ID || process.env.CODEX_CI || process.env.CODEX_SANDBOX);
+
+const tmuxSubmit = () => {
+  const mode = process.env.PLANFLOW_TMUX_SUBMIT_MODE || (isCodexSession() ? 'codex-enhanced-enter' : 'enter');
+  if (mode === 'codex-enhanced-enter') {
+    // Codex TUI distinguishes plain Enter from Ctrl-M when enhanced keyboard
+    // reporting is enabled. tmux's normal Enter arrives as Ctrl-M and inserts
+    // a newline, so send the CSI-u plain Enter sequence instead.
+    spawnSync('tmux', ['send-keys', '-t', paneId, '-l', '\x1b[13;1u']);
+    return;
+  }
+  spawnSync('tmux', ['send-keys', '-t', paneId, mode]);
+};
+
 const tmuxSend = (text) => {
   // text is a single line (no embedded newlines).
   // Two-step: -l for literal text (escapes special chars / @ / paths safely),
-  //           then a separate Enter to actually submit.
+  //           then a separate submit key to actually run it.
   const safe = text.replace(/[\r\n]+/g, ' ').slice(0, 4000);
   try {
     spawnSync('tmux', ['send-keys', '-t', paneId, '-l', safe]);
-    spawnSync('tmux', ['send-keys', '-t', paneId, 'Enter']);
+    tmuxSubmit();
   } catch (e) {
     console.error('[helper] tmux send-keys failed:', e.message);
   }
