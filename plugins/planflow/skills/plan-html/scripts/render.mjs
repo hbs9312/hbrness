@@ -27,7 +27,8 @@ const T = {
     overview: '개요', goal: '목표', scope_in: '포함 범위', scope_out: '제외 범위',
     summary: '요약', current_state: '현재 파악', proposed_approach: '접근 방향',
     review_focus: '검토 포인트', success: '성공 기준', risks: '리스크',
-    phases: '단계', files: '변경 파일', files_other: '기타 변경 파일', diagrams: '다이어그램', decisions: '결정사항',
+    phases: '단계', files: '변경 파일', files_other: '기타 변경 파일', diagrams: '다이어그램', decisions: '질문 라운드',
+    answer_review: '답변 확인', answer_review_help: '질문 라운드에서 선택한 답변을 펼쳐 확인합니다.',
     round: '라운드', answered: '답변 완료', active: '답변 대기', pending: '대기',
     required: '필수', no_questions: '질문 없음', depends_on: '선행', tasks: '할 일',
     evidence: '확인한 근거', recommendation: '추천', tradeoffs: '트레이드오프',
@@ -40,7 +41,8 @@ const T = {
     overview: 'Overview', goal: 'Goal', scope_in: 'In Scope', scope_out: 'Out of Scope',
     summary: 'Summary', current_state: 'Current State', proposed_approach: 'Approach',
     review_focus: 'Review Focus', success: 'Success Criteria', risks: 'Risks',
-    phases: 'Phases', files: 'Files', files_other: 'Other Files', diagrams: 'Diagrams', decisions: 'Decisions',
+    phases: 'Phases', files: 'Files', files_other: 'Other Files', diagrams: 'Diagrams', decisions: 'Question Rounds',
+    answer_review: 'Answer Review', answer_review_help: 'Expand to review the answers selected during question rounds.',
     round: 'Round', answered: 'Answered', active: 'Active', pending: 'Pending',
     required: 'required', no_questions: 'No questions', depends_on: 'depends on', tasks: 'Tasks',
     evidence: 'Evidence', recommendation: 'Recommendation', tradeoffs: 'Tradeoffs',
@@ -177,7 +179,7 @@ function buildDiagrams() {
 // ── Question rendering ───────────────────────────────────────────────────────
 
 function optionLabel(q, value) {
-  const match = (q.options || []).find((o) => Object.is(o.value, value));
+  const match = ((q && q.options) || []).find((o) => Object.is(o.value, value));
   return match ? (i18n(match.label) || String(match.value)) : String(value);
 }
 
@@ -302,7 +304,7 @@ function renderQuestion(q) {
   }
 
   const answerDisplay = isAnswered
-    ? `<div class="q-answer-display">${esc(formatAnswer(q.answer))}</div>` : '';
+    ? `<div class="q-answer-display">${esc(formatAnswer(q, q.answer))}</div>` : '';
 
   return `<div class="q" data-qid="${attr(q.id)}" data-type="${attr(q.type)}" data-required="${q.required ? 'true' : 'false'}" data-readonly="${isAnswered ? 'true' : 'false'}">
     <div class="q-label">${group}<span data-anchor-id="${attr('question.' + q.id + '.label')}">${esc(i18n(q.label))}</span>${required}</div>
@@ -313,10 +315,16 @@ function renderQuestion(q) {
   </div>`;
 }
 
-function formatAnswer(a) {
-  if (Array.isArray(a)) return a.join(', ');
+function formatAnswer(q, a) {
+  if (Array.isArray(a)) return a.map((v) => optionLabel(q, v)).join(', ');
+  if (q && Array.isArray(q.options) && q.options.length && a != null) return optionLabel(q, a);
   if (typeof a === 'boolean') return a ? '✓' : '✗';
   return String(a);
+}
+
+function formatReviewAnswer(q) {
+  const answer = q.answer;
+  return formatAnswer(q, answer);
 }
 
 // ── Rounds ──────────────────────────────────────────────────────────────────
@@ -372,23 +380,74 @@ function buildRounds() {
   }).join('');
 }
 
+function buildDecisionSection() {
+  return `
+<section id="decisions">
+  <h2>${esc(t.decisions)} <span class="count">${(plan.questions || []).length}</span></h2>
+  ${buildRounds()}
+</section>`;
+}
+
+function buildPlanSections() {
+  return [
+    buildOverview(),
+    buildPhases(),
+    buildFiles(),
+    buildDiagrams(),
+  ].filter(Boolean).join('\n');
+}
+
+function buildAnswerReview() {
+  const answered = (plan.questions || []).filter((q) => q.answer !== undefined);
+  if (!answered.length) return '';
+
+  const byRound = new Map();
+  for (const q of answered) {
+    const r = q.round || 1;
+    if (!byRound.has(r)) byRound.set(r, []);
+    byRound.get(r).push(q);
+  }
+
+  const rounds = [...byRound.keys()].sort((a, b) => a - b).map((r) => {
+    const items = byRound.get(r).map((q) => {
+      const group = q.group ? `<div class="answer-group">${esc(i18n(q.group))}</div>` : '';
+      return `<li class="answer-item">
+        ${group}
+        <div class="answer-label">${esc(i18n(q.label))}</div>
+        <div class="answer-value">${esc(formatReviewAnswer(q))}</div>
+      </li>`;
+    }).join('');
+    return `<div class="answer-round">
+      <div class="answer-round-title">${esc(t.round)} ${r}</div>
+      <ul class="answer-list">${items}</ul>
+    </div>`;
+  }).join('');
+
+  return `<p class="answer-review-help">${esc(t.answer_review_help)}</p>${rounds}`;
+}
+
 // ── TOC ─────────────────────────────────────────────────────────────────────
 
 function buildToc() {
   const items = [];
-  if (plan.overview && Object.keys(plan.overview).length) items.push(['overview', t.overview]);
-  if (plan.phases && plan.phases.length) items.push(['phases', t.phases]);
-  if (plan.files_touched && plan.files_touched.length) items.push(['files', t.files]);
-  if (plan.diagrams && plan.diagrams.length) items.push(['diagrams', t.diagrams]);
-  items.push(['decisions', t.decisions]);
-  items.push(['ask', lang === 'ko' ? '질문하기' : 'Ask Claude']);
+  if (flowState === 'questions') {
+    items.push(['decisions', t.decisions]);
+  } else {
+    if (plan.overview && Object.keys(plan.overview).length) items.push(['overview', t.overview]);
+    if (plan.phases && plan.phases.length) items.push(['phases', t.phases]);
+    if (plan.files_touched && plan.files_touched.length) items.push(['files', t.files]);
+    if (plan.diagrams && plan.diagrams.length) items.push(['diagrams', t.diagrams]);
+  }
   return items.map(([id, label]) => `<a href="#${id}">${esc(label)}</a>`).join('');
 }
 
 // ── Compose ─────────────────────────────────────────────────────────────────
 
-const totalQuestions = (plan.questions || []).filter((q) => q.answer === undefined).length
-  + (plan.questions || []).filter((q) => q.answer !== undefined).length; // all questions count
+const questions = plan.questions || [];
+const totalQuestions = questions.length;
+const answeredQuestions = questions.filter((q) => q.answer !== undefined).length;
+const unansweredQuestions = totalQuestions - answeredQuestions;
+const flowState = unansweredQuestions > 0 ? 'questions' : 'plan';
 const statusLabel = t.status[plan.status || 'draft'];
 
 const subs = {
@@ -400,19 +459,23 @@ const subs = {
   HELPER_PORT: esc(helperPort),
   PLAN_SLUG: esc(plan.slug || path.basename(path.dirname(planPath))),
   TOTAL_QUESTIONS: String(totalQuestions),
+  ANSWERED_QUESTIONS: String(answeredQuestions),
+  UNANSWERED_QUESTIONS: String(unansweredQuestions),
+  FLOW_STATE: esc(flowState),
 
   TOC_HTML: buildToc(),
-  OVERVIEW_HTML: buildOverview(),
-  PHASES_HTML: buildPhases(),
-  FILES_HTML: buildFiles(),
-  DIAGRAMS_HTML: buildDiagrams(),
-  ROUNDS_HTML: buildRounds(),
+  DECISIONS_SECTION_HTML: flowState === 'questions' ? buildDecisionSection() : '',
+  PLAN_SECTIONS_HTML: flowState === 'plan' ? buildPlanSections() : '',
+  ANSWERS_SIDEBAR_HTML: buildAnswerReview(),
 };
 
 // Comments serialized for client-side decoration.
 // Safe JSON embedding: replace </ with <\/ to prevent script tag breakout.
 const commentsJson = JSON.stringify(plan.comments || []).replace(/</g, '\\u003c');
 subs.COMMENTS_JSON = commentsJson;
+subs.ANSWERS_JSON = JSON.stringify(Object.fromEntries(
+  questions.filter((q) => q.answer !== undefined).map((q) => [q.id, q.answer])
+)).replace(/</g, '\\u003c');
 
 let html = template;
 // {{{NAME}}} — raw HTML

@@ -6,27 +6,31 @@
 <title>{{TITLE}} · planflow</title>
 <style>
   :root {
-    --c-bg: #ffffff;
-    --c-bg-soft: #f7f8fa;
+    --c-bg: #f8faf9;
+    --c-bg-soft: #eef2f1;
     --c-bg-card: #ffffff;
-    --c-bg-elevated: #ffffff;
-    --c-border: #e4e6eb;
-    --c-border-strong: #c8ccd2;
-    --c-text: #1f2328;
-    --c-text-muted: #6b7280;
-    --c-text-subtle: #9aa0a6;
-    --c-accent: #2563eb;
-    --c-accent-soft: #dbeafe;
-    --c-success: #16a34a;
-    --c-success-soft: #dcfce7;
-    --c-warn: #d97706;
-    --c-warn-soft: #fef3c7;
-    --c-danger: #dc2626;
-    --c-danger-soft: #fee2e2;
-    --c-add: #16a34a;
-    --c-modify: #2563eb;
-    --c-delete: #dc2626;
-    --c-rename: #7c3aed;
+    --c-bg-elevated: #f3f6f5;
+    --c-border: #c9d1cf;
+    --c-border-strong: #aeb9b7;
+    --c-text: #37353e;
+    --c-text-muted: #5f6068;
+    --c-text-subtle: #858a8c;
+    --c-accent: #715a5a;
+    --c-accent-soft: #eee7e5;
+    --c-on-accent: #ffffff;
+    --c-success: #4f6f63;
+    --c-success-soft: #e6eeeb;
+    --c-warn: #8a633b;
+    --c-warn-soft: #f1e8dc;
+    --c-warn-rgb: 138, 99, 59;
+    --c-on-warn: #ffffff;
+    --c-danger: #9a4b4b;
+    --c-danger-soft: #f1dfdf;
+    --c-add: #4f6f63;
+    --c-modify: #715a5a;
+    --c-delete: #9a4b4b;
+    --c-rename: #5b5866;
+    --c-rename-soft: #e7e6ea;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04);
     --radius-sm: 6px;
@@ -39,39 +43,50 @@
     --space-5: 24px;
     --space-6: 32px;
     --space-7: 48px;
+    --ask-bar-height: 112px;
     --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard Variable", Pretendard, system-ui, sans-serif;
     --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   html[data-theme="dark"] {
-    --c-bg: #0f1115;
-    --c-bg-soft: #161922;
-    --c-bg-card: #1a1d26;
-    --c-bg-elevated: #20242e;
-    --c-border: #2a2e38;
-    --c-border-strong: #3a3f4b;
-    --c-text: #e6e8eb;
-    --c-text-muted: #9aa0a6;
-    --c-text-subtle: #6b7280;
-    --c-accent: #60a5fa;
-    --c-accent-soft: #1e3a5f;
-    --c-success: #4ade80;
-    --c-success-soft: #14532d;
-    --c-warn: #fbbf24;
-    --c-warn-soft: #78350f;
-    --c-danger: #f87171;
-    --c-danger-soft: #7f1d1d;
+    --c-bg: #37353e;
+    --c-bg-soft: #302e37;
+    --c-bg-card: #44444e;
+    --c-bg-elevated: #4b4b55;
+    --c-border: #575762;
+    --c-border-strong: #715a5a;
+    --c-text: #f1f4f3;
+    --c-text-muted: #d3dad9;
+    --c-text-subtle: #9da3a2;
+    --c-accent: #d3dad9;
+    --c-accent-soft: #56525b;
+    --c-on-accent: #37353e;
+    --c-success: #a8c5b6;
+    --c-success-soft: #425249;
+    --c-warn: #d0aa83;
+    --c-warn-soft: #594738;
+    --c-warn-rgb: 208, 170, 131;
+    --c-on-warn: #37353e;
+    --c-danger: #e1a09a;
+    --c-danger-soft: #5d3d40;
+    --c-add: #a8c5b6;
+    --c-modify: #d3dad9;
+    --c-delete: #e1a09a;
+    --c-rename: #d8c7c7;
+    --c-rename-soft: #51474f;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.3);
   }
   @media (prefers-color-scheme: dark) {
     html[data-theme="auto"] {
-      --c-bg: #0f1115; --c-bg-soft: #161922; --c-bg-card: #1a1d26; --c-bg-elevated: #20242e;
-      --c-border: #2a2e38; --c-border-strong: #3a3f4b;
-      --c-text: #e6e8eb; --c-text-muted: #9aa0a6; --c-text-subtle: #6b7280;
-      --c-accent: #60a5fa; --c-accent-soft: #1e3a5f;
-      --c-success: #4ade80; --c-success-soft: #14532d;
-      --c-warn: #fbbf24; --c-warn-soft: #78350f;
-      --c-danger: #f87171; --c-danger-soft: #7f1d1d;
+      --c-bg: #37353e; --c-bg-soft: #302e37; --c-bg-card: #44444e; --c-bg-elevated: #4b4b55;
+      --c-border: #575762; --c-border-strong: #715a5a;
+      --c-text: #f1f4f3; --c-text-muted: #d3dad9; --c-text-subtle: #9da3a2;
+      --c-accent: #d3dad9; --c-accent-soft: #56525b; --c-on-accent: #37353e;
+      --c-success: #a8c5b6; --c-success-soft: #425249;
+      --c-warn: #d0aa83; --c-warn-soft: #594738; --c-warn-rgb: 208, 170, 131; --c-on-warn: #37353e;
+      --c-danger: #e1a09a; --c-danger-soft: #5d3d40;
+      --c-add: #a8c5b6; --c-modify: #d3dad9; --c-delete: #e1a09a;
+      --c-rename: #d8c7c7; --c-rename-soft: #51474f;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);
       --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.3);
     }
@@ -135,7 +150,7 @@
     display: grid; grid-template-columns: 220px 1fr;
     gap: var(--space-6);
     max-width: 1180px; margin: 0 auto;
-    padding: var(--space-5) var(--space-5) 120px;
+    padding: var(--space-5) var(--space-5) calc(var(--ask-bar-height) + var(--space-6));
   }
   @media (max-width: 880px) {
     .layout { grid-template-columns: 1fr; }
@@ -171,23 +186,6 @@
   section h2 .count { font-size: 13px; color: var(--c-text-muted); font-weight: 400; }
   .section-row { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
   .section-row h2 { margin: 0; }
-  .view-toggle {
-    margin-left: auto; display: inline-flex;
-    background: var(--c-bg-soft); border: 1px solid var(--c-border);
-    border-radius: var(--radius-sm); padding: 2px;
-  }
-  .view-btn {
-    background: transparent; border: none; padding: 5px 12px;
-    border-radius: 4px; cursor: pointer;
-    color: var(--c-text-muted); font-size: 13px; font-family: inherit;
-    transition: all 0.15s;
-  }
-  .view-btn:hover { color: var(--c-text); }
-  .view-btn.active {
-    background: var(--c-bg); color: var(--c-text); font-weight: 500;
-    box-shadow: var(--shadow-sm);
-  }
-
   .card {
     background: var(--c-bg-card);
     border: 1px solid var(--c-border);
@@ -279,14 +277,67 @@
   .change-chip[data-type="add"] { background: var(--c-success-soft); color: var(--c-add); }
   .change-chip[data-type="modify"] { background: var(--c-accent-soft); color: var(--c-modify); }
   .change-chip[data-type="delete"] { background: var(--c-danger-soft); color: var(--c-delete); }
-  .change-chip[data-type="rename"] { background: #ede9fe; color: var(--c-rename); }
-  html[data-theme="dark"] .change-chip[data-type="rename"] { background: #4c1d95; color: #c4b5fd; }
+  .change-chip[data-type="rename"] { background: var(--c-rename-soft); color: var(--c-rename); }
 
   /* Diagrams */
   .diagram { margin-top: var(--space-3); }
   .diagram-title { font-weight: 600; margin-bottom: var(--space-2); }
   .mermaid { background: var(--c-bg-elevated); padding: var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--c-border); overflow-x: auto; }
   .diagram img { max-width: 100%; height: auto; border-radius: var(--radius-sm); border: 1px solid var(--c-border); }
+
+  /* Answer review */
+  .answer-review-help {
+    margin: 0 0 var(--space-3);
+    color: var(--c-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .answer-round {
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--c-border);
+  }
+  .answer-review-help + .answer-round { padding-top: 0; border-top: none; }
+  .answer-round-title {
+    margin-bottom: var(--space-2);
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--c-text-subtle); font-weight: 700;
+  }
+  .answer-list {
+    list-style: none;
+    padding: 0; margin: 0;
+    display: grid; gap: var(--space-2);
+  }
+  .answer-item {
+    padding: var(--space-3);
+    border: 1px solid var(--c-border);
+    border-radius: var(--radius-sm);
+    background: var(--c-bg-soft);
+  }
+  .answer-label {
+    color: var(--c-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .answer-group {
+    margin-bottom: 4px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--c-text-subtle); font-weight: 700;
+  }
+  .answer-value {
+    display: inline-flex;
+    max-width: 100%;
+    margin-top: var(--space-2);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--c-success-soft);
+    color: var(--c-success);
+    font-weight: 600;
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
 
   /* Decision rounds */
   .round {
@@ -301,20 +352,6 @@
     border-bottom: 1px solid transparent;
     background: var(--c-bg-card);
   }
-  body[data-view-mode="all"] .round-header { cursor: default; }
-  body[data-view-mode="all"] .round-chevron { display: none; }
-  /* "한번에" 모드: 라운드 구분 자체 제거 (헤더 숨김 + 박스 풀어 평평하게) */
-  body[data-view-mode="all"] .round-header { display: none; }
-  body[data-view-mode="all"] .round {
-    border: none; box-shadow: none; background: transparent;
-    margin-bottom: 0; border-radius: 0; overflow: visible;
-  }
-  body[data-view-mode="all"] .round[data-state="active"] {
-    border: none; box-shadow: none;
-  }
-  body[data-view-mode="all"] .round-body { padding: 0; }
-  body[data-view-mode="all"] .q { margin-bottom: var(--space-3); }
-  body[data-view-mode="all"] .round + .round .q:first-child { margin-top: 0; }
   .round[data-open="true"] .round-header { border-bottom-color: var(--c-border); }
   .round-chevron { width: 16px; transition: transform 0.2s; color: var(--c-text-muted); }
   .round[data-open="true"] .round-chevron { transform: rotate(90deg); }
@@ -454,7 +491,7 @@
   }
   .toggle::after {
     content: ''; position: absolute; top: 2px; left: 2px;
-    width: 20px; height: 20px; background: white; border-radius: 50%;
+    width: 20px; height: 20px; background: var(--c-bg); border-radius: 50%;
     transition: transform 0.2s; box-shadow: var(--shadow-sm);
   }
   .toggle input { display: none; }
@@ -476,33 +513,52 @@
     white-space: nowrap; flex-shrink: 0;
   }
   .btn:hover { background: var(--c-bg-soft); }
-  .btn-primary { background: var(--c-accent); color: white; border-color: var(--c-accent); }
+  .btn-primary { background: var(--c-accent); color: var(--c-on-accent); border-color: var(--c-accent); }
   .btn-primary:hover { filter: brightness(1.05); background: var(--c-accent); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* Ask Claude */
   .ask {
-    margin-top: var(--space-6);
-    padding: var(--space-4);
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    min-height: var(--ask-bar-height);
+    padding: 12px var(--space-5);
+    background: var(--c-bg);
+    border-top: 1px solid var(--c-border);
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
   }
-  .ask-input-row { display: flex; gap: var(--space-2); margin-top: var(--space-2); align-items: stretch; }
+  .ask-input-row {
+    display: flex; gap: var(--space-2); align-items: flex-end;
+    max-width: 910px;
+    margin-left: calc(50% - 590px + 220px + var(--space-6));
+    margin-right: auto;
+  }
   .ask-input-row .textarea { flex: 1; min-width: 0; }
-  .ask-log { margin-top: var(--space-3); display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+  #askInput {
+    min-height: 80px;
+    max-height: 140px;
+    padding: 11px 14px;
+    resize: vertical;
+    border-radius: var(--radius-md);
+  }
+  #askSend { min-height: 44px; }
+  .ask-log { display: none; }
   .ask-item { display: flex; gap: var(--space-3); padding: 8px 12px; background: var(--c-bg-soft); border-radius: var(--radius-sm); font-size: 13px; }
   .ask-time { color: var(--c-text-subtle); font-variant-numeric: tabular-nums; flex-shrink: 0; }
   .ask-text { flex: 1; word-break: break-word; }
   .ask-status { color: var(--c-success); font-size: 12px; }
-
-  /* Footer */
-  .footer {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
-    background: var(--c-bg); border-top: 1px solid var(--c-border);
-    padding: var(--space-3) var(--space-5);
-    display: flex; align-items: center; gap: var(--space-3);
+  @media (max-width: 1180px) {
+    .ask-input-row {
+      margin-left: calc(var(--space-5) + 220px + var(--space-6));
+      margin-right: var(--space-5);
+    }
   }
-  .footer .summary { color: var(--c-text-muted); font-size: 13px; }
-  .footer .summary strong { color: var(--c-text); }
-  .footer .actions { margin-left: auto; display: flex; gap: var(--space-2); }
+  @media (max-width: 880px) {
+    .ask-input-row {
+      max-width: none;
+      margin-left: 0;
+      margin-right: 0;
+    }
+  }
 
   .toast {
     position: fixed; top: 80px; right: 24px; z-index: 100;
@@ -518,8 +574,8 @@
   /* === Inline Review / Comments === */
   [data-anchor-id] { position: relative; }
   [data-anchor-id].has-comments {
-    background: rgba(250, 204, 21, 0.16);
-    outline: 1px dashed rgba(250, 204, 21, 0.55);
+    background: rgba(var(--c-warn-rgb), 0.16);
+    outline: 1px dashed rgba(var(--c-warn-rgb), 0.55);
     outline-offset: 2px;
     border-radius: 3px;
   }
@@ -527,18 +583,18 @@
     display: inline-flex; align-items: center; justify-content: center;
     position: absolute; top: -8px; right: -8px;
     min-width: 18px; height: 18px; padding: 0 5px;
-    background: var(--c-warn); color: #fff;
+    background: var(--c-warn); color: var(--c-on-warn);
     font-size: 11px; font-weight: 700; border-radius: 999px;
     cursor: pointer; box-shadow: var(--shadow-sm); z-index: 5;
   }
   .comment-badge:hover { filter: brightness(1.1); }
   [data-anchor-id].flash { animation: cflash 1.2s ease; }
-  @keyframes cflash { 0%, 100% { background: rgba(250, 204, 21, 0.16); } 50% { background: rgba(250, 204, 21, 0.45); } }
+  @keyframes cflash { 0%, 100% { background: rgba(var(--c-warn-rgb), 0.16); } 50% { background: rgba(var(--c-warn-rgb), 0.45); } }
 
   .comment-bubble { position: absolute; z-index: 40; }
   .comment-bubble button {
     padding: 6px 12px; border-radius: 999px;
-    background: var(--c-accent); color: white; border: none;
+    background: var(--c-accent); color: var(--c-on-accent); border: none;
     cursor: pointer; box-shadow: var(--shadow-md); font-size: 13px; font-weight: 500;
     font-family: inherit;
   }
@@ -552,7 +608,7 @@
   }
   .popover-quote {
     padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
-    background: rgba(250, 204, 21, 0.12);
+    background: rgba(var(--c-warn-rgb), 0.12);
     border-left: 3px solid var(--c-warn);
     border-radius: 0 4px 4px 0;
     font-size: 13px; color: var(--c-text-muted);
@@ -569,22 +625,61 @@
   .popover-actions { display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-2); }
 
   .comments-toggle {
-    position: fixed; top: 80px; right: 0; z-index: 28;
+    position: fixed; top: 80px; right: var(--side-toggle-right, 0); z-index: 28;
+    width: 92px;
     padding: 8px 12px; border: 1px solid var(--c-border); border-right: none;
     border-radius: var(--radius-sm) 0 0 var(--radius-sm);
     background: var(--c-bg-card); color: var(--c-text);
     cursor: pointer; box-shadow: var(--shadow-sm);
     font-size: 14px; font-family: inherit;
-    display: flex; align-items: center; gap: 6px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    transition: right 0.2s ease, background 0.15s ease;
   }
   .comments-toggle:hover { background: var(--c-bg-soft); }
-  .comments-toggle .count { font-weight: 600; font-size: 12px; }
-  .comments-toggle .count:empty { display: none; }
-  .comments-toggle.has-items { background: var(--c-warn); color: white; border-color: var(--c-warn); }
-  .comments-toggle.has-items:hover { filter: brightness(1.05); background: var(--c-warn); }
+  .comments-toggle .count {
+    padding: 1px 7px;
+    background: var(--c-bg-soft);
+    color: var(--c-text-muted);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .comments-toggle.has-items .count {
+    background: var(--c-warn-soft);
+    color: var(--c-warn);
+  }
+
+  .answers-toggle {
+    position: fixed; top: 124px; right: var(--side-toggle-right, 0); z-index: 28;
+    width: 92px;
+    padding: 8px 12px; border: 1px solid var(--c-border); border-right: none;
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    background: var(--c-bg-card); color: var(--c-text);
+    cursor: pointer; box-shadow: var(--shadow-sm);
+    font-size: 14px; font-family: inherit;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    transition: right 0.2s ease, background 0.15s ease;
+  }
+  .answers-toggle:hover { background: var(--c-bg-soft); }
+  .answers-toggle .count {
+    padding: 1px 7px;
+    background: var(--c-success-soft);
+    color: var(--c-success);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  body[data-flow-state="questions"] .answers-toggle,
+  body[data-answered-questions="0"] .answers-toggle { display: none; }
+  body.side-panel-open {
+    --side-toggle-right: min(360px, 90vw, calc(100vw - 92px));
+  }
+  body.side-panel-switching .comments-sidebar {
+    transition: none;
+  }
 
   .comments-sidebar {
-    position: fixed; top: 60px; right: 0; bottom: 64px;
+    position: fixed; top: 60px; right: 0; bottom: var(--ask-bar-height);
     width: 360px; max-width: 90vw;
     background: var(--c-bg); border-left: 1px solid var(--c-border);
     transform: translateX(100%); transition: transform 0.2s ease;
@@ -592,6 +687,7 @@
     box-shadow: -4px 0 12px rgba(0,0,0,0.12);
   }
   .comments-sidebar.open { transform: translateX(0); }
+  .answers-sidebar .comments-body { padding: var(--space-4); }
   .comments-header {
     display: flex; align-items: center; gap: var(--space-2);
     padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--c-border);
@@ -623,14 +719,14 @@
   }
   .cc-quote {
     padding: 4px 8px; margin-bottom: 6px;
-    background: rgba(250, 204, 21, 0.10);
+    background: rgba(var(--c-warn-rgb), 0.10);
     border-left: 2px solid var(--c-warn);
     color: var(--c-text-muted); font-size: 12px;
     border-radius: 0 4px 4px 0;
     word-break: break-word;
   }
   .cc-quote[data-jump-to] { cursor: pointer; }
-  .cc-quote[data-jump-to]:hover { background: rgba(250, 204, 21, 0.20); }
+  .cc-quote[data-jump-to]:hover { background: rgba(var(--c-warn-rgb), 0.20); }
   .cc-body { color: var(--c-text); word-break: break-word; margin-bottom: var(--space-2); white-space: pre-wrap; }
   .cc-input {
     width: 100%; min-height: 56px; padding: 6px 10px; margin-bottom: 6px;
@@ -666,7 +762,7 @@
   }
 </style>
 </head>
-<body data-plan-slug="{{PLAN_SLUG}}" data-helper-port="{{HELPER_PORT}}" data-lang="{{LANG}}" data-total-questions="{{TOTAL_QUESTIONS}}">
+<body data-plan-slug="{{PLAN_SLUG}}" data-helper-port="{{HELPER_PORT}}" data-lang="{{LANG}}" data-total-questions="{{TOTAL_QUESTIONS}}" data-answered-questions="{{ANSWERED_QUESTIONS}}" data-unanswered-questions="{{UNANSWERED_QUESTIONS}}" data-flow-state="{{FLOW_STATE}}">
 
 <header class="header">
   <h1>{{TITLE}}</h1>
@@ -686,43 +782,19 @@
   </nav>
 
   <main>
-    {{{OVERVIEW_HTML}}}
-    {{{PHASES_HTML}}}
-    {{{FILES_HTML}}}
-    {{{DIAGRAMS_HTML}}}
+    {{{DECISIONS_SECTION_HTML}}}
+    {{{PLAN_SECTIONS_HTML}}}
 
-    <section id="decisions">
-      <div class="section-row">
-        <h2><span data-i18n-ko="결정사항" data-i18n-en="Decisions">결정사항</span> <span class="count" id="decisionsCount"></span></h2>
-        <div class="view-toggle" role="tablist" aria-label="View mode">
-          <button class="view-btn" data-view="rounds" data-i18n-ko="라운드별" data-i18n-en="By round">라운드별</button>
-          <button class="view-btn" data-view="all" data-i18n-ko="한번에" data-i18n-en="All at once">한번에</button>
-        </div>
-      </div>
-      {{{ROUNDS_HTML}}}
-    </section>
-
-    <section id="ask" class="card ask">
-      <h2 style="margin-top:0"><span data-i18n-ko="Claude에게 질문하기" data-i18n-en="Ask Claude">Claude에게 질문하기</span></h2>
-      <div class="q-context" data-i18n-ko="추가 정보가 필요하거나 계획에 의문이 있으면 여기서 보내세요. ⌘+Enter 로 전송." data-i18n-en="Send a follow-up question to Claude. ⌘+Enter to send.">
-        추가 정보가 필요하거나 계획에 의문이 있으면 여기서 보내세요. ⌘+Enter 로 전송.
-      </div>
-      <div class="ask-input-row">
-        <textarea class="textarea" id="askInput" rows="2" placeholder=""></textarea>
-        <button class="btn btn-primary" id="askSend" data-i18n-ko="보내기" data-i18n-en="Send">보내기</button>
-      </div>
-      <div class="ask-log" id="askLog"></div>
-    </section>
   </main>
 </div>
 
-<footer class="footer">
-  <span class="summary" id="footerSummary"></span>
-  <div class="actions">
-    <button class="btn" id="copyJson" data-i18n-ko="JSON 복사" data-i18n-en="Copy JSON">JSON 복사</button>
-    <button class="btn btn-primary" id="submitActiveRound" data-i18n-ko="현재 라운드 제출" data-i18n-en="Submit Round">현재 라운드 제출</button>
+<div id="ask" class="ask" role="complementary" aria-label="Ask Claude">
+  <div class="ask-input-row">
+    <textarea class="textarea" id="askInput" rows="3" placeholder="" data-i18n-placeholder-ko="프롬프트 입력" data-i18n-placeholder-en="Enter prompt"></textarea>
+    <button class="btn btn-primary" id="askSend" data-i18n-ko="전송" data-i18n-en="Send">전송</button>
   </div>
-</footer>
+  <div class="ask-log" id="askLog"></div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -741,7 +813,13 @@
 </div>
 
 <button id="commentsToggle" type="button" class="comments-toggle" title="리뷰 코멘트">
-  💬 <span class="count"></span>
+  <span data-i18n-ko="코멘트" data-i18n-en="Comments">코멘트</span>
+  <span class="count">0</span>
+</button>
+
+<button id="answersToggle" type="button" class="answers-toggle" title="답변 확인">
+  <span data-i18n-ko="답변" data-i18n-en="Answers">답변</span>
+  <span class="count">{{ANSWERED_QUESTIONS}}</span>
 </button>
 
 <aside id="commentsSidebar" class="comments-sidebar" aria-label="Comments">
@@ -753,7 +831,20 @@
   <div class="comments-footer" id="commentsFooter"></div>
 </aside>
 
-<script>window._PLANFLOW_COMMENTS = {{COMMENTS_JSON}};</script>
+<aside id="answersSidebar" class="comments-sidebar answers-sidebar" aria-label="Answers">
+  <div class="comments-header">
+    <h3 data-i18n-ko="답변 확인" data-i18n-en="Answer Review">답변 확인</h3>
+    <button id="answersClose" type="button" class="icon-btn" aria-label="Close">✕</button>
+  </div>
+  <div class="comments-body" id="answersBody">
+    {{{ANSWERS_SIDEBAR_HTML}}}
+  </div>
+</aside>
+
+<script>
+  window._PLANFLOW_COMMENTS = {{COMMENTS_JSON}};
+  window._PLANFLOW_ANSWERS = {{ANSWERS_JSON}};
+</script>
 
 <script>
 (() => {
@@ -798,30 +889,9 @@
   const rounds = document.querySelectorAll('.round');
   rounds.forEach((r) => {
     r.querySelector('.round-header').addEventListener('click', () => {
-      if (document.body.dataset.viewMode === 'all') return;
       r.dataset.open = r.dataset.open === 'true' ? 'false' : 'true';
     });
   });
-
-  // --- View mode toggle (rounds-only vs all-at-once)
-  const VIEW_KEY = `planflow:${PLAN_SLUG}:view`;
-  const applyView = (mode) => {
-    document.body.dataset.viewMode = mode;
-    document.querySelectorAll('.view-btn').forEach((b) => {
-      b.classList.toggle('active', b.dataset.view === mode);
-    });
-    document.querySelectorAll('.round').forEach((r) => {
-      if (mode === 'all') r.dataset.open = 'true';
-      else r.dataset.open = r.dataset.state === 'active' ? 'true' : 'false';
-    });
-  };
-  document.querySelectorAll('.view-btn').forEach((b) => {
-    b.addEventListener('click', () => {
-      localStorage.setItem(VIEW_KEY, b.dataset.view);
-      applyView(b.dataset.view);
-    });
-  });
-  applyView(localStorage.getItem(VIEW_KEY) || 'rounds');
 
   // --- Slider value sync
   document.querySelectorAll('.slider').forEach((s) => {
@@ -831,27 +901,27 @@
     s.addEventListener('input', sync); sync();
   });
 
-	  // --- Toggle widget (clickable, syncs hidden checkbox)
-	  document.querySelectorAll('.toggle').forEach((t) => {
-	    const input = t.querySelector('input');
-	    const sync = () => { t.dataset.on = input.checked ? 'true' : 'false'; };
-	    t.addEventListener('click', () => { input.checked = !input.checked; sync(); updateProgress(); });
-	    sync();
-	  });
+  // --- Toggle widget (clickable, syncs hidden checkbox)
+  document.querySelectorAll('.toggle').forEach((t) => {
+    const input = t.querySelector('input');
+    const sync = () => { t.dataset.on = input.checked ? 'true' : 'false'; };
+    t.addEventListener('click', () => { input.checked = !input.checked; sync(); updateProgress(); });
+    sync();
+  });
 
-	  // --- Custom option inputs for radio/checkbox questions
-	  document.querySelectorAll('.opt-other').forEach((opt) => {
-	    const choice = opt.querySelector('input[type="radio"], input[type="checkbox"]');
-	    const field = opt.querySelector('[data-other-input]');
-	    if (!choice || !field) return;
-	    field.addEventListener('focus', () => {
-	      choice.checked = true;
-	      updateProgress();
-	    });
-	    field.addEventListener('input', () => {
-	      if (field.value.trim()) choice.checked = true;
-	    });
-	  });
+  // --- Custom option inputs for radio/checkbox questions
+  document.querySelectorAll('.opt-other').forEach((opt) => {
+    const choice = opt.querySelector('input[type="radio"], input[type="checkbox"]');
+    const field = opt.querySelector('[data-other-input]');
+    if (!choice || !field) return;
+    field.addEventListener('focus', () => {
+      choice.checked = true;
+      updateProgress();
+    });
+    field.addEventListener('input', () => {
+      if (field.value.trim()) choice.checked = true;
+    });
+  });
 
   // --- Tag input
   document.querySelectorAll('.tag-input-wrap').forEach((wrap) => {
@@ -890,7 +960,7 @@
   });
 
   // --- Hydrate from localStorage (preserve answers across reloads)
-  const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  const stored = { ...(window._PLANFLOW_ANSWERS || {}), ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') };
   const setAnswerInDOM = (qid, value) => {
     const root = document.querySelector(`.q[data-qid="${qid}"]`);
     if (!root) return;
@@ -901,35 +971,35 @@
     } else if (t === 'slider') {
       const inp = root.querySelector('input[type="range"]');
       if (inp && value != null) { inp.value = value; inp.dispatchEvent(new Event('input')); }
-	    } else if (t === 'radio') {
-	      const inp = root.querySelector(`input[type="radio"]:not([data-other-radio])[value="${CSS.escape(String(value))}"]`);
-	      if (inp) {
-	        inp.checked = true;
-	      } else if (value != null) {
-	        const other = root.querySelector('[data-other-radio]');
-	        const field = root.querySelector('[data-other-input]');
-	        if (other && field) {
-	          other.checked = true;
-	          field.value = String(value);
-	        }
-	      }
-	    } else if (t === 'checkbox') {
-	      const arr = Array.isArray(value) ? value : [];
-	      const unmatched = [];
-	      root.querySelectorAll('input[type="checkbox"]:not([data-other-checkbox])').forEach((c) => {
-	        c.checked = arr.includes(c.value);
-	      });
-	      arr.forEach((v) => {
-	        const match = root.querySelector(`input[type="checkbox"]:not([data-other-checkbox])[value="${CSS.escape(String(v))}"]`);
-	        if (!match) unmatched.push(String(v));
-	      });
-	      const other = root.querySelector('[data-other-checkbox]');
-	      const field = root.querySelector('[data-other-input]');
-	      if (other && field && unmatched.length) {
-	        other.checked = true;
-	        field.value = unmatched.join(', ');
-	      }
-	    } else if (t === 'toggle') {
+    } else if (t === 'radio') {
+      const inp = root.querySelector(`input[type="radio"]:not([data-other-radio])[value="${CSS.escape(String(value))}"]`);
+      if (inp) {
+        inp.checked = true;
+      } else if (value != null) {
+        const other = root.querySelector('[data-other-radio]');
+        const field = root.querySelector('[data-other-input]');
+        if (other && field) {
+          other.checked = true;
+          field.value = String(value);
+        }
+      }
+    } else if (t === 'checkbox') {
+      const arr = Array.isArray(value) ? value : [];
+      const unmatched = [];
+      root.querySelectorAll('input[type="checkbox"]:not([data-other-checkbox])').forEach((c) => {
+        c.checked = arr.includes(c.value);
+      });
+      arr.forEach((v) => {
+        const match = root.querySelector(`input[type="checkbox"]:not([data-other-checkbox])[value="${CSS.escape(String(v))}"]`);
+        if (!match) unmatched.push(String(v));
+      });
+      const other = root.querySelector('[data-other-checkbox]');
+      const field = root.querySelector('[data-other-input]');
+      if (other && field && unmatched.length) {
+        other.checked = true;
+        field.value = unmatched.join(', ');
+      }
+    } else if (t === 'toggle') {
       const inp = root.querySelector('input[type="checkbox"]');
       if (inp) { inp.checked = !!value; inp.dispatchEvent(new Event('change')); }
       const tw = root.querySelector('.toggle');
@@ -992,21 +1062,21 @@
       } else if (t === 'select') {
         val = root.querySelector('select').value;
         if (!val) return;
-	      } else if (t === 'radio') {
-	        const c = root.querySelector('input[type="radio"]:checked');
-	        if (!c) return;
-	        if (c.dataset.otherRadio != null) {
-	          val = root.querySelector('[data-other-input]')?.value.trim() || '';
-	          if (!val) return;
-	        } else {
-	          val = c.value;
-	        }
-	      } else if (t === 'checkbox') {
-	        val = Array.from(root.querySelectorAll('input[type="checkbox"]:checked:not([data-other-checkbox])')).map((c) => c.value);
-	        const other = root.querySelector('[data-other-checkbox]');
-	        const otherVal = root.querySelector('[data-other-input]')?.value.trim() || '';
-	        if (other && other.checked && otherVal) val.push(otherVal);
-	        if (val.length === 0) return;
+      } else if (t === 'radio') {
+        const c = root.querySelector('input[type="radio"]:checked');
+        if (!c) return;
+        if (c.dataset.otherRadio != null) {
+          val = root.querySelector('[data-other-input]')?.value.trim() || '';
+          if (!val) return;
+        } else {
+          val = c.value;
+        }
+      } else if (t === 'checkbox') {
+        val = Array.from(root.querySelectorAll('input[type="checkbox"]:checked:not([data-other-checkbox])')).map((c) => c.value);
+        const other = root.querySelector('[data-other-checkbox]');
+        const otherVal = root.querySelector('[data-other-input]')?.value.trim() || '';
+        if (other && other.checked && otherVal) val.push(otherVal);
+        if (val.length === 0) return;
       } else if (t === 'toggle') {
         val = !!root.querySelector('input[type="checkbox"]').checked;
       } else if (t === 'tag-input') {
@@ -1028,14 +1098,13 @@
   const updateProgress = () => {
     persistAnswers();
     const total = Number(body.dataset.totalQuestions || 0);
-    const answered = Object.keys(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')).length;
+    const savedAnswers = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const answeredIds = new Set(Object.keys(savedAnswers));
+    document.querySelectorAll('.q[data-readonly="true"]').forEach((q) => answeredIds.add(q.dataset.qid));
+    const answeredFromPlan = Number(body.dataset.answeredQuestions || 0);
+    const answered = Math.min(total, Math.max(answeredFromPlan, answeredIds.size));
     document.getElementById('progressLabel').textContent = `${answered} / ${total}`;
     document.getElementById('progressFill').style.width = total ? `${(answered/total)*100}%` : '0%';
-    const remain = total - answered;
-    document.getElementById('footerSummary').innerHTML =
-      remain > 0
-        ? `<strong>${answered}</strong> / ${total} answered · <strong>${remain}</strong> remaining`
-        : `<strong>All ${total} answered ✓</strong>`;
   };
   document.querySelectorAll('input, select, textarea').forEach((el) => {
     el.addEventListener('change', updateProgress);
@@ -1044,7 +1113,7 @@
   updateProgress();
 
   // --- Submit active round
-  document.getElementById('submitActiveRound').addEventListener('click', async () => {
+  const submitActiveRound = async () => {
     const activeRound = document.querySelector('.round[data-state="active"]');
     if (!activeRound) { toast('No active round'); return; }
     // validate required
@@ -1068,13 +1137,9 @@
     } catch (e) {
       toast('Error: ' + e.message);
     }
-  });
-
-  // --- Copy JSON
-  document.getElementById('copyJson').addEventListener('click', async () => {
-    const data = collectAnswers(false);
-    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-    toast('Copied to clipboard');
+  };
+  document.querySelectorAll('[data-submit-round]').forEach((btn) => {
+    btn.addEventListener('click', submitActiveRound);
   });
 
   // --- Ask Claude
@@ -1118,6 +1183,51 @@
   }, { rootMargin: '-40% 0px -55% 0px' });
   document.querySelectorAll('section[id]').forEach((s) => observer.observe(s));
 
+  const updateSidePanelState = () => {
+    body.classList.toggle('side-panel-open', !!document.querySelector('.comments-sidebar.open'));
+  };
+  const withoutPanelAnimation = (fn) => {
+    body.classList.add('side-panel-switching');
+    fn();
+    requestAnimationFrame(() => body.classList.remove('side-panel-switching'));
+  };
+
+  // --- Answer review sidebar
+  {
+    const answersToggle = document.getElementById('answersToggle');
+    const answersSidebar = document.getElementById('answersSidebar');
+    const answersClose = document.getElementById('answersClose');
+    const ANSWERS_OPEN_KEY = `planflow:${PLAN_SLUG}:answers-open`;
+    const COMMENTS_OPEN_KEY = `planflow:${PLAN_SLUG}:comments-open`;
+    const hasAnswers = Number(body.dataset.answeredQuestions || 0) > 0;
+
+    const openAnswers = () => {
+      if (!hasAnswers || body.dataset.flowState !== 'plan') return;
+      const commentsSidebar = document.getElementById('commentsSidebar');
+      const switchContent = commentsSidebar?.classList.contains('open');
+      const apply = () => {
+        answersSidebar.classList.add('open');
+        commentsSidebar?.classList.remove('open');
+        localStorage.setItem(ANSWERS_OPEN_KEY, '1');
+        localStorage.setItem(COMMENTS_OPEN_KEY, '0');
+        updateSidePanelState();
+      };
+      switchContent ? withoutPanelAnimation(apply) : apply();
+    };
+    const closeAnswers = () => {
+      answersSidebar.classList.remove('open');
+      localStorage.setItem(ANSWERS_OPEN_KEY, '0');
+      updateSidePanelState();
+    };
+
+    answersToggle.addEventListener('click', () => {
+      answersSidebar.classList.contains('open') ? closeAnswers() : openAnswers();
+    });
+    answersClose.addEventListener('click', closeAnswers);
+
+    if (localStorage.getItem(ANSWERS_OPEN_KEY) === '1') openAnswers();
+  }
+
   // === Inline Review / Comments ===
   {
     const DRAFTS_KEY = `planflow:${PLAN_SLUG}:comment-drafts`;
@@ -1159,8 +1269,23 @@
       return null;
     };
 
-    const openSidebar  = () => { sidebarEl.classList.add('open'); localStorage.setItem(OPEN_KEY, '1'); };
-    const closeSidebar = () => { sidebarEl.classList.remove('open'); localStorage.setItem(OPEN_KEY, '0'); };
+    const openSidebar  = () => {
+      const answersSidebar = document.getElementById('answersSidebar');
+      const switchContent = answersSidebar?.classList.contains('open');
+      const apply = () => {
+        sidebarEl.classList.add('open');
+        answersSidebar?.classList.remove('open');
+        localStorage.setItem(OPEN_KEY, '1');
+        localStorage.setItem(`planflow:${PLAN_SLUG}:answers-open`, '0');
+        updateSidePanelState();
+      };
+      switchContent ? withoutPanelAnimation(apply) : apply();
+    };
+    const closeSidebar = () => {
+      sidebarEl.classList.remove('open');
+      localStorage.setItem(OPEN_KEY, '0');
+      updateSidePanelState();
+    };
 
     toggleEl.addEventListener('click', () => sidebarEl.classList.contains('open') ? closeSidebar() : openSidebar());
     closeEl.addEventListener('click', closeSidebar);
@@ -1298,7 +1423,7 @@
       }));
 
       const totalUnresolved = drafts.length + active.length;
-      toggleEl.querySelector('.count').textContent = totalUnresolved || '';
+      toggleEl.querySelector('.count').textContent = String(totalUnresolved);
       toggleEl.classList.toggle('has-items', totalUnresolved > 0);
     };
 
