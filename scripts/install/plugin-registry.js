@@ -54,6 +54,43 @@ function pluginCacheDir(plugin, version, name = DEFAULT_MARKETPLACE) {
   return path.join(CACHE_ROOT, name, plugin, version);
 }
 
+// Remove any cached version directory for `plugin` that is not `keepVersion`.
+// Used after a successful install/refresh so that older versions don't accumulate
+// in ~/.claude/plugins/cache/<marketplace>/<plugin>/. Returns the list of
+// removed version names.
+function pruneOldPluginVersions(plugin, keepVersion, name = DEFAULT_MARKETPLACE) {
+  if (!plugin || !keepVersion) return [];
+  const pluginRoot = path.join(CACHE_ROOT, name, plugin);
+  if (!fs.existsSync(pluginRoot)) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync(pluginRoot);
+  } catch (_e) {
+    return [];
+  }
+  const removed = [];
+  for (const ver of entries) {
+    if (ver === keepVersion) continue;
+    // Defensive: only touch entries that look like version directories.
+    if (!/^[\w.+\-]+$/.test(ver)) continue;
+    const full = path.join(pluginRoot, ver);
+    let stat;
+    try {
+      stat = fs.lstatSync(full);
+    } catch (_e) {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    try {
+      fs.rmSync(full, { recursive: true, force: true });
+      removed.push(ver);
+    } catch (_e) {
+      // ignore — leave it for the user to investigate
+    }
+  }
+  return removed;
+}
+
 /**
  * Build and write the marketplace manifest. Also copies each plugin from
  * its source directory into marketplaces/<name>/plugins/<plugin>/ so the
@@ -196,6 +233,7 @@ module.exports = {
   marketplaceManifestPath,
   marketplacePluginDir,
   pluginCacheDir,
+  pruneOldPluginVersions,
   setupMarketplaceContents,
   ensureMarketplaceEntry,
   removeMarketplaceIfEmpty,

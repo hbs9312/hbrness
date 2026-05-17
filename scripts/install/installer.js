@@ -170,11 +170,15 @@ function applyInstallClaudePlugin({ plan, results, dryRun }) {
           const isSkip =
             (!r.ok && claudeCli.isIdempotentFailure(r)) ||
             (r.ok && claudeCli.looksAlreadyInstalled(r));
+          const prune = (status) => {
+            const removed = registry.pruneOldPluginVersions(op.plugin, plan.version);
+            return { status, pruned: removed };
+          };
           if (isSkip) {
             claudeCli.pluginUninstall(op.target);
             r = claudeCli.pluginInstall(op.target);
             if (r.ok && !claudeCli.looksAlreadyInstalled(r)) {
-              results.push({ ...op, status: 'refreshed', output: r.stdout });
+              results.push({ ...op, ...prune('refreshed'), output: r.stdout });
             } else if (r.ok || claudeCli.isIdempotentFailure(r)) {
               // Reinstall still reports skip — accept the existing copy.
               results.push({ ...op, status: 'exists', output: r.stderr || r.stdout });
@@ -186,7 +190,7 @@ function applyInstallClaudePlugin({ plan, results, dryRun }) {
               });
             }
           } else if (r.ok) {
-            results.push({ ...op, status: 'installed', output: r.stdout });
+            results.push({ ...op, ...prune('installed'), output: r.stdout });
           } else {
             results.push({
               ...op,
