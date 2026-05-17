@@ -332,14 +332,16 @@
     width: 100%; height: 100%;
     overflow: hidden;
     display: flex; align-items: center; justify-content: center;
+    cursor: grab;
+    touch-action: none;
   }
+  .diagram-lightbox-viewport:active { cursor: grabbing; }
   .diagram-lightbox-stage {
     transform-origin: center center;
     transition: transform 0.05s linear;
-    cursor: grab;
     display: inline-block;
+    pointer-events: none;
   }
-  .diagram-lightbox-stage:active { cursor: grabbing; }
   .diagram-lightbox-stage svg, .diagram-lightbox-stage img {
     display: block; max-width: none; max-height: none;
     user-select: none; -webkit-user-drag: none;
@@ -1846,26 +1848,27 @@
     zoomBy(factor, e.clientX, e.clientY);
   }, { passive: false });
 
-  // Drag-pan
+  // Drag-pan: bind to viewport so users can grab the empty area too, not just
+  // the rendered diagram. Stage has pointer-events:none so it never blocks.
   let dragging = false;
   let dragStartX = 0, dragStartY = 0, dragTx = 0, dragTy = 0;
-  stage.addEventListener('pointerdown', (e) => {
+  viewport.addEventListener('pointerdown', (e) => {
     dragging = true;
     dragStartX = e.clientX; dragStartY = e.clientY;
     dragTx = tx; dragTy = ty;
-    stage.setPointerCapture(e.pointerId);
+    viewport.setPointerCapture(e.pointerId);
   });
-  stage.addEventListener('pointermove', (e) => {
+  viewport.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     tx = dragTx + (e.clientX - dragStartX);
     ty = dragTy + (e.clientY - dragStartY);
     applyTransform();
   });
-  stage.addEventListener('pointerup', (e) => {
+  viewport.addEventListener('pointerup', (e) => {
     dragging = false;
-    try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+    try { viewport.releasePointerCapture(e.pointerId); } catch (_) {}
   });
-  stage.addEventListener('pointercancel', () => { dragging = false; });
+  viewport.addEventListener('pointercancel', () => { dragging = false; });
 })();
 </script>
 </body>
