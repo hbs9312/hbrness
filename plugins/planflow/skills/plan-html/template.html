@@ -273,10 +273,83 @@
   html[data-theme="dark"] .change-chip[data-type="rename"] { background: #4c1d95; color: #c4b5fd; }
 
   /* Diagrams */
-  .diagram { margin-top: var(--space-3); }
+  .diagram { margin-top: var(--space-3); position: relative; }
   .diagram-title { font-weight: 600; margin-bottom: var(--space-2); }
   .mermaid { background: var(--c-bg-elevated); padding: var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--c-border); overflow-x: auto; }
-  .diagram img { max-width: 100%; height: auto; border-radius: var(--radius-sm); border: 1px solid var(--c-border); }
+  .diagram img { max-width: 100%; height: auto; border-radius: var(--radius-sm); border: 1px solid var(--c-border); display: block; }
+  .diagram .mermaid, .diagram img { cursor: zoom-in; transition: outline-color 0.15s; outline: 2px solid transparent; }
+  .diagram .mermaid:hover, .diagram img:hover { outline-color: var(--c-accent); }
+  .diagram-zoom-hint {
+    position: absolute; top: var(--space-2); right: var(--space-2);
+    font-size: 11px; color: var(--c-text-muted);
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--c-bg-card); border: 1px solid var(--c-border);
+    pointer-events: none; opacity: 0; transition: opacity 0.15s;
+  }
+  .diagram:hover .diagram-zoom-hint { opacity: 1; }
+
+  /* Lightbox modal for diagrams */
+  .diagram-lightbox {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0, 0, 0, 0.78);
+    display: none;
+    align-items: center; justify-content: center;
+    padding: var(--space-4);
+    cursor: zoom-out;
+  }
+  .diagram-lightbox.open { display: flex; }
+  .diagram-lightbox-inner {
+    position: relative;
+    max-width: 96vw; max-height: 96vh;
+    background: var(--c-bg);
+    border-radius: var(--radius-md);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    padding: var(--space-4);
+    cursor: default;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .diagram-lightbox-header {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--c-border);
+    margin-bottom: var(--space-3);
+    flex-shrink: 0;
+  }
+  .diagram-lightbox-title { font-weight: 600; flex: 1; }
+  .diagram-lightbox-controls { display: flex; gap: 4px; }
+  .diagram-lightbox-zoom { font-family: var(--font-mono); font-size: 12px; color: var(--c-text-muted); padding: 4px 10px; min-width: 56px; text-align: center; }
+  .diagram-lightbox-body {
+    flex: 1; min-height: 0;
+    overflow: hidden;
+    background: var(--c-bg-card);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--c-border);
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .diagram-lightbox-viewport {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .diagram-lightbox-stage {
+    transform-origin: center center;
+    transition: transform 0.05s linear;
+    cursor: grab;
+    display: inline-block;
+  }
+  .diagram-lightbox-stage:active { cursor: grabbing; }
+  .diagram-lightbox-stage svg, .diagram-lightbox-stage img {
+    display: block; max-width: none; max-height: none;
+    user-select: none; -webkit-user-drag: none;
+  }
+  .diagram-lightbox-footer {
+    margin-top: var(--space-2); padding-top: var(--space-2);
+    border-top: 1px solid var(--c-border);
+    font-size: 11px; color: var(--c-text-muted);
+    flex-shrink: 0;
+  }
 
   /* Answer review */
   .answer-review-help {
@@ -1643,6 +1716,157 @@
     const dark = matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light';
     window.mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
   }
+</script>
+
+<div id="diagramLightbox" class="diagram-lightbox" role="dialog" aria-modal="true" aria-label="다이어그램 확대 보기">
+  <div class="diagram-lightbox-inner" role="document">
+    <div class="diagram-lightbox-header">
+      <div class="diagram-lightbox-title" id="dlbTitle"></div>
+      <div class="diagram-lightbox-controls">
+        <button type="button" class="icon-btn" id="dlbZoomOut" title="축소 (−)">−</button>
+        <div class="diagram-lightbox-zoom" id="dlbZoomLevel">100%</div>
+        <button type="button" class="icon-btn" id="dlbZoomIn" title="확대 (+)">+</button>
+        <button type="button" class="icon-btn" id="dlbReset" title="원래대로 (0)">⟲</button>
+        <button type="button" class="icon-btn" id="dlbClose" title="닫기 (ESC)">✕</button>
+      </div>
+    </div>
+    <div class="diagram-lightbox-body">
+      <div class="diagram-lightbox-viewport" id="dlbViewport">
+        <div class="diagram-lightbox-stage" id="dlbStage"></div>
+      </div>
+    </div>
+    <div class="diagram-lightbox-footer">휠: 줌 · 드래그: 이동 · 0/⟲: 원래대로 · ESC: 닫기</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const lightbox = document.getElementById('diagramLightbox');
+  const stage = document.getElementById('dlbStage');
+  const viewport = document.getElementById('dlbViewport');
+  const titleEl = document.getElementById('dlbTitle');
+  const zoomLevelEl = document.getElementById('dlbZoomLevel');
+  if (!lightbox || !stage) return;
+
+  let scale = 1;
+  let tx = 0;
+  let ty = 0;
+  const MIN_SCALE = 0.2;
+  const MAX_SCALE = 8;
+
+  const applyTransform = () => {
+    stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    zoomLevelEl.textContent = `${Math.round(scale * 100)}%`;
+  };
+  const reset = () => { scale = 1; tx = 0; ty = 0; applyTransform(); };
+  const zoomBy = (factor, originX = null, originY = null) => {
+    const prev = scale;
+    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+    if (next === prev) return;
+    if (originX != null && originY != null) {
+      // Zoom toward cursor: adjust translation so the point under cursor stays put.
+      const rect = viewport.getBoundingClientRect();
+      const cx = originX - rect.left - rect.width / 2;
+      const cy = originY - rect.top - rect.height / 2;
+      tx = cx - (cx - tx) * (next / prev);
+      ty = cy - (cy - ty) * (next / prev);
+    }
+    scale = next;
+    applyTransform();
+  };
+
+  const open = (sourceEl, title) => {
+    stage.innerHTML = '';
+    let cloned = null;
+    if (sourceEl.tagName === 'IMG') {
+      cloned = sourceEl.cloneNode(true);
+      cloned.removeAttribute('width');
+      cloned.removeAttribute('height');
+      cloned.style.maxWidth = '88vw';
+      cloned.style.maxHeight = '78vh';
+    } else {
+      // .mermaid container — clone its inner SVG if rendered, else the text
+      const svg = sourceEl.querySelector('svg');
+      if (svg) {
+        cloned = svg.cloneNode(true);
+        cloned.removeAttribute('width');
+        cloned.removeAttribute('height');
+        cloned.style.maxWidth = '88vw';
+        cloned.style.maxHeight = '78vh';
+        cloned.style.width = '88vw';
+        cloned.style.height = 'auto';
+      } else {
+        cloned = sourceEl.cloneNode(true);
+        cloned.style.maxWidth = '88vw';
+        cloned.style.maxHeight = '78vh';
+      }
+    }
+    stage.appendChild(cloned);
+    titleEl.textContent = title || '';
+    reset();
+    lightbox.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  };
+  const close = () => {
+    lightbox.classList.remove('open');
+    stage.innerHTML = '';
+    document.body.style.overflow = '';
+  };
+
+  // Delegate click on any diagram
+  document.addEventListener('click', (e) => {
+    const target = e.target.closest('.diagram .mermaid, .diagram img');
+    if (!target) return;
+    const wrap = target.closest('.diagram');
+    const titleEl2 = wrap?.querySelector('.diagram-title');
+    open(target, titleEl2?.textContent || '');
+  });
+
+  // Close interactions
+  lightbox.addEventListener('click', (e) => {
+    // Click on backdrop (lightbox itself or viewport area outside stage) closes.
+    if (e.target === lightbox) close();
+  });
+  document.getElementById('dlbClose')?.addEventListener('click', close);
+  document.getElementById('dlbZoomIn')?.addEventListener('click', () => zoomBy(1.25));
+  document.getElementById('dlbZoomOut')?.addEventListener('click', () => zoomBy(1 / 1.25));
+  document.getElementById('dlbReset')?.addEventListener('click', reset);
+  document.addEventListener('keydown', (e) => {
+    if (!lightbox.classList.contains('open')) return;
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === '0' || e.key === 'r' || e.key === 'R') { e.preventDefault(); reset(); }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomBy(1.25); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(1 / 1.25); }
+  });
+
+  // Wheel zoom (zoom toward cursor)
+  viewport.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    zoomBy(factor, e.clientX, e.clientY);
+  }, { passive: false });
+
+  // Drag-pan
+  let dragging = false;
+  let dragStartX = 0, dragStartY = 0, dragTx = 0, dragTy = 0;
+  stage.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    dragStartX = e.clientX; dragStartY = e.clientY;
+    dragTx = tx; dragTy = ty;
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    tx = dragTx + (e.clientX - dragStartX);
+    ty = dragTy + (e.clientY - dragStartY);
+    applyTransform();
+  });
+  stage.addEventListener('pointerup', (e) => {
+    dragging = false;
+    try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+  stage.addEventListener('pointercancel', () => { dragging = false; });
+})();
 </script>
 </body>
 </html>

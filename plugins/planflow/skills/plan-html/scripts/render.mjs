@@ -195,14 +195,16 @@ function buildFiles() {
 
 function buildDiagrams() {
   if (!plan.diagrams || !plan.diagrams.length) return '';
+  const hint = lang === 'en' ? 'Click to zoom' : '클릭하면 확대';
   const items = plan.diagrams.map((d, i) => {
     const title = d.title ? `<div class="diagram-title">${esc(i18n(d.title))}</div>` : '';
     const aid = `diagram.${i}`;
+    const zoomHint = `<span class="diagram-zoom-hint">🔍 ${esc(hint)}</span>`;
     if (d.type === 'mermaid') {
-      return `<div class="diagram" data-anchor-id="${attr(aid)}">${title}<div class="mermaid">${esc(d.code || '')}</div></div>`;
+      return `<div class="diagram" data-anchor-id="${attr(aid)}">${title}${zoomHint}<div class="mermaid">${esc(d.code || '')}</div></div>`;
     }
     if (d.type === 'image') {
-      return `<div class="diagram" data-anchor-id="${attr(aid)}">${title}<img src="${attr(d.src || '')}" alt="${attr(i18n(d.alt))}" /></div>`;
+      return `<div class="diagram" data-anchor-id="${attr(aid)}">${title}${zoomHint}<img src="${attr(d.src || '')}" alt="${attr(i18n(d.alt))}" /></div>`;
     }
     return '';
   }).join('');
