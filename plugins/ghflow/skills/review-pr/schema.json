@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "PR Review Intermediate",
+  "description": "Shape consumed by render.mjs to produce the HTML report. Claude (the review-pr skill) emits this after gathering and judging comments.",
+  "type": "object",
+  "required": ["pr", "reviews", "comments", "generated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "pr": {
+      "type": "object",
+      "required": ["number", "title", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "number": { "type": "integer" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "state": { "enum": ["OPEN", "CLOSED", "MERGED"] },
+        "is_draft": { "type": "boolean" },
+        "author": { "type": "string" },
+        "branch": {
+          "type": "object",
+          "properties": {
+            "head": { "type": "string" },
+            "base": { "type": "string" }
+          }
+        },
+        "changes": {
+          "type": "object",
+          "properties": {
+            "additions": { "type": "integer" },
+            "deletions": { "type": "integer" },
+            "files": { "type": "integer" }
+          }
+        },
+        "body": { "type": "string", "description": "First paragraph/excerpt of PR body. Empty string if none." }
+      }
+    },
+    "owner": { "type": "string" },
+    "repo": { "type": "string" },
+    "repo_root": { "type": "string", "description": "Absolute path to local repo root, used to build vscode://file/ deep links. Optional; if absent links degrade to plain text." },
+    "reviews": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "approved": { "type": "integer", "default": 0 },
+        "changes_requested": { "type": "integer", "default": 0 },
+        "commented": { "type": "integer", "default": 0 },
+        "by_reviewer": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["login", "state"],
+            "properties": {
+              "login": { "type": "string" },
+              "state": { "enum": ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"] },
+              "body": { "type": "string" },
+              "submitted_at": { "type": "string" },
+              "comment_numbers": {
+                "type": "array",
+                "items": { "type": "integer" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "resolved_hidden_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Number of resolved threads suppressed (default mode). Always 0 when --all is in effect."
+    },
+    "include_resolved": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether --all was used. If true, resolved comments are present in `comments`."
+    },
+    "comments": {
+      "type": "array",
+      "description": "Inline comments, ordered by global number (#1, #2, …).",
+      "items": {
+        "type": "object",
+        "required": ["number", "database_id", "thread_id", "validity", "tag", "path", "reviewer", "body", "recommendation"],
+        "additionalProperties": false,
+        "properties": {
+          "number": { "type": "integer", "minimum": 1, "description": "Per-call global number, shown in UI. NOT stable across calls." },
+          "database_id": { "type": "integer", "description": "GitHub-stable integer ID (PullRequestReviewComment.databaseId). Use this to identify a comment across re-runs." },
+          "thread_id": { "type": "string", "description": "GraphQL node ID of the parent reviewThread. Stable across re-runs." },
+          "url": { "type": "string", "description": "Direct GitHub link to the comment (PullRequestReviewComment.url)." },
+          "updated_at": { "type": "string", "description": "ISO 8601. Used by render.mjs to detect edits across calls." },
+          "last_edited_at": { "type": ["string", "null"], "description": "ISO 8601 of last body edit, or null if never edited." },
+          "is_outdated": { "type": "boolean", "default": false, "description": "True if the diff line is outdated relative to current HEAD." },
+          "resolved_by": { "type": ["string", "null"], "description": "Login of user who resolved the thread, or null if unresolved." },
+          "validity": { "enum": ["valid", "partial", "invalid", "unclear"] },
+          "tag": { "enum": ["blocking", "suggestion", "question", "note"] },
+          "path": { "type": "string" },
+          "line": { "type": ["integer", "null"] },
+          "reviewer": { "type": "string" },
+          "resolved": { "type": "boolean", "default": false },
+          "body": { "type": "string", "description": "Full comment body. Empty string if no body." },
+          "summary": { "type": "string", "description": "<=15 자 한국어 요약. Used in dashboard table." },
+          "replies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["author", "body"],
+              "properties": {
+                "database_id": { "type": "integer", "description": "GitHub-stable ID for the reply comment. Used to detect newly-added replies across re-runs." },
+                "author": { "type": "string" },
+                "body": { "type": "string" },
+                "created_at": { "type": "string" }
+              }
+            }
+          },
+          "related": {
+            "type": "array",
+            "description": "Related code locations checked while judging validity (🔗 field).",
+            "items": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": { "type": "string" },
+                "line": { "type": ["integer", "null"] },
+                "note": { "type": "string" }
+              }
+            }
+          },
+          "rationale": { "type": "string", "description": "1–2 줄 판정 근거 (🔍 field)." },
+          "recommendation": {
+            "enum": ["수정", "검토", "논의", "반박", "무시", "이슈 생성"]
+          },
+          "recommendation_reason": { "type": "string", "description": "한 줄 이유 (🛠 field)." },
+          "diff_hunk": { "type": "string", "description": "Original diff hunk for context. Empty string if not fetched." }
+        }
+      }
+    },
+    "processing_order": {
+      "type": "array",
+      "description": "Suggested order: Valid(수정) → Valid(이슈 생성) → Partial → Unclear → Invalid, each group by number.",
+      "items": { "type": "integer" }
+    },
+    "generated_at": { "type": "string", "description": "ISO 8601 timestamp when Claude emitted the JSON." }
+  }
+}

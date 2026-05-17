@@ -7,43 +7,41 @@ description: >
   "review-pr", "pr review check", "review comments 보여줘", "리뷰 코멘트 처리", "/review-pr" 등을 말하면 트리거한다.
   PR 번호를 인자로 받으면 해당 PR의 브랜치로 전환 후 리뷰를 검토하고, 없으면 현재 브랜치의 PR 리뷰를 검토한다.
   리뷰 내용 확인뿐 아니라 피드백 항목을 처리하는 것까지 적극적으로 도와줄 것.
-  결과는 ~/.hbrness/reviews/{owner}/{repo}/ 아래 프로젝트별 파일로 저장되며, --open 인자를 주면 VS Code로 연다.
-  디폴트는 unresolved 스레드만 가져와 토큰을 절약한다. resolved 까지 보고 싶으면 --all.
-  Usage: /review-pr [#PR번호] [--rich|-r] [--open|-o] [--all|-a]
+  채팅에는 항상 flat 마크다운으로 결과를 출력한다. `--save` 를 주면 같은 결과를
+  ~/.hbrness/reviews/{owner}/{repo}/ 아래 HTML 리포트로 저장하고, `--open` 을 주면 저장 후 브라우저로 연다.
+  디폴트는 unresolved 스레드만 가져와 토큰을 절약한다. resolved 까지 보고 싶으면 `--all`.
+  Usage: /review-pr [#PR번호] [--save|-s] [--open|-o] [--all|-a]
 ---
 
 # Review PR Skill
 
 PR에 달린 리뷰 댓글을 불러와 **고정된 템플릿**으로 정리하고, 각 피드백 항목을 코드와 함께 검토한다.
-결과는 사용자의 `~/.hbrness/reviews/` 아래 프로젝트별로 저장되며(= 현재 프로젝트 git에 포함되지 않음), 필요하면 VS Code로 바로 열 수 있다.
-피드백 처리·수정까지 이어서 도와준다.
+
+채팅 출력은 항상 flat 마크다운으로 한다. `--save` 또는 `--open` 을 받으면 사용자의 `~/.hbrness/reviews/` 아래에 정적 HTML 리포트(필요 시 옆에 review.json)를 추가로 만든다. HTML 은 단일 파일 self-contained 이며 브라우저로 열면 카드형 UI · 필터 · diff syntax-highlight 가 동작한다.
 
 ## Arguments
 
 - `[#PR번호]` or `[PR번호]`: Optional. 검토할 PR 번호 (예: `#101` 또는 `101`). 생략하면 현재 브랜치의 PR을 사용.
-- `--rich` / `-r`: Optional. 저장 파일을 **rich 포맷**(접을 수 있는 `<details>` 블록, 전체 diff)으로 기록한다. GitHub 웹/Markdown 프리뷰에서 읽을 때 유용. 채팅 출력은 항상 flat 포맷으로 고정.
-- `--open` / `-o`: Optional. 리뷰 파일 저장 후 VS Code로 연다. `--rich`와 함께 쓰면 **프리뷰 모드**로, 단독이면 **소스 모드**로 연다.
+- `--save` / `-s`: Optional. **HTML 리포트로 저장**한다. 옆에 동일 베이스명의 `.json` (renderer 입력)도 함께 남긴다. 디폴트는 저장하지 않고 채팅 출력만.
+- `--open` / `-o`: Optional. 저장한 HTML을 기본 브라우저로 연다. `--save` 를 implies (자동 켜짐).
 - `--all` / `-a`: Optional. **resolved 스레드까지 포함**해 가져온다. 디폴트(미지정)는 unresolved 만 fetch 해서 컨텍스트/토큰을 절약한다. resolved 갯수만 헤더에 노출됨. resolved 코멘트 본문을 다시 봐야 할 때만 켠다.
 
 Examples:
-- `/review-pr` — 현재 브랜치 PR 리뷰, unresolved 만, flat 저장
-- `/review-pr #101` — PR #101 리뷰, unresolved 만, flat 저장
-- `/review-pr 101 --open` — PR #101 리뷰, flat 저장 후 VS Code 소스 뷰로 열기
-- `/review-pr 101 -r` — PR #101 리뷰, rich 저장 (GitHub에 붙여넣기 좋음)
-- `/review-pr 101 -r -o` — PR #101 리뷰, rich 저장 후 VS Code **프리뷰**로 열기
-- `/review-pr 101 --all` — PR #101 리뷰, resolved 포함 전부 fetch
-- `/review-pr 101 -a -r` — PR #101 리뷰, resolved 포함 + rich 저장
+- `/review-pr` — 현재 브랜치 PR 리뷰, unresolved 만, 채팅 출력만
+- `/review-pr #101` — PR #101 리뷰, unresolved 만, 채팅 출력만
+- `/review-pr 101 --save` — PR #101 리뷰, HTML 로 저장
+- `/review-pr 101 -o` — PR #101 리뷰, HTML 저장 + 브라우저로 열기
+- `/review-pr 101 --all` — PR #101 리뷰, resolved 포함 전부 fetch (저장 X)
+- `/review-pr 101 -a -o` — PR #101 리뷰, resolved 포함 + HTML 저장 + 브라우저 열기
 
 ## Output Contract (중요)
 
-출력은 **항상 아래 템플릿을 그대로 따른다.** 임의로 섹션을 추가·삭제·재배열하지 않는다.
+출력 채널 두 개를 명확히 분리한다:
 
-### 출력 채널 2개 분리
-
-| 채널 | 포맷 | 이유 |
+| 채널 | 포맷 | 트리거 |
 |---|---|---|
-| **채팅(Claude Code 대화)** | 항상 **flat** | 터미널에 `<details>` 태그가 그대로 노출되면 가독성이 떨어짐 |
-| **저장 파일** | 기본 flat / `--rich`면 rich | flat은 CLI/소스뷰 친화, rich는 GitHub·프리뷰 친화 |
+| **채팅(Claude Code 대화)** | 항상 **flat 마크다운** | 모든 호출 |
+| **저장 파일** (`.html` + `.json`) | 정적 HTML | `--save` 또는 `--open` |
 
 ### 공통 규칙
 
@@ -56,16 +54,7 @@ Examples:
 - 본문이 비어 있으면 `(본문 없음)` 문자열로 대체
 - **모든 인라인 코멘트는 타당성 평가(Validity)를 함께 표시**한다. 평가 근거는 1–2줄로 간결히.
 - **타당성 평가는 지적 라인만 보고 내리지 않는다.** 그 라인이 호출/참조하는 연관 코드(함수 정의, 타입, 상수, 구독자 등)를 **필요한 만큼 Grep·Read로 추적**해서 판정에 반영한다. 확인한 연관 위치는 `🔗` 필드에 `path:line`으로 명시.
-- **렌더링 결과는 항상** `~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{YYYYMMDD-HHMMSS}.md`로 저장한다. 프로젝트 git에는 기록되지 않는다.
-
-### 포맷별 차이
-
-| 요소 | flat (기본) | rich (`--rich`) |
-|---|---|---|
-| 상세 블록 래핑 | 평문 (구분선 `---`만) | `<details><summary>` 접힘 |
-| diff hunk | 최대 **5줄**, 초과 시 `... (+N lines)` | **원본 그대로** (최대 20줄까지) |
-| 코멘트 본문 인용 | 첫 3줄 + 필요시 절삭 표시 | 전체 본문 |
-| 코멘트 블록 높이 | 6–8줄 | 자유 (접힘으로 커버) |
+- **저장이 요청된 경우에만** `~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{YYYYMMDD-HHMMSS}.{html,json}` 으로 저장한다. 프로젝트 git에는 기록되지 않는다.
 
 ### 고정 매핑
 
@@ -93,12 +82,12 @@ Examples:
 
 **If PR number provided:**
 ```bash
-gh pr view {number} --json number,title,headRefName,state,baseRefName,isDraft
+gh pr view {number} --json number,title,headRefName,state,baseRefName,isDraft,url,author,additions,deletions,changedFiles,body
 ```
 
 **If no PR number:**
 ```bash
-gh pr view --json number,title,headRefName,state,baseRefName,isDraft
+gh pr view --json number,title,headRefName,state,baseRefName,isDraft,url,author,additions,deletions,changedFiles,body
 ```
 If no PR is associated with the current branch, inform the user and abort.
 
@@ -109,26 +98,23 @@ If the PR's branch differs from the current branch:
 2. 물어보기: `"PR #{n}의 브랜치(\`{headRefName}\`)로 전환할까요? (현재: \`{currentBranch}\`)"`
 3. 승인 시: `gh pr checkout {number}`
 
-거절 시에도 리뷰 데이터는 API로 확인 가능하므로 그대로 진행.
+거절 시에도 리뷰 데이터는 API로 확인 가능하므로 그대로 진행. 단 `repo_root` 기반 `vscode://` 링크가 검토 중 PR과 어긋날 수 있으니 사용자에게 알린다.
 
 ### Step 3: Fetch Review Data (GraphQL 단일 호출)
 
-전체 PR 메타·review submission·reviewThread·인라인 코멘트를 **GraphQL 한 번**으로 받는다. 디폴트는 **unresolved 스레드만 처리**하며, resolved 본문은 컨텍스트에 적재하지 않는다 (`--all` 시에만 처리). flat 모드는 `diffHunk` 필드를 빼서 토큰을 추가 절약한다.
+전체 PR 메타·review submission·reviewThread·인라인 코멘트를 **GraphQL 한 번**으로 받는다. 디폴트는 **unresolved 스레드만 처리**하며, resolved 본문은 컨텍스트에 적재하지 않는다 (`--all` 시에만 처리).
 
 `{owner}/{repo}`: `gh repo view --json nameWithOwner -q .nameWithOwner`
 
-#### 3.1 쿼리 구성 (모드별 분기)
+`{repo_root}` (저장 시 vscode 링크용): `git rev-parse --show-toplevel`
 
-쿼리 본문에서 `__DIFF_HUNK__` 자리를 다음 규칙으로 치환한다.
-
-- **flat (기본)** — 빈 문자열 (필드 미요청)
-- **rich (`--rich`)** — `diffHunk`
+#### 3.1 쿼리
 
 ```graphql
 query($owner:String!,$repo:String!,$number:Int!) {
   repository(owner:$owner, name:$repo) {
     pullRequest(number:$number) {
-      number title body state isDraft
+      number title body state isDraft url
       additions deletions changedFiles
       headRefName baseRefName
       author { login }
@@ -137,12 +123,15 @@ query($owner:String!,$repo:String!,$number:Int!) {
       }
       reviewThreads(first: 100) {
         nodes {
+          id
           isResolved
           isOutdated
+          resolvedBy { login }
           path
           line
           comments(first: 30) {
             nodes {
+              id
               databaseId
               author { login }
               body
@@ -150,7 +139,11 @@ query($owner:String!,$repo:String!,$number:Int!) {
               line
               originalLine
               createdAt
-              __DIFF_HUNK__
+              updatedAt
+              lastEditedAt
+              outdated
+              url
+              diffHunk
               replyTo { databaseId }
             }
           }
@@ -160,6 +153,8 @@ query($owner:String!,$repo:String!,$number:Int!) {
   }
 }
 ```
+
+> 🔑 안정 식별자: `comments[].databaseId` (integer) 와 `reviewThreads[].id` (string) 는 재호출 사이에도 변하지 않는다. 채팅에 노출되는 `#1, #2 …` 는 매 호출마다 재배치될 수 있으므로 **모든 영속 처리(저장 파일, GitHub 답글, 델타 비교)는 `database_id` / `thread_id` 를 기준**으로 한다.
 
 호출:
 ```bash
@@ -232,14 +227,9 @@ gh api graphql \
 - 연관 코드 확인 없이 Invalid 판정을 내리지 않는다. 확인 못 했으면 🤔 Unclear.
 - 탐색 범위가 넓어 시간 소요가 크면 **범위만 밝히고** Unclear로 보류 후 사용자에게 결정 요청.
 
-### Step 4: Render Output
+### Step 4: Render Chat Output
 
-출력 채널마다 포맷이 다르다.
-
-- **채팅 출력**: 항상 **flat 템플릿** (아래 4A)
-- **저장 파일**: `--rich` 없으면 **flat**, `--rich`면 **rich 템플릿** (아래 4B)
-
-#### 4A. Flat Template (기본 / 채팅)
+채팅에는 **항상 아래 flat 마크다운 템플릿**을 그대로 출력한다. `<details>` 태그 절대 금지(CLI에서 raw 태그로 노출됨).
 
 ````markdown
 # PR #{number} — {title} {배지}
@@ -312,7 +302,7 @@ gh api graphql \
 `"1번 처리"` · `"Valid 전부 처리"` · `"3번 뭐 확인?"` · `"4번 반박 초안"` · `"5번 이슈로 분리"`
 ````
 
-##### Flat 포맷 세부 규칙
+##### 채팅 포맷 세부 규칙
 
 - **대시보드 테이블 컬럼 순서 고정**: `#` · 판정 · 태그 · 위치 · 요약 · 권장
 - 요약은 **15자 이내 한국어** 권장 (긴 경우 `…`)
@@ -322,99 +312,121 @@ gh api graphql \
 - 코멘트 본문은 3줄 초과 시 3줄 + `…` (중요 내용은 🔍 근거에서 다시 언급)
 - `처리 순서 제안`은 Valid → Partial → Unclear → Invalid 순, 같은 그룹 내는 번호순
 
-#### 4B. Rich Template (`--rich`, 저장 파일 전용)
+### Step 4.5: Save HTML Report (옵트인)
 
-Flat과 **동일한 5개 섹션 구조**를 유지하되, 다음만 다르게 렌더링한다.
+`--save` 또는 `--open` 이 켜져 있을 때만 수행한다. 꺼져 있으면 이 단계는 통째로 스킵.
 
-1. **상세 블록을 `<details>`로 감싼다** — 기본 접힘 상태. 요약 라인은 대시보드와 동일한 형식.
-2. **diff 전체 노출** (최대 20줄, 초과 시 `... (+N lines)`).
-3. **코멘트 본문 전체 노출** (절삭 없음).
-4. **답글(reply) 스레드 전체 포함**: `↳ @{author}: {body}` 들여쓰기 유지.
-5. **🔗 연관 확인**을 불릿 여러 줄로 확장 가능 (flat은 한 줄 요약).
-
-##### Rich 상세 블록 예시
-
-````markdown
-### ✅ 수정 필요 · 2건
-
-<details>
-<summary><b>#1</b> <code>api/user.ts:42</code> · 🔴 blocking · <i>@bob</i> — null 체크 누락 <b>[수정]</b></summary>
-
-> {코멘트 본문 전체}
->   ↳ @alice: (reply 1 본문)
->   ↳ @bob: (reply 2 본문)
-
-- 🔗 연관 확인:
-  - `util/safe.ts:12` — 호출되지 않음
-  - `types/User.ts:8` — `name` 필드가 optional
-- 🔍 판정 근거: diff 신규 라인이고 상위 null guard 없음 → 실제 NPE 발생 가능
-- 🛠 권장 대응: **수정** — `user?.name ?? ''`로 방어
-
-```diff
-{diff hunk 원본, 최대 20줄}
-```
-
-</details>
-
-<details>
-<summary><b>#4</b> <code>api/auth.ts:20</code> · 💡 suggestion · <i>@alice</i> — 에러 처리 개선 <b>[수정]</b></summary>
-...
-</details>
-````
-
-##### Rich 포맷 세부 규칙
-
-- `<summary>` 안에서는 **인라인 HTML만** 사용 (`<b>`, `<code>`, `<i>`). 블록 요소 금지 — GitHub 렌더러가 깨짐.
-- `<details>` 내부는 일반 Markdown 가능 (불릿, diff 코드블록 등).
-- `<details>` 간 빈 줄 1개 유지 (Markdown 파서가 구분하도록).
-- `<summary>` 맨 끝에 `<b>[{권장}]</b>` 배지로 권장 대응 노출 → 접힌 상태에서도 액션 파악 가능.
-- 헤더·대시보드·리뷰어 요약·다음 단계 섹션은 **flat과 동일** (접지 않음).
-
-### Step 4.5: Save & (Optionally) Open
-
-렌더링한 리뷰는 **항상 파일로 저장**한다. 채팅에는 flat 버전을 그대로 출력하고, 파일에는 `--rich` 여부에 따라 flat/rich 버전을 저장한다.
-
-#### 저장 경로 규칙
+#### 저장 경로
 
 ```
-~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{YYYYMMDD-HHMMSS}.md
+~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{YYYYMMDD-HHMMSS}.html
+~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{YYYYMMDD-HHMMSS}.json
+~/.hbrness/reviews/{owner}/{repo}/pr-{number}-latest.html  ← symlink → 위 최신 .html
+~/.hbrness/reviews/{owner}/{repo}/pr-{number}-latest.json  ← symlink → 위 최신 .json
 ```
 
-- `{owner}/{repo}`: `gh repo view --json nameWithOwner -q .nameWithOwner`의 결과
-- 타임스탬프는 저장 시점 기준(`date +%Y%m%d-%H%M%S`). 같은 PR을 여러 번 리뷰해도 덮어쓰지 않고 이력을 남긴다.
+- `{owner}/{repo}`: `gh repo view --json nameWithOwner -q .nameWithOwner` 결과
+- 타임스탬프: 저장 시점 (`date +%Y%m%d-%H%M%S`). 같은 PR을 여러 번 리뷰해도 덮어쓰지 않고 이력을 남긴다.
+- **`pr-{number}-latest.*` 심링크는 `render.mjs` 가 자동 생성**한다. 브라우저 탭을 `pr-{n}-latest.html` 에 두면 다음 호출 후 새로고침만으로 갱신된 리포트를 본다.
+- `.json` 은 `.html` 의 입력(중간 표현)이며 schema 는 이 스킬의 `schema.json` 참고.
+
+#### 자동 델타 (재호출 시)
+
+`render.mjs` 는 같은 디렉토리에서 직전 `pr-{number}-{ts}.json` 을 찾아 **databaseId 기준으로 비교**한다. 첫 호출이면 비교 대상이 없어 깔끔히 스킵.
+
+| 변화 | 표시 |
+|---|---|
+| 이전엔 없던 코멘트 | 카드/대시보드에 `🆕 NEW` 배지, 헤더 stats strip 에 "🆕 신규 N건" |
+| 같은 databaseId, 본문/수정시각 변경 | `✏️ EDITED` 배지 |
+| outdated 전환 | `⏱ OUTDATED` 배지 |
+| thread 에 신규 답글 추가 | `↳ +N` 배지 |
+| 이전엔 있었던 databaseId 가 사라짐 | 대시보드 상단 노란 strip 에 목록 노출 (resolved / 숨김 / 삭제 모두 포함). `resolved_by` 가 있으면 함께 표기. |
+
+채팅 채널에는 델타가 자동으로 표시되지 않는다. 사용자가 변경 사항을 묻거나 재호출 컨텍스트에서 필요하다고 판단되면 채팅에도 "이전 호출 이후 X건 신규/Y건 사라짐" 한 줄을 추가한다.
 
 디렉토리가 없으면 먼저 생성:
 ```bash
 mkdir -p ~/.hbrness/reviews/{owner}/{repo}
 ```
 
-#### 저장 절차
+#### 4.5.1 review.json 작성
 
-1. **채팅 출력**: Step 4의 flat 템플릿 결과 전체를 채팅에 출력.
-2. **파일 저장**: `--rich` 없으면 flat 결과 그대로, 있으면 rich 템플릿으로 다시 렌더링한 결과를 Write 툴로 위 경로에 저장.
-3. 저장 후 사용자에게 경로와 포맷을 알려준다:
-   > `💾 저장됨 (flat): ~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.md`
-   또는
-   > `💾 저장됨 (rich): ~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.md`
+스킬 디렉토리의 `schema.json` 형식에 맞춰 JSON을 만들어 `.json` 경로에 Write.
 
-#### VS Code로 열기 (`--open` / `-o` 지정 시)
+스키마 핵심 필드 (자세한 타입은 `schema.json` 직접 참고):
 
-열기 방식은 `--rich` 여부에 따라 달라진다.
-
-**flat + `--open`** — 일반 소스 뷰로 열기:
-```bash
-code "~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.md"
+```json
+{
+  "pr": { "number": 101, "title": "...", "url": "...", "state": "OPEN",
+          "is_draft": false, "author": "...", "branch": {"head":"...","base":"..."},
+          "changes": {"additions":N,"deletions":N,"files":N}, "body": "..." },
+  "owner": "...", "repo": "...",
+  "repo_root": "/abs/path/to/repo",
+  "reviews": { "approved":N, "changes_requested":N, "commented":N,
+               "by_reviewer": [ { "login":"...", "state":"APPROVED|CHANGES_REQUESTED|COMMENTED",
+                                  "body":"...", "comment_numbers":[1,3] } ] },
+  "resolved_hidden_count": N,
+  "include_resolved": false,
+  "comments": [
+    { "number":1,
+      "database_id":3243171001,
+      "thread_id":"PRRT_kwDO...",
+      "url":"https://github.com/.../pull/101#discussion_r3243171001",
+      "updated_at":"2026-05-15T09:12:00Z",
+      "last_edited_at":null,
+      "is_outdated":false,
+      "resolved_by":null,
+      "validity":"valid|partial|invalid|unclear",
+      "tag":"blocking|suggestion|question|note",
+      "path":"...", "line":N, "reviewer":"...", "resolved":false,
+      "body":"...", "summary":"<=15자 요약",
+      "replies":[{"database_id":3243171501,"author":"...","body":"..."}],
+      "related":[{"path":"...","line":N,"note":"..."}],
+      "rationale":"1–2줄 근거",
+      "recommendation":"수정|검토|논의|반박|무시|이슈 생성",
+      "recommendation_reason":"한 줄 이유",
+      "diff_hunk":"@@ ..." }
+  ],
+  "processing_order": [1,4,2,3,5],
+  "generated_at": "{ISO 8601}"
+}
 ```
 
-**rich + `--open`** — Markdown 프리뷰 모드로 열기 (`<details>`가 실제로 접힘 동작):
-```bash
-code "~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.md" \
-  && code --command "markdown.showPreview"
-```
-`--command` 플래그가 동작하지 않는 버전이면 파일만 열고 사용자에게 `Ctrl+Shift+V`로 프리뷰를 켜도록 안내.
+전역 번호·판정·연관 위치 등 채팅 출력에서 이미 산출한 값을 그대로 채워 넣는다 — 두 채널이 같은 데이터로 만들어지도록.
 
-- `code` 명령이 PATH에 없으면 알림: "VS Code CLI(`code`)가 PATH에 없습니다. VS Code에서 `Shell Command: Install 'code' command in PATH`를 실행하세요."
-- 열기 후에도 Step 5로 이어서 피드백 처리 대화를 계속한다.
+#### 4.5.2 HTML 렌더링
+
+스킬 디렉토리의 `scripts/render.mjs` 와 `template.html` 을 사용해 정적 HTML 을 만든다.
+
+```bash
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/hbrness/plugins/ghflow}/skills/review-pr"
+node "$SKILL_DIR/scripts/render.mjs" \
+  ~/.hbrness/reviews/{owner}/{repo}/pr-{n}-{ts}.json \
+  "$SKILL_DIR/template.html" \
+  ~/.hbrness/reviews/{owner}/{repo}/pr-{n}-{ts}.html
+```
+
+`CLAUDE_PLUGIN_ROOT` 환경변수가 없는 환경(다른 harness, dev install 등)에서는 `gh/codex` 등의 실제 설치 경로로 `SKILL_DIR` 만 바꿔서 호출한다.
+
+#### 4.5.3 알림
+
+저장 후 사용자에게 경로를 알린다:
+> `💾 저장됨: ~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.html (+ .json)`
+
+#### 4.5.4 브라우저로 열기 (`--open` / `-o` 지정 시)
+
+`--open` 이 켜져 있으면 (또는 사용자가 explicit `--open` 만 줘서 implicit `--save` 가 켜졌으면) HTML을 기본 브라우저로 연다.
+
+```bash
+# macOS
+open "~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.html"
+# Linux (fallback)
+xdg-open "~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.html"
+```
+
+`open`·`xdg-open` 둘 다 없으면 알림으로 안내: "기본 브라우저 launcher가 없습니다. 파일 경로를 직접 여세요: {path}"
+
+열기 후에도 Step 5로 이어서 피드백 처리 대화를 계속한다.
 
 #### 프로젝트 git 비오염 보장
 
@@ -453,9 +465,12 @@ code "~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.md" \
 
 - **템플릿 일관성이 최우선**: 섹션 순서·헤더·라벨을 바꾸지 않는다. 데이터가 없으면 "없음"·"_없음_"·"(본문 없음)"으로 채운다.
 - **전역 번호 유지**: 리뷰어가 달라도 `#1 → #2 → #3`로 이어지게 매긴다. 대시보드와 상세 블록이 같은 번호를 공유해야 한다.
-- **채팅 vs 파일 포맷 분리**:
-  - 채팅 출력은 **항상 flat**. `<details>` 태그 절대 사용 금지 (CLI에서 원시 태그로 노출됨).
-  - 파일 저장만 `--rich`에 따라 분기.
+- **#번호 vs databaseId**: `#N` 은 **이번 호출 한정 라벨**이다. resolved 상태가 바뀌거나 새 코멘트가 끼면 다음 호출에서 같은 코멘트가 다른 #번호를 받을 수 있다. 한 세션 안에서 다음 두 가지를 지킨다:
+  - 같은 세션에서 사용자가 "3번 처리해줘"라고 했을 때, 이번 호출 채팅에 노출한 #3 의 `databaseId` 를 LLM 내부적으로 기억한다.
+  - 그 사이에 `/review-pr` 이 재호출돼 새 채팅 블록이 등장했다면, **새 블록의 #번호 기준으로 해석**한다(이전 블록의 #번호는 더 이상 유효하지 않음). 만약 사용자가 가리키는 코멘트가 새 호출에서 사라졌으면(resolved/숨김) 처리하기 전에 명시적으로 안내한다.
+  - 외부에 답글을 달거나 PR 코멘트를 가리킬 때는 항상 `database_id` 또는 `url` 을 쓴다. `#N` 만 적은 답글 초안은 며칠 뒤 재호출하면 의미가 어긋난다.
+- **채팅 채널은 항상 flat 마크다운**: `<details>` 같은 HTML 태그는 절대 사용 금지 (CLI에서 raw 태그로 노출됨).
+- **HTML 채널 (저장 시)**: Claude 가 HTML 을 직접 쓰지 않는다. `review.json` 만 schema 에 맞춰 작성하고 `render.mjs` 가 합성한다.
 - **태그 분류 기준**:
   - `🔴 blocking`: 리뷰어가 Changes Requested 상태이거나 본문에 "must", "required", "blocking", "should change" 등 명시
   - `❓ question`: 물음표로 끝나거나 "why", "어떻게", "이유" 같은 질문 톤
@@ -468,12 +483,8 @@ code "~/.hbrness/reviews/{owner}/{repo}/pr-{number}-{ts}.md" \
 - **Closed/Merged PR**: 헤더에 `[CLOSED]`/`[MERGED]` 배지, "PR이 이미 닫혔습니다" 한 줄 안내 후 리뷰 표시.
 - **리뷰 없음**: 대시보드를 "아직 인라인 코멘트가 없습니다."로 대체, 상세/리뷰어 요약 섹션은 빈 섹션으로 유지("_없음_").
 - **Rate limit**: 감지 시 사용자에게 알리고 재시도 제안.
-- **diff 절삭**:
-  - flat: 5줄 초과 시 `... (+N lines)` 한 줄 추가
-  - rich: 20줄 초과 시 `... (+N lines)` (그 이하는 그대로 노출)
-- **본문 길이**:
-  - flat: 코멘트 본문은 첫 3줄만 노출, 초과 시 `…`
-  - rich: 전체 본문 + 답글 스레드 전부 노출
+- **diff 절삭 (채팅)**: 5줄 초과 시 `... (+N lines)` 한 줄 추가. (HTML 채널은 renderer 가 30줄 cap 으로 처리)
+- **본문 길이 (채팅)**: 코멘트 본문은 첫 3줄만 노출, 초과 시 `…`. (HTML 채널은 renderer 가 전체 본문 + 답글 스레드 전부 노출)
 - **타당성 평가 원칙**:
   - 리뷰어의 직급·권위가 아니라 **현재 코드 + PR diff**만 근거로 판정한다.
   - Changes Requested라도 ❌ Invalid가 될 수 있고, 단순 note라도 ✅ Valid가 될 수 있다.
