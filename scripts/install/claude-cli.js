@@ -52,6 +52,16 @@ function isIdempotentFailure(result) {
   return /already\s+(added|installed|exists|present)/.test(blob);
 }
 
+// Claude Code's `plugin install` returns exit 0 even when it skips an
+// already-installed spec (logging "Plugin X is already installed"). The
+// success exit hides the no-op from our caller, leaving the cache dir
+// stale. Check the install output regardless of exit code so we can force
+// a refresh via uninstall+reinstall.
+function looksAlreadyInstalled(result) {
+  const blob = `${result.stdout || ''}\n${result.stderr || ''}`.toLowerCase();
+  return /already\s+(installed|added|exists|present)/.test(blob);
+}
+
 module.exports = {
   claudeAvailable,
   runClaude,
@@ -60,4 +70,5 @@ module.exports = {
   pluginUninstall,
   marketplaceRemove,
   isIdempotentFailure,
+  looksAlreadyInstalled,
 };

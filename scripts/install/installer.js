@@ -162,11 +162,31 @@ function applyInstallClaudePlugin({ plan, results, dryRun }) {
             hint: `claude plugin install ${op.target}`,
           });
         } else {
-          const r = claudeCli.pluginInstall(op.target);
-          if (r.ok) {
+          let r = claudeCli.pluginInstall(op.target);
+          // Claude Code returns exit 0 with "already installed" text when it
+          // skips an existing spec — leaving cache stale even though our
+          // marketplace contents changed. Detect that via stdout (not just
+          // exit status) and force a refresh via uninstall+reinstall.
+          const isSkip =
+            (!r.ok && claudeCli.isIdempotentFailure(r)) ||
+            (r.ok && claudeCli.looksAlreadyInstalled(r));
+          if (isSkip) {
+            claudeCli.pluginUninstall(op.target);
+            r = claudeCli.pluginInstall(op.target);
+            if (r.ok && !claudeCli.looksAlreadyInstalled(r)) {
+              results.push({ ...op, status: 'refreshed', output: r.stdout });
+            } else if (r.ok || claudeCli.isIdempotentFailure(r)) {
+              // Reinstall still reports skip — accept the existing copy.
+              results.push({ ...op, status: 'exists', output: r.stderr || r.stdout });
+            } else {
+              results.push({
+                ...op,
+                status: 'error',
+                error: r.stderr || r.error || `exit ${r.status}`,
+              });
+            }
+          } else if (r.ok) {
             results.push({ ...op, status: 'installed', output: r.stdout });
-          } else if (claudeCli.isIdempotentFailure(r)) {
-            results.push({ ...op, status: 'exists', output: r.stderr || r.stdout });
           } else {
             results.push({
               ...op,
