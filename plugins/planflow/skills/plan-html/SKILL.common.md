@@ -64,10 +64,10 @@ mkdir -p "$plan_dir"
 ```
 
 산출물:
-- `plan.json` — source of truth (당신이 작성/갱신)
+- `plan.json` — source of truth (당신이 작성/갱신). 사용자 자유 질문/답변도 `asks[]` 필드에 누적됨.
 - `index.html` — render.mjs 가 생성 (직접 만지지 말 것)
 - `answers.json` — 사용자 답변 누적 (helper 가 갱신)
-- `questions.log` — 사용자 역질문 (helper 가 append)
+- `questions.log` — 사용자 역질문 audit log (helper 가 append). 진본은 `plan.json` 의 `asks[]`.
 - `server.json` — helper 프로세스 정보 (helper 가 관리)
 
 ## 4. plan.json 작성
@@ -95,6 +95,7 @@ mkdir -p "$plan_dir"
 - **`files_touched[]`** (optional, fallback): 어느 phase 에도 자연스럽게 귀속하기 어려운 변경 파일들. 일반적인 경우엔 비워두고 `phases[].files[]` 만 채우는 것을 권장.
 - **`diagrams[]`**: `{type:"mermaid", title, code}` 또는 `{type:"image", title, src, alt}`
 - **`questions[]`**: 아래 참고
+- **`asks[]`** (자동 관리): helper 가 사용자 UI 의 자유 질문을 `{id:"ask-NNN", ts, text, answer:null, answered_at:null, answered_by:null}` 으로 append 합니다. 처음 작성 시에는 비워두거나 생략하면 됩니다. 답변할 때는 같은 항목의 `answer`/`answered_at`/`answered_by` 만 채워 Write 합니다. **본문을 채팅에 옮겨 적지 말고 plan.json 안에서 처리하세요.**
 
 ### 사용자 노출 정보 밀도 규칙
 
@@ -199,13 +200,25 @@ node ${SKILL_DIR}/scripts/start.mjs "$plan_dir"
 사용자가 브라우저에서 답변/질문/리뷰를 보내면 helper 가 다음 메시지를 tmux send-keys 로 현재 페인에 입력합니다:
 
 - 답변 제출: `플랜파일을 확인해: @<plan.json 절대경로>`
-- 역질문: `사용자 질문: <text>`
+- 역질문: `사용자 질문 N건 대기 (last: ask-NNN): @<plan.json 절대경로>` — **본문이 아니라 카운트만 옵니다.** 본문은 `plan.json` 의 `asks[]` 에 저장됨.
 - 리뷰 코멘트 제출: `리뷰 등록됨 [N건]: @<plan.json 절대경로>`
 
 당신은 이 메시지를 받으면:
 
 1. **답변 케이스**: `plan.json` 을 다시 Read → `questions[].answer` 가 채워진 항목 확인 → 답변을 `overview`, `phases`, `files[]`, `risks[]` 등에 반영 → 다음 라운드가 필요하면 `round: N+1` 으로 새 질문 append → `node ${SKILL_DIR}/scripts/start.mjs "$plan_dir"` 재실행 (helper 가 살아있으면 재사용, 브라우저는 SSE 로 자동 reload)
-2. **역질문 케이스**: `questions.log` 끝줄 또는 send-keys 로 받은 본문에 답변. 새 질문이 있으면 plan.json 에 추가 round 로.
+2. **역질문 케이스**:
+   - `plan.json` Read → `asks[]` 중 `answer == null` 인 항목만 처리 대상
+   - 각 항목에 대해 답변을 작성해 같은 plan.json 의 해당 항목에 채워 넣습니다:
+     ```json
+     { "id": "ask-001", "ts": "...", "text": "...",
+       "answer": "<답변 본문>",
+       "answered_at": "<ISO timestamp>",
+       "answered_by": "claude" }
+     ```
+   - 답변은 plan.json 한 번에 Write → SSE 로 UI 자동 reload (사용자는 Q&A 사이드바에서 thread 로 봄)
+   - **채팅에는 답변 본문을 적지 말 것.** 대신 한 줄 요약만: `✓ 질문 N개 답변 완료 (ask-001, ask-002)`. 본문은 plan-html 인프라(plan.json + UI)에 누적되므로 세션 컨텍스트가 비대해지지 않습니다.
+   - 답변하면서 추가로 사용자에게 결정을 받아야 할 게 생기면 plan.json `questions[]` 에 새 round 로 append (역질문이 아닌 결정 질문 흐름).
+   - `questions.log` 는 audit log 로 helper 가 계속 append 합니다. 진본은 항상 `asks[]`.
 3. **리뷰 코멘트 케이스**:
    - `plan.json` Read → `comments[]` 에서 `replies[]` 가 비어있거나 마지막 reply 의 `by` 가 `user` 인 항목을 처리 대상으로 식별
    - 각 코멘트에 대해:

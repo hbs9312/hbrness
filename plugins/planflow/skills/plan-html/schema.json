@@ -61,6 +61,12 @@
       "items": { "$ref": "#/$defs/comment" }
     },
 
+    "asks": {
+      "description": "사용자가 UI 의 /ask 입력으로 보낸 자유 질문. helper-server 가 append 하고, Claude 가 answer/answered_at/answered_by 를 채운다. 채팅에는 본문 대신 카운트만 알림으로 가서 컨텍스트가 비대해지지 않게 한다.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/ask" }
+    },
+
     "diagrams": {
       "type": "array",
       "items": {
@@ -189,6 +195,19 @@
         "by": { "enum": ["user", "claude"] },
         "text": { "type": "string" },
         "at": { "type": "string" }
+      }
+    },
+    "ask": {
+      "type": "object",
+      "required": ["id", "ts", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^ask-[0-9]{3,}$", "description": "ask-001, ask-002, ... — helper-server 가 단조 증가로 부여" },
+        "ts": { "type": "string", "description": "ISO 8601 of when the user submitted" },
+        "text": { "type": "string", "minLength": 1 },
+        "answer": { "type": ["string", "null"], "default": null, "description": "Claude 가 채움. null 이면 '답변 대기'." },
+        "answered_at": { "type": ["string", "null"], "default": null },
+        "answered_by": { "anyOf": [{ "enum": ["claude"] }, { "type": "null" }], "default": null }
       }
     }
   }

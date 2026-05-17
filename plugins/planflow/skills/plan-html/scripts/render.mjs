@@ -29,6 +29,13 @@ const T = {
     review_focus: '검토 포인트', success: '성공 기준', risks: '리스크',
     phases: '단계', files: '변경 파일', files_other: '기타 변경 파일', diagrams: '다이어그램', decisions: '질문 라운드',
     answer_review: '답변 확인', answer_review_help: '질문 라운드에서 선택한 답변을 펼쳐 확인합니다.',
+    asks: 'Q&A', asks_toggle: 'Q&A', asks_pending: '답변 대기', asks_answered: '답변 완료',
+    asks_help: 'UI 에서 보낸 자유 질문과 Claude 의 답변. 채팅에는 카운트만 표시되고 본문은 여기 누적됩니다.',
+    asks_empty: '아직 질문이 없습니다.',
+    asks_no_answer: '답변 대기 중',
+    asks_answered_by: '답변자',
+    asks_sent_at: '보낸 시각',
+    asks_answered_at: '답변 시각',
     round: '라운드', answered: '답변 완료', active: '답변 대기', pending: '대기',
     required: '필수', no_questions: '질문 없음', depends_on: '선행', tasks: '할 일',
     evidence: '확인한 근거', recommendation: '추천', tradeoffs: '트레이드오프',
@@ -43,6 +50,13 @@ const T = {
     review_focus: 'Review Focus', success: 'Success Criteria', risks: 'Risks',
     phases: 'Phases', files: 'Files', files_other: 'Other Files', diagrams: 'Diagrams', decisions: 'Question Rounds',
     answer_review: 'Answer Review', answer_review_help: 'Expand to review the answers selected during question rounds.',
+    asks: 'Q&A', asks_toggle: 'Q&A', asks_pending: 'Awaiting answer', asks_answered: 'Answered',
+    asks_help: 'Free-form questions sent from the UI and Claude\'s answers. The chat shows only a count; full bodies accumulate here.',
+    asks_empty: 'No questions yet.',
+    asks_no_answer: 'Awaiting answer',
+    asks_answered_by: 'Answered by',
+    asks_sent_at: 'Sent at',
+    asks_answered_at: 'Answered at',
     round: 'Round', answered: 'Answered', active: 'Active', pending: 'Pending',
     required: 'required', no_questions: 'No questions', depends_on: 'depends on', tasks: 'Tasks',
     evidence: 'Evidence', recommendation: 'Recommendation', tradeoffs: 'Tradeoffs',
@@ -449,6 +463,32 @@ function buildAnswerReview() {
   return `<p class="answer-review-help">${esc(t.answer_review_help)}</p>${rounds}`;
 }
 
+function buildAsksReview() {
+  const asks = Array.isArray(plan.asks) ? plan.asks : [];
+  if (!asks.length) return `<p class="answer-review-help">${esc(t.asks_help)}</p><div class="empty">${esc(t.asks_empty)}</div>`;
+
+  const items = asks.map((a) => {
+    const isAnswered = a.answer != null && String(a.answer).length > 0;
+    const stateLabel = isAnswered ? t.asks_answered : t.asks_pending;
+    const stateClass = isAnswered ? 'answered' : 'pending';
+    const answerHtml = isAnswered
+      ? `<div class="ask-answer">${esc(a.answer)}</div>
+         <div class="ask-meta">${esc(t.asks_answered_by)}: ${esc(a.answered_by || 'claude')} · ${esc(t.asks_answered_at)}: ${esc(a.answered_at || '')}</div>`
+      : `<div class="ask-answer ask-answer-empty">${esc(t.asks_no_answer)}</div>`;
+    return `<li class="ask-item" data-state="${stateClass}" data-ask-id="${attr(a.id)}">
+      <div class="ask-header">
+        <span class="ask-id">${esc(a.id)}</span>
+        <span class="ask-state" data-state="${stateClass}">${esc(stateLabel)}</span>
+      </div>
+      <div class="ask-question">${esc(a.text || '')}</div>
+      <div class="ask-meta">${esc(t.asks_sent_at)}: ${esc(a.ts || '')}</div>
+      ${answerHtml}
+    </li>`;
+  }).join('');
+
+  return `<p class="answer-review-help">${esc(t.asks_help)}</p><ul class="ask-list">${items}</ul>`;
+}
+
 // ── TOC ─────────────────────────────────────────────────────────────────────
 
 function buildToc() {
@@ -485,11 +525,15 @@ const subs = {
   ANSWERED_QUESTIONS: String(answeredQuestions),
   UNANSWERED_QUESTIONS: String(unansweredQuestions),
   FLOW_STATE: esc(flowState),
+  ASKS_TOTAL: String((plan.asks || []).length),
+  ASKS_PENDING: String((plan.asks || []).filter((a) => !a.answer).length),
+  ASKS_PENDING_EMPTY: ((plan.asks || []).filter((a) => !a.answer).length === 0) ? 'true' : 'false',
 
   TOC_HTML: buildToc(),
   DECISIONS_SECTION_HTML: flowState === 'questions' ? buildDecisionSection() : '',
   PLAN_SECTIONS_HTML: flowState === 'plan' ? buildPlanSections() : '',
   ANSWERS_SIDEBAR_HTML: buildAnswerReview(),
+  ASKS_SIDEBAR_HTML: buildAsksReview(),
 };
 
 // Comments serialized for client-side decoration.

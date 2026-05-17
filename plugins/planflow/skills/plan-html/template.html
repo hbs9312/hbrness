@@ -664,6 +664,65 @@
   }
   body[data-flow-state="questions"] .answers-toggle,
   body[data-answered-questions="0"] .answers-toggle { display: none; }
+
+  .asks-toggle {
+    position: fixed; top: 174px; right: var(--side-toggle-right, 0); z-index: 28;
+    width: 92px;
+    padding: 8px 12px; border: 1px solid var(--c-border); border-right: none;
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    background: var(--c-bg-card); color: var(--c-text);
+    cursor: pointer; box-shadow: var(--shadow-sm);
+    font-size: 14px; font-family: inherit;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    transition: right 0.2s ease, background 0.15s ease;
+  }
+  .asks-toggle:hover { background: var(--c-bg-soft); }
+  .asks-toggle .count {
+    padding: 1px 7px;
+    background: var(--c-warn-soft);
+    color: var(--c-warn);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .asks-toggle .count[data-empty="true"] {
+    background: var(--c-bg-soft);
+    color: var(--c-text-muted);
+  }
+  body[data-asks-total="0"] .asks-toggle { display: none; }
+
+  .ask-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+  .ask-item {
+    background: var(--c-bg-card); border: 1px solid var(--c-border);
+    border-radius: var(--radius-sm); padding: var(--space-3);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .ask-item[data-state="pending"] { border-left: 3px solid var(--c-warn); }
+  .ask-item[data-state="answered"] { border-left: 3px solid var(--c-success); }
+  .ask-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ask-id { font-family: var(--font-mono); font-size: 12px; color: var(--c-text-muted); }
+  .ask-state {
+    font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+  }
+  .ask-state[data-state="pending"] { background: var(--c-warn-soft); color: var(--c-warn); }
+  .ask-state[data-state="answered"] { background: var(--c-success-soft); color: var(--c-success); }
+  .ask-question {
+    font-size: 14px; line-height: 1.5; color: var(--c-text);
+    padding: 6px 8px; background: var(--c-bg-soft); border-radius: 4px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .ask-answer {
+    font-size: 13.5px; line-height: 1.5; color: var(--c-text);
+    padding: 6px 8px; border-left: 2px solid var(--c-success);
+    background: var(--c-bg); border-radius: 0 4px 4px 0;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .ask-answer.ask-answer-empty {
+    color: var(--c-text-muted); font-style: italic;
+    border-left-color: var(--c-warn);
+  }
+  .ask-meta { font-size: 11px; color: var(--c-text-subtle); font-family: var(--font-mono); }
   body.side-panel-open {
     --side-toggle-right: min(360px, 90vw, calc(100vw - 92px));
   }
@@ -755,7 +814,7 @@
   }
 </style>
 </head>
-<body data-plan-slug="{{PLAN_SLUG}}" data-helper-port="{{HELPER_PORT}}" data-lang="{{LANG}}" data-total-questions="{{TOTAL_QUESTIONS}}" data-answered-questions="{{ANSWERED_QUESTIONS}}" data-unanswered-questions="{{UNANSWERED_QUESTIONS}}" data-flow-state="{{FLOW_STATE}}">
+<body data-plan-slug="{{PLAN_SLUG}}" data-helper-port="{{HELPER_PORT}}" data-lang="{{LANG}}" data-total-questions="{{TOTAL_QUESTIONS}}" data-answered-questions="{{ANSWERED_QUESTIONS}}" data-unanswered-questions="{{UNANSWERED_QUESTIONS}}" data-flow-state="{{FLOW_STATE}}" data-asks-total="{{ASKS_TOTAL}}" data-asks-pending="{{ASKS_PENDING}}">
 
 <header class="header">
   <h1>{{TITLE}}</h1>
@@ -815,6 +874,11 @@
   <span class="count">{{ANSWERED_QUESTIONS}}</span>
 </button>
 
+<button id="asksToggle" type="button" class="asks-toggle" title="Q&amp;A">
+  <span data-i18n-ko="Q&amp;A" data-i18n-en="Q&amp;A">Q&amp;A</span>
+  <span class="count" data-empty="{{ASKS_PENDING_EMPTY}}">{{ASKS_TOTAL}}</span>
+</button>
+
 <aside id="commentsSidebar" class="comments-sidebar" aria-label="Comments">
   <div class="comments-header">
     <h3 data-i18n-ko="리뷰 코멘트" data-i18n-en="Review Comments">리뷰 코멘트</h3>
@@ -831,6 +895,16 @@
   </div>
   <div class="comments-body" id="answersBody">
     {{{ANSWERS_SIDEBAR_HTML}}}
+  </div>
+</aside>
+
+<aside id="asksSidebar" class="comments-sidebar asks-sidebar" aria-label="Asks">
+  <div class="comments-header">
+    <h3 data-i18n-ko="Q&amp;A" data-i18n-en="Q&amp;A">Q&amp;A</h3>
+    <button id="asksClose" type="button" class="icon-btn" aria-label="Close">✕</button>
+  </div>
+  <div class="comments-body" id="asksBody">
+    {{{ASKS_SIDEBAR_HTML}}}
   </div>
 </aside>
 
@@ -1219,6 +1293,46 @@
     answersClose.addEventListener('click', closeAnswers);
 
     if (localStorage.getItem(ANSWERS_OPEN_KEY) === '1') openAnswers();
+  }
+
+  // --- Asks (free-form Q&A) sidebar
+  {
+    const asksToggle = document.getElementById('asksToggle');
+    const asksSidebar = document.getElementById('asksSidebar');
+    const asksClose = document.getElementById('asksClose');
+    const ASKS_OPEN_KEY = `planflow:${PLAN_SLUG}:asks-open`;
+    const ANSWERS_OPEN_KEY2 = `planflow:${PLAN_SLUG}:answers-open`;
+    const COMMENTS_OPEN_KEY2 = `planflow:${PLAN_SLUG}:comments-open`;
+    const hasAsks = Number(body.dataset.asksTotal || 0) > 0;
+
+    const openAsks = () => {
+      if (!hasAsks) return;
+      const commentsSidebar = document.getElementById('commentsSidebar');
+      const answersSidebar = document.getElementById('answersSidebar');
+      const switchContent = commentsSidebar?.classList.contains('open') || answersSidebar?.classList.contains('open');
+      const apply = () => {
+        asksSidebar.classList.add('open');
+        commentsSidebar?.classList.remove('open');
+        answersSidebar?.classList.remove('open');
+        localStorage.setItem(ASKS_OPEN_KEY, '1');
+        localStorage.setItem(ANSWERS_OPEN_KEY2, '0');
+        localStorage.setItem(COMMENTS_OPEN_KEY2, '0');
+        updateSidePanelState();
+      };
+      switchContent ? withoutPanelAnimation(apply) : apply();
+    };
+    const closeAsks = () => {
+      asksSidebar.classList.remove('open');
+      localStorage.setItem(ASKS_OPEN_KEY, '0');
+      updateSidePanelState();
+    };
+
+    asksToggle?.addEventListener('click', () => {
+      asksSidebar.classList.contains('open') ? closeAsks() : openAsks();
+    });
+    asksClose?.addEventListener('click', closeAsks);
+
+    if (localStorage.getItem(ASKS_OPEN_KEY) === '1') openAsks();
   }
 
   // === Inline Review / Comments ===

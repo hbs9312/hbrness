@@ -7,7 +7,7 @@
 //   GET  /assets/*          → static assets
 //   GET  /events            → SSE; pushes "reload" on plan.json mtime change
 //   POST /answers           → { round, answers } → merge into answers.json + plan.json + tmux notify
-//   POST /ask               → { text }           → append questions.log + tmux notify
+//   POST /ask               → { text }           → append questions.log + plan.json asks[] + summarized tmux notify (count only)
 //   GET  /healthz           → ok
 //
 // Idle timeout: 30 minutes since last request.
@@ -161,9 +161,40 @@ const handleAsk = async (req, res) => {
   if (!text) return sendJson(res, 400, { error: 'empty text' });
   const ts = new Date().toISOString();
   fs.mkdirSync(planDir, { recursive: true });
+
+  // Audit log (legacy, append-only).
   fs.appendFileSync(QLOG_PATH, `[${ts}] ${text}\n`, 'utf8');
-  tmuxSend(`사용자 질문: ${text}`);
-  sendJson(res, 200, { ok: true });
+
+  // Structured store on plan.json so the UI can render Q&A threads and
+  // Claude can fill `answer` without polluting the chat context.
+  const plan = readJsonSafe(PLAN_PATH, null);
+  let askId = 'ask-001';
+  let pendingCount = 1;
+  if (plan && typeof plan === 'object') {
+    const asks = Array.isArray(plan.asks) ? plan.asks : [];
+    // Allocate next id based on max existing numeric suffix.
+    let maxN = 0;
+    for (const a of asks) {
+      const m = typeof a?.id === 'string' && a.id.match(/^ask-(\d+)$/);
+      if (m) maxN = Math.max(maxN, Number(m[1]));
+    }
+    askId = `ask-${String(maxN + 1).padStart(3, '0')}`;
+    asks.push({
+      id: askId,
+      ts,
+      text,
+      answer: null,
+      answered_at: null,
+      answered_by: null,
+    });
+    plan.asks = asks;
+    writeJson(PLAN_PATH, plan);
+    pendingCount = asks.filter((a) => !a.answer).length;
+  }
+
+  // Summarized tmux notification — count only, body lives in plan.json.
+  tmuxSend(`사용자 질문 ${pendingCount}건 대기 (last: ${askId}): @${PLAN_PATH}`);
+  sendJson(res, 200, { ok: true, id: askId, pending: pendingCount });
 };
 
 const handleReviews = async (req, res) => {
