@@ -4,16 +4,17 @@ model: sonnet
 description: >
   This skill should be used when the user asks to "create pr", "make pr", "open pull request",
   "PR 올려줘", "PR 만들어줘", "풀리퀘 생성", or invokes /create-pr.
-  It creates a GitHub Pull Request using the PR template fetched on demand by the skill
-  itself (from the current repo and the org's .github repo).
+  It creates a GitHub Pull Request using the PR template fetched directly from
+  `soy-media/.github` at the moment the skill runs (no cache, no shared helper).
   Usage: /create-pr [base-branch] [--draft] [--assignee <login>] [message]
 ---
 
 # Create PR Skill
 
-Create a GitHub Pull Request using a PR template fetched on demand from the current repo
-and the org's `.github` repo. The skill invokes the shared `fetch-templates.py` helper at
-the start of execution, so templates always reflect the latest remote state.
+Create a GitHub Pull Request using the PR template stored in the
+`soy-media/.github` repository. The template is fetched directly via `gh api` each
+time the skill runs, so the latest remote version is always used and there is no
+cache file or hook to keep in sync.
 
 ## Arguments
 
@@ -92,41 +93,32 @@ Collect information needed to fill in the PR:
    git diff --name-status {base}...HEAD
    ```
 
-### Step 4: Fetch and Load PR Template
+### Step 4: Fetch PR Template from soy-media/.github
 
-Invoke the shared template fetcher, then read its JSON output. The fetcher pulls PR templates
-from both the current repo and the org's `.github` repo and picks the current repo when both
-exist. It is fast and silent on failure.
+Fetch the PR template directly from the org-level `soy-media/.github` repo at
+runtime. There is no cache file and no shared helper — every invocation hits the
+GitHub API.
 
-**Fetch + read:**
 ```bash
-# Always fetch fresh; output is /tmp/ghflow/<slug>/templates.json.
-python3 "${PLUGIN_ROOT}/hooks/fetch-templates.py"
-
-REPO_ID=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-SLUG=$(echo "$REPO_ID" | sed 's|/|__|')
-TEMPLATES_FILE="/tmp/ghflow/${SLUG}/templates.json"
+TEMPLATE_BODY=$(gh api \
+  "repos/soy-media/.github/contents/.github/PULL_REQUEST_TEMPLATE/pull_request_template.md" \
+  -q '.content' 2>/dev/null | base64 -d)
 ```
 
-**File structure (relevant subset):**
-```json
-{
-  "repo": "org/repo",
-  "fetched_at": "...",
-  "pr_templates": [
-    { "source": "org/repo",   "path": ".github/pull_request_template.md", "body": "..." },
-    { "source": "org/.github","path": "workflow-templates/PULL_REQUEST_TEMPLATE.md", "body": "..." }
-  ]
-}
-```
+Notes:
+- The org is hardcoded to `soy-media`. The skill ignores the current repo and any
+  org-`.github` discovery logic.
+- The path is the current canonical location
+  (`.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`). If GitHub returns
+  a 404, fall back once to `.github/pull_request_template.md` on the same repo.
+- If both paths fail or the result is empty (gh unauthenticated, network
+  failure, template removed), inform the user and ask whether to proceed with a
+  freeform body generated from commits/diff, or abort. Do **not** silently
+  invent a body.
 
-**Selection rules:**
-1. The fetcher already picks a single source: current repo wins over org `.github` — you will only ever see entries from one source in `pr_templates`.
-2. **Single entry** (single-file form like `.github/PULL_REQUEST_TEMPLATE.md`): use it directly.
-3. **Multiple entries** (directory form like `.github/PULL_REQUEST_TEMPLATE/*.md`): infer the best match from the user's `[message]` / branch name / commits, then confirm the choice in Step 7's preview. If inference is ambiguous, present the list (template name derived from `path` filename, e.g. `feature.md` → "Feature") and let the user pick before filling in.
-4. If `pr_templates` is empty or the templates file does not exist:
-   - Inform the user that no PR template was found (gh may be unauthenticated, no template exists, or the fetcher failed).
-   - Ask whether to proceed with a freeform body generated from commits/diff, or abort.
+Use `TEMPLATE_BODY` directly as the template to fill in Step 5. There is no
+multi-template selection step — `soy-media/.github` exposes a single PR
+template, so just fill it in.
 
 ### Step 5: Fill In the Template
 
@@ -155,7 +147,8 @@ Create a concise PR title (under 70 characters) based on the changes:
 Present the following to the user for review using the AskUserQuestion tool:
 
 - **Title**: The generated PR title
-- **Template source**: Which repo the template came from (current repo vs org `.github`)
+- **Template source**: Always `soy-media/.github` (show explicitly so the user
+  can confirm)
 - **Base branch**: The target branch
 - **Assignee**: The resolved assignee (e.g., `@me` or the specified username)
 - **Body**: The filled-in template content (show a summary, not the full body if too long)
@@ -182,8 +175,10 @@ After successful creation, display the PR URL to the user.
 
 ## Guidelines
 
-- Always invoke `fetch-templates.py` at the start of the skill — do not implement parallel template-fetching logic inline.
-- Templates are refreshed per skill invocation, so changes pushed to the template files are picked up on the next run.
+- Fetch the PR template inline with `gh api` against `soy-media/.github` —
+  do not rely on `fetch-templates.py`, `/tmp/ghflow/*`, or any cached state.
+- The template is refreshed on every invocation, so edits pushed to
+  `soy-media/.github` are picked up on the next run.
 - Respect the template's original formatting and structure when filling it in.
 - Do not modify checkbox items — leave them for the user to manage.
 - If the template contains sections that don't apply to the current changes, write "N/A" or leave them empty rather than removing them.
