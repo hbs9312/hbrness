@@ -1,12 +1,12 @@
 ---
 name: followup-clear
-description: "현재 프로젝트의 FOLLOWUPS.md 를 삭제하고, 양쪽 도구(Claude / Codex) MEMORY.md 의 Followups 섹션을 정리한다. 누적된 후속 조치 항목이 모두 처리됐거나 더 이상 유효하지 않아 한 번에 비우고 싶을 때 사용. 개별 항목만 해결하려면 followup 스킬의 Resolved 섹션 이동으로 충분하다. 사용자가 'clear followup', 'delete followup', 'reset followups', 'followup 정리', '후속 조치 비우기', '/followup-clear' 등을 말하면 트리거한다. Usage: /followup-clear [-y]"
+description: "현재 프로젝트의 followups 디렉토리(INDEX.md + 상세 파일 전체)를 삭제하고, 양쪽 도구(Claude / Codex) MEMORY.md 의 Followups 섹션을 정리한다. 누적된 후속 조치 항목이 모두 처리됐거나 더 이상 유효하지 않아 한 번에 비우고 싶을 때 사용. 개별 항목만 해결하려면 followup 스킬에서 해당 항목을 Resolved 처리하는 것으로 충분하다. 사용자가 'clear followup', 'delete followup', 'reset followups', 'followup 정리', '후속 조치 비우기', '/followup-clear' 등을 말하면 트리거한다. Usage: /followup-clear [-y]"
 model: sonnet
 ---
 
 # Followup Clear Skill
 
-`followup` 스킬이 만든 `FOLLOWUPS.md` 와 양쪽 도구 `MEMORY.md` 의 `## Followups` 섹션을 정리한다. 누적된 항목 전체를 한 번에 비우는 용도이며, 개별 항목 해결은 `/followup` 으로 Resolved 섹션에 옮기는 것으로 충분하다.
+`followup` 스킬이 만든 `followups/` 디렉토리(`INDEX.md` + 항목별 상세 파일 전체)와 양쪽 도구 `MEMORY.md` 의 `## Followups` 섹션을 정리한다. 누적된 항목 전체를 한 번에 비우는 용도이며, 개별 항목 해결은 `/followup` 으로 해당 항목을 Resolved 처리하는 것으로 충분하다.
 
 ## 인자
 
@@ -16,7 +16,15 @@ model: sonnet
 
 `followup` 스킬과 동일하다.
 
-### FOLLOWUPS.md (Tier 1 — 도구 무관 공유)
+### followups/ 디렉토리 (Tier 1 — 도구 무관 공유)
+
+```text
+{HBRNESS_HOME}/sessionflow/<project-key>/followups/
+├── INDEX.md
+└── <slug>.md ...
+```
+
+### 레거시 단일 파일 (있으면 함께 삭제)
 
 ```text
 {HBRNESS_HOME}/sessionflow/<project-key>/FOLLOWUPS.md
@@ -39,29 +47,36 @@ project_key=$(echo "$project_root" | tr '/' '-')
 
 ## 실행 흐름
 
-### 1. FOLLOWUPS.md 위치 확인
+### 1. 위치 확인
 
-위 경로에 `FOLLOWUPS.md` 가 존재하는지 검사한다.
+다음 중 무엇이 존재하는지 검사한다.
 
-- 없으면 사용자에게 "정리할 followup 이 없습니다" 라고 알리고 종료한다 (단, MEMORY.md 의 잔여 섹션도 추가로 정리한다 — Step 4 참고).
+- `{HBRNESS_HOME}/sessionflow/<project-key>/followups/` 디렉토리
+- 레거시 `{HBRNESS_HOME}/sessionflow/<project-key>/FOLLOWUPS.md`
+
+둘 다 없으면 사용자에게 "정리할 followup 이 없습니다" 라고 알리고, MEMORY.md 의 잔여 `## Followups` 섹션만 추가로 정리한다 (Step 4).
 
 ### 2. 요약과 확인
 
-`FOLLOWUPS.md` 를 읽고 `Open` 섹션의 항목 수와 제목 목록을 사용자에게 보여준다.
+- `followups/INDEX.md` 가 있으면 읽고 `Open` / `Decisions Pending` 항목 수와 제목 목록을 사용자에게 보여준다.
+- 레거시 `FOLLOWUPS.md` 만 있으면 그 파일의 `Open` 항목 요약을 보여준다.
+
+확인:
 
 - `-y` 가 있으면 그대로 진행.
 - 없으면 사용자에게 삭제 여부를 확인받는다 ("Delete (Recommended)" / "Cancel").
-- Open 항목이 5개 이상이면 추가로 한 번 더 경고한다 (실수 방지).
+- Open + Pending 항목이 5개 이상이면 추가로 한 번 더 경고한다 (실수 방지).
 
-### 3. FOLLOWUPS.md 삭제
+### 3. followups/ 삭제
 
-해당 프로젝트의 `FOLLOWUPS.md` 만 삭제한다. 절대 경로를 따옴표로 감싼다. 소스 레포 파일은 절대 건드리지 않는다.
+해당 프로젝트의 `followups/` 디렉토리 전체와(있으면) 레거시 `FOLLOWUPS.md` 만 삭제한다. 절대 경로를 따옴표로 감싼다. 소스 레포 파일은 절대 건드리지 않는다.
 
 ```bash
-rm "{HBRNESS_HOME}/sessionflow/<project-key>/FOLLOWUPS.md"
+rm -rf "{HBRNESS_HOME}/sessionflow/<project-key>/followups"
+rm -f  "{HBRNESS_HOME}/sessionflow/<project-key>/FOLLOWUPS.md"
 ```
 
-같은 디렉토리에 워크트리 핸드오프 (`worktrees/<wt>/HANDOFF.md`) 가 있을 수 있으나, 이 스킬은 절대 건드리지 않는다. 핸드오프 정리는 `handoff-clear` 스킬의 책임이다.
+같은 디렉토리(`{HBRNESS_HOME}/sessionflow/<project-key>/`)에 워크트리 핸드오프(`HANDOFF.md`, `worktrees/<wt>/HANDOFF.md`)가 있을 수 있으나, 이 스킬은 절대 건드리지 않는다. 핸드오프 정리는 `handoff-clear` 스킬의 책임이다.
 
 ### 4. 양쪽 MEMORY.md 정리
 
@@ -77,6 +92,6 @@ rm "{HBRNESS_HOME}/sessionflow/<project-key>/FOLLOWUPS.md"
 
 사용자에게 알린다:
 
-- FOLLOWUPS.md 가 삭제되었는지
+- `followups/` 디렉토리(및 레거시 파일)가 삭제되었는지
 - 어느 쪽 MEMORY.md 가 갱신/삭제되었는지
 - (참고) 같은 프로젝트의 HANDOFF.md (있다면) 는 그대로 유지된다는 사실

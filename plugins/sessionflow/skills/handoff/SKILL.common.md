@@ -15,7 +15,7 @@ model: sonnet
 | 범위 | 워크트리/세션 단위 (1회성·in-flight) | 프로젝트 단위 (영속·누적) |
 | 목적 | "지금 작업을 다음 세션이 그대로 이어받게" | "나중에 처리해야 할 일" 백로그 |
 | 내용 | 마지막 명령·에러·편집중 파일·다음 한 줄 | TODO·결정 보류·발견된 이슈·아이디어 |
-| 파일 | `HANDOFF.md` (1 per worktree) | `FOLLOWUPS.md` (1 per project) |
+| 저장 | `HANDOFF.md` (1 per worktree) | `followups/INDEX.md` + 항목별 파일 (1 디렉토리 per project) |
 | 수명 | 다음 세션에서 이어받으면 보통 삭제 | 항목별로 Resolved 처리하며 누적 |
 
 ## 인자

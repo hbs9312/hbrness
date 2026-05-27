@@ -94,7 +94,7 @@ rm "$path"
 
 워크트리 핸드오프를 삭제한 뒤 `worktrees/<wt-name>/` 디렉토리가 비었으면 그 디렉토리도 제거 (rmdir, 실패해도 무시).
 
-같은 프로젝트의 `FOLLOWUPS.md` 는 절대 건드리지 않는다 — followup 정리는 `followup-clear` 의 책임이다.
+같은 프로젝트의 `followups/` 디렉토리는 절대 건드리지 않는다 — followup 정리는 `followup-clear` 의 책임이다.
 
 ### 5. 양쪽 MEMORY.md 정리
 
@@ -114,4 +114,4 @@ rm "$path"
 
 - 삭제된 HANDOFF.md 절대경로 목록
 - 어느 쪽 MEMORY.md 가 갱신/삭제되었는지
-- (참고) 같은 프로젝트의 FOLLOWUPS.md (있다면) 는 그대로 유지된다는 사실
+- (참고) 같은 프로젝트의 followups/ 디렉토리 (있다면) 는 그대로 유지된다는 사실

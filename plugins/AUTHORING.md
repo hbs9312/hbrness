@@ -196,4 +196,4 @@ harness: [claude, codex]  # 둘 다 포함 (명시. 생략해도 같은 효과)
 | `xreview:review-bridge` (agent) | 하드코딩된 `~/.claude/plugins/` | `harness: [claude]` (Tier 3) |
 | `dbflow` | n/a | `.e2e/` (Tier 0, 본문 적용 — Phase 1.5.0) |
 | `specflow` 산출물 | 암묵적 project-local | `specs/` (Tier 0) 로 명시 |
-| `sessionflow:followup` / `:followup-clear` / `:handoff` / `:handoff-clear` | (0.1.x) `sessionflow:handoff` 단일 스킬 — 세션 인계와 후속 조치를 한 파일에 섞어 기록 | (0.2.0+) 두 의미 분리: `followup` = 프로젝트 단위 누적 백로그(`FOLLOWUPS.md`), `handoff` = 워크트리 단위 in-flight 인계(`HANDOFF.md`, `worktrees/<wt>/HANDOFF.md`). 둘 다 Tier 1 공유, MEMORY.md 갱신 = `{CLAUDE_MEMORY_*}` / `{CODEX_MEMORY_*}` (Tier 2) |
+| `sessionflow:followup` / `:followup-clear` / `:handoff` / `:handoff-clear` | (0.1.x) `sessionflow:handoff` 단일 스킬 — 세션 인계와 후속 조치를 한 파일에 섞어 기록 | (0.2.0) 두 의미 분리: `followup` = 프로젝트 단위 누적 백로그(`FOLLOWUPS.md`), `handoff` = 워크트리 단위 in-flight 인계(`HANDOFF.md`, `worktrees/<wt>/HANDOFF.md`). (0.3.0+) `followup` 저장을 단일 `FOLLOWUPS.md` → `followups/` 디렉토리(`INDEX.md` 진입점 + 항목별 상세 파일)로 분할, 레거시 단일 파일은 다음 실행 때 자동 마이그레이션. 둘 다 Tier 1 공유, MEMORY.md 갱신 = `{CLAUDE_MEMORY_*}` / `{CODEX_MEMORY_*}` (Tier 2) |
