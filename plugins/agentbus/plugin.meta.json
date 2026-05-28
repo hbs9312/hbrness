@@ -1,6 +1,6 @@
 {
   "name": "agentbus",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "tmux 기반 세션 간 에이전트 통신 버스. 서로 다른 tmux 세션·window·pane 에서 돌고 있는 Claude / Codex / 일반 셸 에이전트들이 별칭(예: frontend, backend)으로 서로에게 메시지를 보낼 수 있게 한다. 짧은 메시지는 tmux send-keys 로 상대 프롬프트에 직접 주입하고, 긴 메시지나 구조화 데이터는 ~/.hbrness/agentbus/inbox/<수신자>/ 에 파일로 저장한 뒤 알림만 주입한다. 양방향 RPC 가 아닌 단순 fire-and-forget — 회신이 필요하면 받은 쪽이 동일한 명령으로 되쏘면 된다. 도구 무관(claude/codex 어디든) 동일 메커니즘으로 동작.",
   "author": {
     "name": "hbs9312"
