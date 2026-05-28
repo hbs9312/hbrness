@@ -58,6 +58,9 @@ if [ -z "$tool" ]; then
     tool="codex"
   elif [ "$cmd" = "claude" ] || [ "$cmd" = "node" ]; then
     tool="claude"
+  elif [[ "$cmd" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    # Recent claude CLI surfaces as its version string in pane_current_command.
+    tool="claude"
   else
     tool="$cmd"
   fi
