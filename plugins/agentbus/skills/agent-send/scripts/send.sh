@@ -81,4 +81,6 @@ flags=()
 [ -n "$file_path" ] && flags+=(--file)
 [ "$strict" -eq 1 ] && flags+=(--strict)
 
-ab_send "$to" "$from" "$kind" "$body_tmp" "${flags[@]}"
+# bash 3.2 + set -u: empty array expansion via "${arr[@]}" trips unbound.
+# Use the "${arr[@]+...}" guard so a no-flag call still passes 0 extra args.
+ab_send "$to" "$from" "$kind" "$body_tmp" ${flags[@]+"${flags[@]}"}
