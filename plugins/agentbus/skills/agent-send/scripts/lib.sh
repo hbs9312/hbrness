@@ -93,14 +93,24 @@ ab_is_codex_session() {
 }
 
 ab_tmux_submit() {
+  # Submit-mode is chosen by *recipient* tool, not sender — a claude pane
+  # sending to a codex pane must still emit CSI-u so codex's enhanced
+  # keyboard reporting accepts it. Sender env is only a legacy fallback.
   local pane="$1"
+  local recipient_tool="${2:-}"
   local mode="${AGENTBUS_TMUX_SUBMIT_MODE:-}"
   if [ -z "$mode" ]; then
-    if ab_is_codex_session; then
-      mode="codex-enhanced-enter"
-    else
-      mode="Enter"
-    fi
+    case "$recipient_tool" in
+      codex) mode="codex-enhanced-enter" ;;
+      claude|node|shell|bash|sh|zsh|python|python3) mode="Enter" ;;
+      *)
+        if ab_is_codex_session; then
+          mode="codex-enhanced-enter"
+        else
+          mode="Enter"
+        fi
+        ;;
+    esac
   fi
   if [ "$mode" = "codex-enhanced-enter" ]; then
     # CSI-u plain Enter for codex TUI with enhanced keyboard reporting
@@ -114,13 +124,14 @@ ab_tmux_send_line() {
   # Send one line of literal text + submit. Strips embedded newlines.
   local pane="$1"
   local text="$2"
+  local recipient_tool="${3:-}"
   # Strip CR/LF, cap absurd lengths so we don't wedge tmux's command buffer.
   text="$(printf '%s' "$text" | tr -d '\r\n' )"
   if [ "${#text}" -gt 4000 ]; then
     text="${text:0:4000}…(truncated)"
   fi
   tmux send-keys -t "$pane" -l "$text"
-  ab_tmux_submit "$pane"
+  ab_tmux_submit "$pane" "$recipient_tool"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,9 +217,42 @@ ab_registry_list() {
 # Recipient resolution — alias or raw tmux target
 # ─────────────────────────────────────────────────────────────────────────────
 
+_ab_detect_tool_by_pane() {
+  # Best-effort tool detection from live pane_current_command. Used when the
+  # registry has no entry (raw target) or its tool field is unusable.
+  local pane="$1"
+  local info cmd
+  info="$(ab_pane_info "$pane" 2>/dev/null || true)"
+  cmd="$(printf '%s' "$info" | awk -F'|' '{print $4}')"
+  case "$cmd" in
+    claude) printf 'claude' ;;
+    codex)  printf 'codex' ;;
+    node)   printf 'claude' ;;   # claude CLI wrapper on some installs
+    "")     printf 'unknown' ;;
+    *)
+      # Version-string like "2.1.153" — claude CLI on recent installs.
+      if [[ "$cmd" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+        printf 'claude'
+      else
+        printf '%s' "$cmd"
+      fi
+      ;;
+  esac
+}
+
+_ab_normalize_tool() {
+  # If the registry-recorded tool is one of the known interactive agents,
+  # trust it. Otherwise fall back to a live detection from the pane.
+  local tool="$1" pane="$2"
+  case "$tool" in
+    claude|codex|shell|node|bash|sh|zsh|python|python3) printf '%s' "$tool" ;;
+    *) _ab_detect_tool_by_pane "$pane" ;;
+  esac
+}
+
 ab_resolve_recipient() {
   # Input: alias OR raw target (%paneId, session:window, session:window.pane)
-  # Output (stdout): "<resolved-pane-id>|<display-name>"
+  # Output (stdout): "<resolved-pane-id>|<display-name>|<tool>"
   local target="$1"
   ab_init_home
 
@@ -216,10 +260,12 @@ ab_resolve_recipient() {
   local entry
   entry="$(jq -r --arg a "$target" '.[$a] // empty' "$REGISTRY" 2>/dev/null)"
   if [ -n "$entry" ] && [ "$entry" != "null" ]; then
-    local pane
+    local pane tool
     pane="$(printf '%s' "$entry" | jq -r '.pane')"
+    tool="$(printf '%s' "$entry" | jq -r '.tool // empty')"
     if ab_pane_exists "$pane"; then
-      printf '%s|alias:%s\n' "$pane" "$target"
+      tool="$(_ab_normalize_tool "$tool" "$pane")"
+      printf '%s|alias:%s|%s\n' "$pane" "$target" "$tool"
       return 0
     else
       ab_log "alias '$target' points to stale pane $pane — pruning"
@@ -231,7 +277,9 @@ ab_resolve_recipient() {
   # Treat as raw target. Two shapes: %paneId  or  session:window[.pane]
   if [[ "$target" == %* ]]; then
     if ab_pane_exists "$target"; then
-      printf '%s|raw:%s\n' "$target" "$target"
+      local tool
+      tool="$(_ab_detect_tool_by_pane "$target")"
+      printf '%s|raw:%s|%s\n' "$target" "$target" "$tool"
       return 0
     fi
     return 1
@@ -241,7 +289,9 @@ ab_resolve_recipient() {
   local pane_id
   pane_id="$(tmux display-message -p -t "$target" '#{pane_id}' 2>/dev/null)" || return 1
   [ -n "$pane_id" ] || return 1
-  printf '%s|raw:%s\n' "$pane_id" "$target"
+  local tool
+  tool="$(_ab_detect_tool_by_pane "$pane_id")"
+  printf '%s|raw:%s|%s\n' "$pane_id" "$target" "$tool"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -309,8 +359,11 @@ ab_send() {
 
   local resolved
   resolved="$(ab_resolve_recipient "$to")" || ab_die "unknown recipient: $to (not an alias, not an active pane/target)"
-  local pane="${resolved%%|*}"
-  local display="${resolved##*|}"
+  # Format: "<pane>|<display>|<tool>"
+  local pane display tool
+  pane="$(printf '%s' "$resolved" | awk -F'|' '{print $1}')"
+  display="$(printf '%s' "$resolved" | awk -F'|' '{print $2}')"
+  tool="$(printf '%s' "$resolved" | awk -F'|' '{print $3}')"
 
   # self-send guard
   local self_pane
@@ -341,9 +394,9 @@ ab_send() {
     local path
     path="$(ab_inbox_write "$to" "$from" "$id" "$kind" "$body_file")"
     local notice="[agentbus] new message from ${from} (kind=${kind}, id=${id}): ${path} — Read 로 열어서 확인해줘."
-    ab_tmux_send_line "$pane" "$notice"
-    printf '{"route":"mailbox","id":"%s","path":"%s","recipient":"%s","display":"%s"}\n' \
-      "$id" "$path" "$pane" "$display"
+    ab_tmux_send_line "$pane" "$notice" "$tool"
+    printf '{"route":"mailbox","id":"%s","path":"%s","recipient":"%s","display":"%s","tool":"%s"}\n' \
+      "$id" "$path" "$pane" "$display" "$tool"
   else
     route="direct"
     local body
@@ -351,8 +404,8 @@ ab_send() {
     local stamp
     stamp="$(date +%H:%M)"
     local line="[from ${from} @ ${stamp}] ${body}"
-    ab_tmux_send_line "$pane" "$line"
-    printf '{"route":"direct","id":"%s","bytes":%s,"recipient":"%s","display":"%s"}\n' \
-      "$id" "$body_len" "$pane" "$display"
+    ab_tmux_send_line "$pane" "$line" "$tool"
+    printf '{"route":"direct","id":"%s","bytes":%s,"recipient":"%s","display":"%s","tool":"%s"}\n' \
+      "$id" "$body_len" "$pane" "$display" "$tool"
   fi
 }
