@@ -56,3 +56,35 @@ registry: /Users/.../.hbrness/agentbus/registry.json
 
 - 별칭 작명은 **역할 기반** (`frontend`, `backend`, `qa`, `infra`) 이 좋다. 도구 이름(`claude1`, `claude2`) 은 추후 도구를 바꿨을 때 혼란을 준다.
 - 자동 자기 등록 욕심을 내지 말 것 — 사용자가 명시적으로 호출했을 때만 등록한다. 다른 스킬 안에서 묵시적으로 호출하지 말 것.
+
+## Troubleshooting
+
+### `cannot query tmux panes: ... (Operation not permitted)` (Codex 샌드박스)
+
+증상:
+```text
+agentbus: cannot query tmux panes: error connecting to /private/tmp/tmux-501/default (Operation not permitted). Re-run with tmux access (escalated permission, or outside the Codex sandbox).
+```
+
+원인: Codex 등 샌드박스 안에서는 호스트의 tmux 소켓(`/private/tmp/tmux-501/default` 등)에 접근할 수 없어 `tmux display-message` / `list-panes` 가 `EPERM` 으로 실패한다. pane 이 실제로 없는 것이 아니라, 권한 때문에 *확인 자체가 안 되는* 상황이다.
+
+대응:
+1. Codex 에서 register/list/send 명령을 escalated 권한으로 재실행. (예: `with_escalated_permissions` 옵션, 또는 샌드박스 밖 셸에서 실행.)
+2. 그래도 등록을 못 하면 호스트 tmux 세션 안의 다른 도구(예: Claude Code) 에서 같은 명령을 실행해 레지스트리에 채워 넣는다. 일단 들어가면 다른 에이전트들은 `~/.hbrness/agentbus/registry.json` 만 읽으면 되기 때문에 송수신은 계속 가능하다.
+
+진짜로 pane 이 없는 경우와 권한 문제는 메시지로 구분된다:
+
+| 메시지 | 의미 |
+|---|---|
+| `agentbus: pane %NN does not exist` | tmux 서버는 정상이고 해당 pane 만 실제로 없음 |
+| `cannot query tmux panes: ... Operation not permitted ...` | 샌드박스/권한으로 tmux 자체 접근 불가 |
+| `cannot query tmux: tmux server not reachable (...)` | tmux 서버 자체가 안 떠 있음 |
+| `not inside tmux — set TMUX or pass --pane` | tmux 세션 밖에서 실행 (`TMUX` 미설정) |
+
+### `lock timeout on ...`
+
+`~/.hbrness/agentbus/.lock` 관련 메시지가 다음 중 어떤 형태인지 본다:
+
+- `lock file disappeared mid-wait — retry`: 다른 agentbus 호출이 정상 종료한 직후 일시적 경합. 그대로 재시도하면 보통 풀린다.
+- `lock dir exists — likely stale from a prior crash. ... rmdir ...`: 이전 호출이 비정상 종료. 실행 중인 agentbus 가 없다면 안내된 `rmdir` 후 재시도.
+- `is not writable`: `$AGENTBUS_HOME` 의 소유권/권한 문제. `ls -ld ~/.hbrness/agentbus` 로 확인.

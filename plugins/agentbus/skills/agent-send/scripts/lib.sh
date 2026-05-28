@@ -35,19 +35,57 @@ ab_need_tmux() { ab_need tmux; }
 # Locking — flock if available, fall back to mkdir
 # ─────────────────────────────────────────────────────────────────────────────
 
+_ab_lock_diagnose() {
+  # Build a diagnostic for a lock timeout. Distinguish:
+  #   - permission/ownership problem under $AGENTBUS_HOME
+  #   - stale lock (file/dir exists, no live holder we can see)
+  #   - genuine contention (something else is holding it right now)
+  local lock_path="$1" kind="$2"  # kind: file (flock) | dir (mkdir)
+  if [ ! -w "$AGENTBUS_HOME" ] 2>/dev/null; then
+    printf 'lock timeout on %s: %s is not writable (check ownership/permission)\n' \
+      "$lock_path" "$AGENTBUS_HOME"
+    return
+  fi
+  case "$kind" in
+    file)
+      if [ ! -e "$lock_path" ]; then
+        printf 'lock timeout on %s: lock file disappeared mid-wait — retry; if it persists, another agentbus process may be racing\n' "$lock_path"
+      else
+        printf 'lock timeout on %s: another agentbus command is holding it, or the lock is stuck. Retry; if it persists, remove the file (no agentbus must be running)\n' "$lock_path"
+      fi
+      ;;
+    dir)
+      if [ -d "$lock_path" ]; then
+        printf 'lock timeout on %s: lock dir exists — likely stale from a prior crash. If no agentbus is running, `rmdir %s` and retry\n' "$lock_path" "$lock_path"
+      else
+        printf 'lock timeout on %s: could not create lock dir (permission or race). Check %s\n' "$lock_path" "$AGENTBUS_HOME"
+      fi
+      ;;
+    *)
+      printf 'lock timeout on %s\n' "$lock_path"
+      ;;
+  esac
+}
+
 ab_with_lock() {
   ab_init_home
   if command -v flock >/dev/null 2>&1; then
     (
-      exec 9>"$LOCK_FILE"
-      flock -w 5 9 || ab_die "lock timeout on $LOCK_FILE"
+      if ! exec 9>"$LOCK_FILE" 2>/dev/null; then
+        ab_die "cannot open lock file $LOCK_FILE: check $AGENTBUS_HOME ownership/permission"
+      fi
+      if ! flock -w 5 9; then
+        ab_die "$(_ab_lock_diagnose "$LOCK_FILE" file)"
+      fi
       "$@"
     )
   else
     local i=0
     while ! mkdir "${LOCK_FILE}.d" 2>/dev/null; do
       i=$((i+1))
-      [ "$i" -gt 50 ] && ab_die "lock timeout on $LOCK_FILE"
+      if [ "$i" -gt 50 ]; then
+        ab_die "$(_ab_lock_diagnose "${LOCK_FILE}.d" dir)"
+      fi
       sleep 0.1
     done
     trap 'rmdir "${LOCK_FILE}.d" 2>/dev/null || true' EXIT
@@ -59,29 +97,199 @@ ab_with_lock() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 # tmux context detection
+#
+# All tmux query helpers populate AB_TMUX_LAST_ERR (stderr from the failing
+# command) when they fail so callers can distinguish:
+#   - the pane truly does not exist (server reachable, target missing), vs
+#   - the tmux server / socket is unreachable, vs
+#   - the sandbox/sandboxing layer blocks access (Operation not permitted), vs
+#   - tmux binary missing or not in a tmux session at all.
 # ─────────────────────────────────────────────────────────────────────────────
 
-ab_current_pane() {
-  if [ -n "${TMUX_PANE:-}" ]; then
-    printf '%s\n' "$TMUX_PANE"
-  elif [ -n "${TMUX:-}" ]; then
-    tmux display-message -p '#{pane_id}'
-  else
-    return 1
+AB_TMUX_LAST_ERR=""
+# Subshell-safe spillover. Command substitution puts callees in a subshell so
+# changes to AB_TMUX_LAST_ERR don't leak back to the parent. We mirror the
+# captured stderr to this file inside $AGENTBUS_HOME so the parent process can
+# still recover the diagnostic.
+_AB_TMUX_ERR_FILE_BASENAME=".last-tmux-err"
+
+_ab_tmux_err_file() {
+  printf '%s/%s\n' "$AGENTBUS_HOME" "$_AB_TMUX_ERR_FILE_BASENAME"
+}
+
+_ab_tmux_err_set() {
+  AB_TMUX_LAST_ERR="$1"
+  if [ -d "$AGENTBUS_HOME" ]; then
+    printf '%s' "$1" > "$(_ab_tmux_err_file)" 2>/dev/null || true
   fi
 }
 
-ab_pane_info() {
-  # echo "<session>|<window>|<pane>|<command>|<pid>" for given pane id
-  local pane="$1"
-  tmux display-message -p -t "$pane" \
-    '#{session_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_pid}' \
-    2>/dev/null
+_ab_tmux_err_load() {
+  # If in-process var is empty, try the spillover file.
+  if [ -z "${AB_TMUX_LAST_ERR:-}" ]; then
+    local f; f="$(_ab_tmux_err_file)"
+    if [ -s "$f" ]; then
+      AB_TMUX_LAST_ERR="$(cat "$f" 2>/dev/null || true)"
+    fi
+  fi
 }
 
+_ab_tmux_err_clear() {
+  AB_TMUX_LAST_ERR=""
+  if [ -d "$AGENTBUS_HOME" ]; then
+    rm -f "$(_ab_tmux_err_file)" 2>/dev/null || true
+  fi
+}
+
+ab_classify_tmux_err() {
+  # Classify a captured stderr string. Echoes one of:
+  #   denied | no-server | missing-target | unknown
+  local err="$1"
+  case "$err" in
+    *"Operation not permitted"*|*"operation not permitted"*) printf 'denied' ;;
+    *"Permission denied"*|*"permission denied"*) printf 'denied' ;;
+    *"EPERM"*) printf 'denied' ;;
+    *"sandbox"*|*"Sandbox"*) printf 'denied' ;;
+    *"no server running"*|*"failed to connect"*|*"no current server"*|*"server exited"*) printf 'no-server' ;;
+    *"can't find"*|*"cannot find"*|*"no such pane"*|*"pane not found"*|*"target not found"*|*"unknown target"*|*"window not found"*|*"session not found"*|*"bad window"*) printf 'missing-target' ;;
+    *"error connecting to"*)
+      # Server-socket connect failures. Some ship as EPERM under sandbox; the
+      # explicit EPERM/permission cases above already match, so this means a
+      # plain connect failure (typically ENOENT — server not running).
+      printf 'no-server' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+ab_tmux_access_message() {
+  # Human-readable message for the most recent tmux access failure.
+  # Pulls from AB_TMUX_LAST_ERR; if empty (we're in a parent after a
+  # subshell-only failure), loads from the spillover file.
+  _ab_tmux_err_load
+  local err="${AB_TMUX_LAST_ERR:-}"
+  local kind; kind="$(ab_classify_tmux_err "$err")"
+  case "$kind" in
+    denied)
+      if [ -n "$err" ]; then
+        printf 'cannot query tmux panes: %s. Re-run with tmux access (escalated permission, or outside the Codex sandbox).' "$err"
+      else
+        printf 'cannot query tmux panes: access denied. Re-run with tmux access (escalated permission, or outside the Codex sandbox).'
+      fi
+      ;;
+    no-server)
+      printf 'cannot query tmux: tmux server not reachable (%s). Start a tmux session first.' "${err:-unknown}"
+      ;;
+    missing-target)
+      printf 'cannot query tmux: %s' "$err"
+      ;;
+    *)
+      if [ -n "$err" ]; then
+        printf 'cannot query tmux: %s' "$err"
+      else
+        printf 'cannot query tmux (no error captured)'
+      fi
+      ;;
+  esac
+}
+
+ab_die_tmux_or() {
+  # If AB_TMUX_LAST_ERR is populated, die with the access-error explanation.
+  # Otherwise die with the given fallback message.
+  if [ -n "${AB_TMUX_LAST_ERR:-}" ]; then
+    ab_die "$(ab_tmux_access_message)"
+  else
+    ab_die "$1"
+  fi
+}
+
+_ab_tmux_run() {
+  # Run a tmux subcommand, capture stdout + stderr separately.
+  # Usage: _ab_tmux_run <stdout-var-name> <args...>
+  # On rc != 0, writes the stderr line into both AB_TMUX_LAST_ERR (in-process)
+  # and the spillover file (so parent processes past a subshell can recover
+  # the diagnostic). Returns the tmux rc.
+  local __out_var="$1"; shift
+  _ab_tmux_err_clear
+  if ! command -v tmux >/dev/null 2>&1; then
+    _ab_tmux_err_set "tmux: command not found"
+    return 127
+  fi
+  local __err_file __out __rc
+  __err_file="$(mktemp -t agentbus-tmux.XXXXXX)" || {
+    _ab_tmux_err_set "cannot create temp file for tmux stderr capture"
+    return 1
+  }
+  __out="$(tmux "$@" 2>"$__err_file")"
+  __rc=$?
+  if [ $__rc -ne 0 ]; then
+    local __err_line
+    __err_line="$(tr -d '\r' < "$__err_file" | awk 'NF{print; exit}')"
+    [ -z "$__err_line" ] && __err_line="(tmux exit $__rc, no stderr)"
+    _ab_tmux_err_set "$__err_line"
+  fi
+  rm -f "$__err_file"
+  # Assign to caller's var name.
+  printf -v "$__out_var" '%s' "$__out"
+  return $__rc
+}
+
+ab_current_pane() {
+  # Resolve current pane id. Returns:
+  #   0 — echoed pane id on stdout
+  #   1 — not inside a tmux session at all (and TMUX_PANE unset)
+  #   2 — TMUX_PANE/TMUX claim a session but tmux query failed (access issue)
+  if [ -n "${TMUX_PANE:-}" ]; then
+    printf '%s\n' "$TMUX_PANE"
+    return 0
+  fi
+  if [ -z "${TMUX:-}" ]; then
+    return 1
+  fi
+  local out
+  if _ab_tmux_run out display-message -p '#{pane_id}'; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  return 2
+}
+
+ab_pane_info() {
+  # Echo "<session>|<window>|<pane>|<command>|<pid>" for given pane id.
+  # Returns 0 on success, non-zero on failure. AB_TMUX_LAST_ERR set on failure.
+  local pane="$1" out
+  if _ab_tmux_run out display-message -p -t "$pane" \
+       '#{session_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_pid}'; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  return 1
+}
+
+ab_pane_status() {
+  # Three-state pane probe. Returns:
+  #   0 — pane exists (server reachable, target found)
+  #   1 — pane confirmed missing (server reachable, target not found)
+  #   2 — could not determine (server unreachable, access denied, etc.)
+  # On rc=2, AB_TMUX_LAST_ERR carries the diagnostic.
+  local pane="$1" out
+  if _ab_tmux_run out display-message -p -t "$pane" '#{pane_id}'; then
+    if [ "$out" = "$pane" ]; then
+      return 0
+    fi
+    return 1
+  fi
+  case "$(ab_classify_tmux_err "$AB_TMUX_LAST_ERR")" in
+    missing-target) _ab_tmux_err_clear; return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+# Backward-compatible boolean wrapper. NOTE: this collapses "missing" and
+# "cannot determine" into the same falsy result; new code should use
+# ab_pane_status to handle the access-denied case correctly.
 ab_pane_exists() {
-  local pane="$1"
-  tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -Fxq "$pane"
+  ab_pane_status "$1"
+  [ $? -eq 0 ]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -184,23 +392,41 @@ ab_registry_remove_by_pane() {
 }
 
 ab_registry_prune_stale() {
-  # Remove entries whose pane no longer exists. Prints removed aliases.
+  # Remove entries whose pane no longer exists. Prints removed aliases on stdout.
+  # Returns:
+  #   0 — query succeeded (prune may or may not have removed anything)
+  #   2 — could not query tmux (AB_TMUX_LAST_ERR set); registry left untouched
   ab_init_home
-  local live
-  live="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | tr '\n' ' ')"
+  local out
+  if ! _ab_tmux_run out list-panes -a -F '#{pane_id}'; then
+    return 2
+  fi
+  # Build " %a %b %c " — leading AND trailing space matter for the
+  # substring-contains check below. Command substitution strips the trailing
+  # newline that `tr` produced, so we re-append it explicitly.
+  local live=" $(printf '%s' "$out" | tr '\n' ' ')"
+  case "$live" in
+    *' ') : ;;
+    *)    live="$live " ;;
+  esac
   local removed
-  removed="$(jq -r --arg live " $live " '
+  removed="$(jq -r --arg live "$live" '
     to_entries
     | map(select((" " + .value.pane + " ") as $needle | $live | contains($needle) | not))
     | .[].key
   ' "$REGISTRY" 2>/dev/null)"
   if [ -n "$removed" ]; then
+    # NB: parentheses around the string concat are REQUIRED here. Without them
+    # jq parses `" " + .value.pane + " " as $n | …` with `as` binding tighter
+    # than `+`, ending up trying to add a boolean ("contains" result) to a
+    # string. The parens force `(" " + .value.pane + " ") as $n | …`.
     ab_with_lock bash -c "
-      jq --arg live ' $live ' 'with_entries(select(\" \" + .value.pane + \" \" as \$n | \$live | contains(\$n)))' \
+      jq --arg live '$live' 'with_entries(select((\" \" + .value.pane + \" \") as \$n | \$live | contains(\$n)))' \
         '$REGISTRY' | { tmp=\$(mktemp '$REGISTRY.XXXXXX'); cat > \"\$tmp\"; mv \"\$tmp\" '$REGISTRY'; }
     "
   fi
   printf '%s\n' "$removed"
+  return 0
 }
 
 ab_registry_list() {
@@ -253,6 +479,11 @@ _ab_normalize_tool() {
 ab_resolve_recipient() {
   # Input: alias OR raw target (%paneId, session:window, session:window.pane)
   # Output (stdout): "<resolved-pane-id>|<display-name>|<tool>"
+  # Returns:
+  #   0 — resolved (stdout populated)
+  #   1 — recipient not found (alias unknown, or pane confirmed missing)
+  #   2 — tmux query failed (access denied / server unreachable);
+  #       AB_TMUX_LAST_ERR carries the diagnostic, registry NOT modified.
   local target="$1"
   ab_init_home
 
@@ -260,38 +491,56 @@ ab_resolve_recipient() {
   local entry
   entry="$(jq -r --arg a "$target" '.[$a] // empty' "$REGISTRY" 2>/dev/null)"
   if [ -n "$entry" ] && [ "$entry" != "null" ]; then
-    local pane tool
+    local pane tool rc=0
     pane="$(printf '%s' "$entry" | jq -r '.pane')"
     tool="$(printf '%s' "$entry" | jq -r '.tool // empty')"
-    if ab_pane_exists "$pane"; then
-      tool="$(_ab_normalize_tool "$tool" "$pane")"
-      printf '%s|alias:%s|%s\n' "$pane" "$target" "$tool"
-      return 0
-    else
-      ab_log "alias '$target' points to stale pane $pane — pruning"
-      ab_registry_remove_alias "$target"
-      return 1
-    fi
+    ab_pane_status "$pane" || rc=$?
+    case $rc in
+      0)
+        tool="$(_ab_normalize_tool "$tool" "$pane")"
+        printf '%s|alias:%s|%s\n' "$pane" "$target" "$tool"
+        return 0
+        ;;
+      1)
+        ab_log "alias '$target' points to stale pane $pane — pruning"
+        ab_registry_remove_alias "$target"
+        return 1
+        ;;
+      2)
+        return 2
+        ;;
+    esac
   fi
 
   # Treat as raw target. Two shapes: %paneId  or  session:window[.pane]
   if [[ "$target" == %* ]]; then
-    if ab_pane_exists "$target"; then
-      local tool
-      tool="$(_ab_detect_tool_by_pane "$target")"
-      printf '%s|raw:%s|%s\n' "$target" "$target" "$tool"
-      return 0
-    fi
-    return 1
+    local rc=0
+    ab_pane_status "$target" || rc=$?
+    case $rc in
+      0)
+        local tool
+        tool="$(_ab_detect_tool_by_pane "$target")"
+        printf '%s|raw:%s|%s\n' "$target" "$target" "$tool"
+        return 0
+        ;;
+      1) return 1 ;;
+      2) return 2 ;;
+    esac
   fi
 
   # session:window[.pane] → resolve to %paneId
   local pane_id
-  pane_id="$(tmux display-message -p -t "$target" '#{pane_id}' 2>/dev/null)" || return 1
+  if ! _ab_tmux_run pane_id display-message -p -t "$target" '#{pane_id}'; then
+    case "$(ab_classify_tmux_err "$AB_TMUX_LAST_ERR")" in
+      missing-target) _ab_tmux_err_clear; return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
   [ -n "$pane_id" ] || return 1
   local tool
   tool="$(_ab_detect_tool_by_pane "$pane_id")"
   printf '%s|raw:%s|%s\n' "$pane_id" "$target" "$tool"
+  return 0
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -357,8 +606,14 @@ ab_send() {
   ab_need_tmux
   ab_init_home
 
-  local resolved
-  resolved="$(ab_resolve_recipient "$to")" || ab_die "unknown recipient: $to (not an alias, not an active pane/target)"
+  local resolved rrc=0
+  resolved="$(ab_resolve_recipient "$to")" || rrc=$?
+  if [ $rrc -ne 0 ]; then
+    if [ $rrc -eq 2 ]; then
+      ab_die "$(ab_tmux_access_message)"
+    fi
+    ab_die "unknown recipient: $to (not an alias, not an active pane/target)"
+  fi
   # Format: "<pane>|<display>|<tool>"
   local pane display tool
   pane="$(printf '%s' "$resolved" | awk -F'|' '{print $1}')"

@@ -19,7 +19,13 @@ if [ $# -gt 0 ] && [ -n "$1" ]; then
   ab_registry_remove_alias "$alias"
   echo "unregistered: $alias"
 else
-  pane="$(ab_current_pane)" || ab_die "not inside tmux and no alias given"
+  rc=0
+  pane="$(ab_current_pane)" || rc=$?
+  case $rc in
+    0) : ;;
+    1) ab_die "not inside tmux and no alias given" ;;
+    2) ab_die "$(ab_tmux_access_message)" ;;
+  esac
   before="$(jq -r --arg p "$pane" '[ to_entries[] | select(.value.pane == $p) | .key ] | join(",")' "$REGISTRY")"
   if [ -z "$before" ]; then
     echo "no entry registered for current pane ($pane)"

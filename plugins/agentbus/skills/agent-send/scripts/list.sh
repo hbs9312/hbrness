@@ -9,11 +9,22 @@ ab_need_jq
 ab_need_tmux
 ab_init_home
 
-pruned="$(ab_registry_prune_stale)"
-if [ -n "$pruned" ]; then
-  echo "pruned stale entries:"
-  printf '  - %s\n' $pruned
-  echo
+# Prune stale entries, but only if we can actually query tmux. Under a sandbox
+# (e.g. Codex with tmux socket access blocked) the query fails with EPERM;
+# pretending those entries are stale and removing them would wipe live
+# registrations.
+if pruned="$(ab_registry_prune_stale)"; then
+  if [ -n "$pruned" ]; then
+    echo "pruned stale entries:"
+    printf '  - %s\n' $pruned
+    echo
+  fi
+else
+  rc=$?
+  if [ $rc -eq 2 ]; then
+    ab_log "$(ab_tmux_access_message)"
+    ab_log "skipping stale-pane prune; registry left as-is."
+  fi
 fi
 
 if [ ! -s "$REGISTRY" ] || [ "$(jq -r 'length' "$REGISTRY")" = "0" ]; then

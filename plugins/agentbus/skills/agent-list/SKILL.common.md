@@ -40,3 +40,14 @@ no agents registered. use /agent-register <alias> in each session.
 
 - 사용자가 "누구 떠있어?" 같은 질문을 하면 이 스킬로 답한다.
 - 등록되지 않은 pane 까지 굳이 찾아 알려줄 필요는 없다 (그건 `tmux list-panes` 의 영역).
+
+## Troubleshooting
+
+샌드박스(예: Codex) 안에서 호출하면 다음과 같은 두 줄이 먼저 출력될 수 있다:
+
+```text
+agentbus: cannot query tmux panes: error connecting to /private/tmp/tmux-501/default (Operation not permitted). Re-run with tmux access (escalated permission, or outside the Codex sandbox).
+agentbus: skipping stale-pane prune; registry left as-is.
+```
+
+이 경우 prune 을 건너뛰고 registry 의 *기록상* 항목을 그대로 보여준다. 실제로 살아있는 pane 인지 검증되지 않은 상태이므로, `SELF?` 표시는 비어있을 수 있고 죽은 pane 도 그대로 보일 수 있다. 정확한 stale 정리가 필요하면 escalated 권한/샌드박스 밖에서 다시 실행해라. 자세한 케이스 구분은 `agent-register` SKILL 의 Troubleshooting 섹션 참고.
