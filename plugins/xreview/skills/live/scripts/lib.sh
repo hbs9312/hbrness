@@ -68,6 +68,40 @@ xr_tmux_send_line() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# claude config
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Pre-accept Claude Code's workspace-trust dialog for a directory by merging a
+# trusted-project entry into the user's ~/.claude.json. The reviewer runs in a
+# detached tmux session and can't answer the interactive prompt, so without this
+# a claude reviewer hangs on "Do you trust the contents of this directory?". The
+# target is a scratch dir this skill just created, so trusting it is safe. No-op
+# when jq is unavailable or the merge fails — the reviewer then falls back to the
+# dialog (answerable via peek), i.e. never worse than the prior behavior.
+xr_claude_pretrust_dir() {
+  local dir="$1" cfg tmp
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    cfg="$CLAUDE_CONFIG_DIR/.claude.json"
+  else
+    cfg="$HOME/.claude.json"
+  fi
+  command -v jq >/dev/null 2>&1 || return 0
+  tmp="$(mktemp)" || return 0
+  if [ -f "$cfg" ]; then
+    jq --arg d "$dir" '
+      .projects = (.projects // {})
+      | .projects[$d] = ((.projects[$d] // {})
+          + {hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true})
+    ' "$cfg" > "$tmp" 2>/dev/null && mv "$tmp" "$cfg" || rm -f "$tmp"
+  else
+    mkdir -p "$(dirname "$cfg")" 2>/dev/null || true
+    jq -n --arg d "$dir" '
+      {projects: {($d): {hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true}}}
+    ' > "$tmp" 2>/dev/null && mv "$tmp" "$cfg" || rm -f "$tmp"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Identity / paths
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -162,6 +162,13 @@ else
   esac
 fi
 
+# A claude reviewer launches with cwd=WORK (a fresh scratch dir), which would
+# trip Claude Code's workspace-trust dialog. Since the reviewer runs detached and
+# can't answer it, pre-accept trust for WORK so the run stays hands-off.
+if [ "$reviewer" = "claude" ] || [ -n "$launch_override" ]; then
+  xr_claude_pretrust_dir "$WORK"
+fi
+
 # Launch detached. remain-on-exit keeps the pane (and its scrollback) after the
 # agent exits so peek/dock still show the final state; stop.sh tears it down.
 tmux new-session -d -s "$SESS" -x 220 -y 50 -c "$WORK" "$launch"
