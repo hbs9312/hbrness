@@ -11,12 +11,16 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 
 | Plugin | Version | Skills | Description |
 |--------|---------|--------|-------------|
-| specflow | 1.5.0 | 21 | Spec generation & validation workflow |
-| frontflow | 1.3.1 | 16 | Frontend implementation (tokens → pages) |
-| backflow | 0.4.1 | 14 | Backend implementation (schema → API) |
-| ghflow | 0.3.0 | 7 | GitHub issue/PR/review workflow |
-| meeting-prep | 0.1.0 | 3 | Meeting preparation automation |
+| specflow | 1.5.0 | 23 | Spec generation & validation workflow |
+| frontflow | 1.3.1 | 20 | Frontend implementation (tokens → pages) |
+| backflow | 0.4.1 | 21 | Backend implementation (schema → API) |
+| dbflow | 0.1.0 | 12 | Sandbox E2E DB scenario testing |
+| ghflow | 0.5.3 | 10 | GitHub issue/PR/review workflow |
 | xreview | 1.0.0 | 3 | Background peer code review (claude↔codex) |
+| meeting-prep | 0.1.0 | 3 | Meeting preparation automation |
+| planflow | 0.1.4 | 2 | Plan visualization as interactive HTML |
+| sessionflow | 0.3.0 | 4 | Session handoff & followup backlog |
+| agentbus | 0.2.0 | 5 | Cross-agent messaging over tmux |
 
 ## Install
 
