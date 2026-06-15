@@ -96,8 +96,8 @@ esac
 
 [ -n "$diff_text" ] || xr_die "no diff to review for scope '$scope'. Nothing changed?"
 
-# Load the code-review preset (sibling skill: skills/review/presets/code.md)
-preset_file="$SCRIPT_DIR/../../review/presets/code.md"
+# Load the code-review preset (plugin-root: presets/code.md)
+preset_file="$SCRIPT_DIR/../presets/code.md"
 preset_body=""
 if [ -f "$preset_file" ]; then
   preset_body="$(cat "$preset_file")"
@@ -207,6 +207,6 @@ xreview:live started — reviewer running in the background.
   result  : $RESULT  (pending — you'll be pinged here when ready)
   peek    : /xreview:live peek        (popup)
   dock    : /xreview:live dock        (split pane)
-  status  : /xreview:live status
-  stop    : /xreview:live stop
+  status  : /xreview:status
+  stop    : /xreview:stop
 EOF

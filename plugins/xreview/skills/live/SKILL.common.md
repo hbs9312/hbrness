@@ -1,17 +1,19 @@
 ---
 name: live
-description: "현재 코딩 에이전트와 다른 에이전트(claude↔codex)를 tmux 백그라운드 세션으로 열어, 현재 브랜치의 diff 를 읽기 전용으로 코드리뷰시키는 스킬. 리뷰어는 detached tmux 세션에서 돌고, 이 세션은 평소엔 실행 여부만 보이다가 완료되면 핑을 받는다. 원할 때 popup(peek) 또는 split pane(dock) 으로 진행 상황을 들여다보고 서로 전환할 수 있다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '백그라운드 리뷰', '다른 에이전트로 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 팝업', '/xreview:live' 등을 말하면 트리거. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] | peek|dock|undock|status|stop [slug]"
-argument-hint: "[start|peek|dock|undock|status|stop] [--reviewer ..] [--scope ..] [slug]"
+description: "xreview 의 기본 코드리뷰 스킬. 반대편 코딩 에이전트(claude↔codex)를 tmux 백그라운드 세션으로 띄워 현재 브랜치/작업트리/PR 의 diff 를 읽기 전용으로 리뷰시키고, 완료되면 이 세션에 핑을 보낸다. 리뷰어는 detached 세션에서 독립 실행되며, 진행 상황은 popup(peek) 또는 split pane(dock) 으로 들여다보고 서로 전환할 수 있다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '리뷰해줘', '코드 리뷰', '코드 리뷰해줘', '다른 모델로 리뷰', '다른 에이전트로 리뷰', '백그라운드 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 팝업', '/xreview:live' 등을 말하면 트리거. 리뷰 세션 목록 확인은 /xreview:status, 종료는 /xreview:stop. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] | peek|dock|undock [slug]"
+argument-hint: "[start|peek|dock|undock] [--reviewer ..] [--scope ..] [slug]"
 tools: [shell]
 effort: low
 model: sonnet
 ---
 
-# xreview:live — 다른 에이전트로 백그라운드 코드리뷰
+# xreview:live — 다른 에이전트로 백그라운드 코드리뷰 (기본 리뷰 스킬)
 
 지금 돌고 있는 코딩 에이전트가 **반대편 에이전트**(claude면 codex, codex면 claude)를 별도 tmux 세션으로 띄워, 현재 브랜치의 변경분을 읽기 전용으로 리뷰하게 한다. 리뷰어는 백그라운드 detached 세션에서 독립 실행되고, 이 세션(launcher)은 완료 시 한 줄 핑만 받는다. 진행 상황은 **popup(peek)** 또는 **split pane(dock)** 으로 언제든 들여다볼 수 있고 서로 전환된다.
 
-이 스킬은 `${SKILL_DIR}/scripts/` 의 스크립트들이 모든 로직을 담당한다. 너(LLM)는 `$ARGUMENTS` 의 첫 토큰으로 **액션**을 정하고 해당 스크립트를 실행한 뒤, 출력을 사용자에게 그대로 전달한다.
+이것이 xreview 의 **기본 리뷰 동작**이다. 사용자가 그냥 "리뷰해줘" / "코드 리뷰" 라고만 해도 이 스킬로 처리한다 (별도의 동기·블로킹 리뷰 모드는 없다).
+
+이 스킬은 `${PLUGIN_ROOT}/scripts/` 의 스크립트들이 모든 로직을 담당한다. 너(LLM)는 `$ARGUMENTS` 의 첫 토큰으로 **액션**을 정하고 해당 스크립트를 실행한 뒤, 출력을 사용자에게 그대로 전달한다.
 
 ## 액션 디스패치
 
@@ -19,14 +21,14 @@ model: sonnet
 
 | 액션 | 실행 |
 |------|------|
-| `start`(기본) | `bash "${SKILL_DIR}/scripts/start.sh" --current-tool {HARNESS_NAME} <나머지 인자>` |
-| `peek` | `bash "${SKILL_DIR}/scripts/view.sh" peek [slug]` |
-| `dock` | `bash "${SKILL_DIR}/scripts/view.sh" dock [slug]` |
-| `undock` | `bash "${SKILL_DIR}/scripts/view.sh" undock [slug]` |
-| `status` | `bash "${SKILL_DIR}/scripts/status.sh" [slug]` |
-| `stop` | `bash "${SKILL_DIR}/scripts/stop.sh" [slug] [--purge] / --all` |
+| `start`(기본) | `bash "${PLUGIN_ROOT}/scripts/start.sh" --current-tool {HARNESS_NAME} <나머지 인자>` |
+| `peek` | `bash "${PLUGIN_ROOT}/scripts/view.sh" peek [slug]` |
+| `dock` | `bash "${PLUGIN_ROOT}/scripts/view.sh" dock [slug]` |
+| `undock` | `bash "${PLUGIN_ROOT}/scripts/view.sh" undock [slug]` |
 
 > **중요**: `start` 호출 시 반드시 `--current-tool {HARNESS_NAME}` 를 넘긴다. 이 값으로 리뷰어(반대편 도구)와 완료 핑의 submit 방식이 결정된다. 사용자가 `--reviewer` 로 명시하면 그게 우선한다.
+
+> 리뷰 세션 **목록/상태 조회**는 `/xreview:status`, **종료**는 `/xreview:stop` 로 분리되어 있다. 사용자가 `status`/`stop` 을 이 스킬의 액션처럼 부르면 해당 스킬로 안내한다.
 
 ### start 플래그 (start.sh 로 그대로 전달)
 
@@ -51,9 +53,9 @@ model: sonnet
 - `undock` → 붙인 pane 을 닫는다(리뷰어는 계속 백그라운드).
 - slug 를 생략하면 활성 세션이 1개일 때 자동 선택, 여러 개면 목록을 보여주고 slug 를 요청한다.
 
-### status / stop
-- `status` → 모든 리뷰 세션과 상태(running/done/ended/gone)를 출력.
-- `stop` → 세션·watcher·docked pane 정리. 기본은 결과 파일 보존, `--purge` 면 작업 디렉토리까지 삭제. `--all` 로 전부 정리.
+### 세션 관리 (별도 스킬)
+- 리뷰 세션 **목록/상태**(running/done/ended/gone) 조회 → `/xreview:status`.
+- 리뷰 세션 **종료** → `/xreview:stop`. 세션·watcher·docked pane 만 정리하고 리뷰 내역(REVIEW_RESULT 등)은 기본 보존한다.
 
 ## 가이드라인 (너 = LLM)
 
@@ -61,7 +63,7 @@ model: sonnet
 - 리뷰어 출력을 재해석·왜곡하지 말고, severity(critical/warning/info)와 file:line, VERDICT 를 보존해 정리한다.
 - tmux 밖에서 호출되면 `start.sh` 가 죽고 안내를 출력한다 → 사용자에게 tmux 세션에서 실행하라고 알린다.
 - 리뷰어 CLI(claude/codex)가 PATH 에 없으면 스크립트가 거절한다 → 설치/PATH 안내.
-- 사용자가 그냥 "리뷰해줘" 라고만 하고 **블로킹 동기 리뷰**(결과를 바로 받는)를 원하면 이 스킬이 아니라 `xreview:review` 가 맞다. 이 스킬은 "백그라운드로 띄워 지켜보는" 인터랙티브 흐름 전용이다.
+- 이 스킬은 "백그라운드로 띄워 지켜보는" 흐름이다. 리뷰 결과를 받으려면 완료 핑을 기다리거나 `peek`/`dock` 으로 들여다본다.
 
 ## 동작 방식 메모
 

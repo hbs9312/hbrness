@@ -143,7 +143,7 @@ xr_resolve_slug() {
     xr_session_exists "$(xr_session_name "$s")" && slugs+=("$s")
   done
   if [ "${#slugs[@]}" -eq 0 ]; then
-    xr_die "no active review session. (start one with /xreview:live, or see /xreview:live status)"
+    xr_die "no active review session. (start one with /xreview:live, or see /xreview:status)"
   elif [ "${#slugs[@]}" -gt 1 ]; then
     xr_log "multiple active sessions — specify a slug:"
     printf '  %s\n' "${slugs[@]}" >&2

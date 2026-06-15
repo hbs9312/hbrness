@@ -26,13 +26,13 @@ meta="$XRLIVE_SESSIONS/$slug.json"
 
 case "$action" in
   peek)
-    xr_session_exists "$sess" || xr_die "session $sess is not running (see /xreview:live status)"
+    xr_session_exists "$sess" || xr_die "session $sess is not running (see /xreview:status)"
     # env -u TMUX → attach as a fresh client (avoids tmux's nested-session refusal).
     tmux display-popup -w 90% -h 90% -E "env -u TMUX tmux attach-session -t $(xr_shq "=$sess")"
     printf 'closed popup for %s (reviewer still running in background)\n' "$slug"
     ;;
   dock)
-    xr_session_exists "$sess" || xr_die "session $sess is not running (see /xreview:live status)"
+    xr_session_exists "$sess" || xr_die "session $sess is not running (see /xreview:status)"
     local_pane="$(xr_current_pane)"
     # If a viewport already exists and is alive, just select it.
     existing="$(xr_meta "$slug" viewport || true)"

@@ -157,7 +157,6 @@ harness: [claude, codex]  # 둘 다 포함 (명시. 생략해도 같은 효과)
 **현재 Tier 3 선언된 스킬:**
 - `ghflow:pick-issue` — Claude Code의 자동 메모리(`~/.claude/projects/.../memory/`) 시스템에 종속
 - `ghflow:clear-issue` — 위와 동일
-- `xreview:review-bridge` (agent) — `~/.claude/plugins/cache/` 에서 codex 바이너리 탐색하는 로직 포함
 
 ---
 

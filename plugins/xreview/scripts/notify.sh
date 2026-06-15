@@ -30,7 +30,7 @@ while :; do
   # Run ended without a result? (session gone, or reviewer pane died)
   if ! xr_session_exists "$sess"; then
     xr_tmux_send_line "$launcher_pane" \
-      "[xreview:live] 리뷰 세션(${slug})이 결과 없이 종료됨. /xreview:live status 로 확인." \
+      "[xreview:live] 리뷰 세션(${slug})이 결과 없이 종료됨. /xreview:status 로 확인." \
       "$launcher_tool"
     exit 0
   fi
