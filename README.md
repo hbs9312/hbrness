@@ -16,7 +16,7 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 | backflow | 0.4.1 | 14 | Backend implementation (schema → API) |
 | ghflow | 0.3.0 | 7 | GitHub issue/PR/review workflow |
 | meeting-prep | 0.1.0 | 3 | Meeting preparation automation |
-| xreview | 0.1.1 | 1 | External LLM code review |
+| xreview | 1.0.0 | 3 | Background peer code review (claude↔codex) |
 
 ## Install
 

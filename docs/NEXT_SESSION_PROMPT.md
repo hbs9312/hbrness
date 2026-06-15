@@ -28,7 +28,7 @@ hbrness 레포 작업 이어서 한다. 다음 부트스트랩 절차를 정확�
 [1] 별도 브랜치 (`phase-1.5-dbflow` 또는 sub-phase 별)
 [2] 각 sub-phase 마다:
     a. 설계 doc 작성 (Opus)
-    b. xreview:review-bridge agent → codex 리뷰 (5축 perspective)
+    b. 설계 doc 리뷰 (xreview:review-bridge 는 1.0.0 에서 제거 — 커밋 후 xreview:live 로 diff 리뷰하거나 수동 검토)
     c. critical/warning 반영해 doc revision (plan deviation 은 commit msg + Revision 헤더)
     d. design doc commit (사용자 확인 없이 자동 — 이번 Phase 부터 별도 브랜치 자동 commit 패턴)
     e. Task A/B/D 등 실제 구현 — Sonnet agent 위임 (model: sonnet)

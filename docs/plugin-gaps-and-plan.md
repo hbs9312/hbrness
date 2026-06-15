@@ -37,8 +37,7 @@ meeting-prep ─► specflow ─► ghflow(pick+draft) ─► frontflow / backfl
 
 수정 흐름: `/change-impact` → `/spec-refine-loop`
 
-#### Step 3 — 명세 검증 `xreview`
-- `/xreview:review <spec-file>` — 다른 모델(codex 등) 관점 교차 리뷰
+#### Step 3 — 명세 검증
 - `/backend-spec-review` — 백엔드 관점 단독 리뷰
 - `/backend-team-review` — 3인 팀 리뷰
 - `/spec-refine-loop` — 반복 개선 루프
@@ -62,7 +61,7 @@ Stacked PR 전제: 명세 분해 결과를 보고 Child PR 단위를 먼저 설�
 
 #### Step 6 — 커밋·리뷰 `ghflow` + `xreview`
 - 커밋마다 `ghflow:chronicle` 자동 트리거 (PostToolUse 훅)
-- Child PR 단위 `/create-pr` → 필요 시 `/xreview:review` 로 외부 LLM 2차 리뷰
+- Child PR 단위 `/create-pr` → 필요 시 `/xreview:live` 로 반대편 에이전트(codex 등) 백그라운드 코드리뷰
 - 리뷰 반영: `/review-pr`
 - 마무리: `/clear-issue` + 머지, 과거 근거 조회는 `/chronicle-lookup`
 

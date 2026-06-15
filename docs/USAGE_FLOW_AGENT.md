@@ -37,7 +37,6 @@ decompose      specs/TS-*.md              → specs/PLAN-*-tasks.md
 ### P3: Spec Validation (gate — must pass before P5/P6)
 
 ```
-xreview:review            specs/TS-*.md
 backend-spec-review       specs/TS-*.md
 backend-team-review       specs/TS-*.md    (optional)
 ```
@@ -163,7 +162,7 @@ ghflow:commit                              → generate message per team convent
 ghflow:commit -y                           → auto-commit (no confirmation)
 ghflow:chronicle                           → record commit intent/decisions
 ghflow:create-pr                           → GitHub PR (template-based)
-xreview:review        src/                 → external code review
+xreview:live                               → background code review by the opposite agent (claude↔codex)
 ghflow:review-pr                           → check + process review comments (default: unresolved only — token saver)
 ghflow:review-pr 101 --all                 → include resolved threads too
 ghflow:clear-issue                         → cleanup issue memory

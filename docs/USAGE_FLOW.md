@@ -60,12 +60,11 @@
                                              산출: specs/PLAN-2026-001-tasks.md
 ```
 
-### Phase 3: 명세 검증 (xreview — 게이트)
+### Phase 3: 명세 검증 (게이트)
 
 명세를 굳히고 넘어가야 구현 비용 폭발 방지.
 
 ```
-/xreview:review specs/TS-2026-001.md       ← codex 등 외부 LLM 교차 리뷰
 /backend-spec-review specs/TS-2026-001.md  ← 백엔드 관점 단독 리뷰
 /backend-team-review specs/TS-2026-001.md  ← 3인 전문가 팀 리뷰 (선택)
 ```
@@ -239,7 +238,7 @@
 /ghflow:create-pr                          ← GitHub PR (템플릿 기반)
 
 # 코드 리뷰
-/xreview:review src/                       ← codex 에게 외부 리뷰 위임
+/xreview:live                              ← codex(반대편 에이전트)로 현재 브랜치 백그라운드 코드리뷰
 /ghflow:review-pr                          ← PR 리뷰 댓글 확인 + 처리 (디폴트: unresolved 만, 토큰 절약)
 /ghflow:review-pr 101 --all                ← resolved 까지 포함해서 다시 보기
 
@@ -271,7 +270,6 @@
 
 ```
 /specflow:revise specs/TS-2026-001.md      ← 피드백 반영 수정
-/xreview:review specs/TS-2026-001.md       ← 외부 리뷰
 /specflow:change-impact specs/TS-2026-001.md ← 영향 분석
 /spec-refine-loop specs/TS-2026-001.md --iterations 3
                                            ← 리뷰-수정 3회 반복
