@@ -399,14 +399,14 @@ mkdir -p ~/.hbrness/reviews/{owner}/{repo}
 스킬 디렉토리의 `scripts/render.mjs` 와 `template.html` 을 사용해 정적 HTML 을 만든다.
 
 ```bash
-SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/hbrness/plugins/ghflow}/skills/review-pr"
+SKILL_DIR="${PLUGIN_ROOT}/skills/review-pr"
 node "$SKILL_DIR/scripts/render.mjs" \
   ~/.hbrness/reviews/{owner}/{repo}/pr-{n}-{ts}.json \
   "$SKILL_DIR/template.html" \
   ~/.hbrness/reviews/{owner}/{repo}/pr-{n}-{ts}.html
 ```
 
-`CLAUDE_PLUGIN_ROOT` 환경변수가 없는 환경(다른 harness, dev install 등)에서는 `gh/codex` 등의 실제 설치 경로로 `SKILL_DIR` 만 바꿔서 호출한다.
+플러그인 루트(`${PLUGIN_ROOT}`)가 설정되지 않은 dev/비표준 환경에서는 `SKILL_DIR` 만 실제 설치 경로로 바꿔서 호출한다.
 
 #### 4.5.3 알림
 
