@@ -36,16 +36,22 @@ model: sonnet
 - `--scope branch|working|pr` — 리뷰 대상. 기본 `branch`(현재 브랜치 vs 자동 감지 base). `working`=미커밋 변경, `pr`=`gh pr diff`.
 - `--base <ref>` — branch 스코프의 base 를 수동 지정.
 - `--approve auto|manual` — 기본 `auto`(hands-off, 리뷰어가 승인 없이 진행). `manual`이면 리뷰어가 승인을 물어봄(peek 으로 직접 승인).
-- `--context <text>` — 리뷰어에게 전달할 추가 상황 설명.
+- `--context <text>` — 리뷰어에게 전달할 추가 상황 설명(REVIEW_REQUEST 의 `## Caller Context` 로 프리셋 위에 주입됨). **start 시 런처가 이번 세션의 작업 의도를 자동 요약해 채운다**(아래 start 흐름 1번 참고). 사용자가 직접 줄 수도 있다.
 - `--title <text>` — 리뷰 제목.
 - `--launch-cmd '<cmd>'` — (고급) claude/codex 대신 임의의 에이전트 명령으로 실행. seed 프롬프트가 뒤에 붙는다. 다른 CLI(예: 래퍼·사내 도구)로 확장할 때.
 
 ## 실행 흐름
 
 ### start (리뷰 시작)
-1. 위 표대로 `start.sh` 를 실행한다. 스크립트가 base 감지 → diff 수집 → `code` 프리셋 주입 → `REVIEW_REQUEST.md` 작성 → detached 세션 `xrev-<slug>` 로 리뷰어 실행 → 완료 watcher 기동까지 전부 처리한다.
-2. 스크립트 출력(세션명/slug/요청·결과 경로/peek·dock·status·stop 안내)을 사용자에게 그대로 보여준다.
-3. **리뷰가 끝나면** launcher 세션(=지금 너)에 `[xreview:live] 리뷰 완료 (<slug>) — Read <경로> 로 ...` 핑이 user input 으로 들어온다. 그때 `REVIEW_RESULT.md` 를 Read 해서 severity 순으로 요약해 보여준다.
+1. **리뷰 컨텍스트 구성 (의도 주입).** `start.sh` 실행 전에, 이번 세션에서 *무엇을* *왜* 구현/변경했는지를 3~6줄로 요약해 `--context "<요약>"` 로 넘긴다. 리뷰어는 diff 만 보면 "왜 이렇게 짰는지"를 모르므로, 이 의도가 있어야 프리셋의 "계약 일치(구현이 의도와 맞는가)" 관점 리뷰가 정확해진다. 요약에 담을 것:
+   - 사용자가 지시한 작업의 **의도·목표** (어떤 기능을 무슨 이유로).
+   - 주요 **설계 결정·트레이드오프·제약/가정**, 관련 스펙·이슈 ref(있으면).
+   - 규칙: diff 에 이미 드러난 내용을 장황히 반복하지 말고 **"왜"에 집중**한다. 비밀값(토큰·자격증명·PII)은 절대 넣지 않는다.
+   - 이번 세션에 그런 맥락이 없으면(예: 남의 브랜치를 그냥 리뷰) **생략한다(best-effort)** — 빈 추측을 지어내지 말 것.
+   - 사용자가 `--context` 를 직접 줬으면 그 내용을 **우선**하되, 네가 아는 의도를 덧붙여 보강해도 된다.
+2. 위 표대로 `start.sh` 를 실행한다(위에서 만든 `--context` 포함). 스크립트가 base 감지 → diff 수집 → `code` 프리셋 주입 → `REVIEW_REQUEST.md` 작성 → detached 세션 `xrev-<slug>` 로 리뷰어 실행 → 완료 watcher 기동까지 전부 처리한다.
+3. 스크립트 출력(세션명/slug/요청·결과 경로/peek·dock·status·stop 안내)을 사용자에게 그대로 보여준다.
+4. **리뷰가 끝나면** launcher 세션(=지금 너)에 `[xreview:live] 리뷰 완료 (<slug>) — Read <경로> 로 ...` 핑이 user input 으로 들어온다. 그때 `REVIEW_RESULT.md` 를 Read 해서 severity 순으로 요약해 보여준다.
 
 ### peek / dock / undock (들여다보기)
 - `peek` → 팝업으로 리뷰어 세션을 본다(닫아도 백그라운드 유지).
