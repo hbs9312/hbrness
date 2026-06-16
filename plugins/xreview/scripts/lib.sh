@@ -101,6 +101,29 @@ xr_claude_pretrust_dir() {
   fi
 }
 
+# Codex counterpart of xr_claude_pretrust_dir. Codex tracks workspace trust in
+# config.toml as `[projects."<dir>"] trust_level = "trusted"`. A codex reviewer
+# runs detached and can't answer "Do you trust the files in this folder?", so
+# without this every review (a fresh WORK slug each time) hangs on the trust
+# prompt. The target is a scratch dir this skill just created, so trusting it is
+# safe. Idempotent (no-op if the entry already exists); no-op on append failure,
+# in which case the reviewer falls back to the dialog (answerable via peek).
+xr_codex_pretrust_dir() {
+  local dir="$1" cfg
+  cfg="${CODEX_HOME:-$HOME/.codex}/config.toml"
+  # Already trusted? exact section-header match (fixed-string, no regex).
+  if [ -f "$cfg" ] && grep -qF "[projects.\"$dir\"]" "$cfg" 2>/dev/null; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$cfg")" 2>/dev/null || true
+  # Append a new project table. A table header at EOF is valid TOML regardless
+  # of preceding content; the leading newline guarantees separation.
+  {
+    printf '\n[projects."%s"]\n' "$dir"
+    printf 'trust_level = "trusted"\n'
+  } >> "$cfg" 2>/dev/null || true
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Identity / paths
 # ─────────────────────────────────────────────────────────────────────────────
