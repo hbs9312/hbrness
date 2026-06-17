@@ -238,7 +238,7 @@
 /ghflow:create-pr                          ← GitHub PR (템플릿 기반)
 
 # 코드 리뷰
-/xreview:live                              ← codex(반대편 에이전트)로 현재 브랜치 백그라운드 코드리뷰
+/xreview:live                              ← codex(반대편 에이전트)로 백그라운드 코드리뷰. 런처가 이번 세션의 작업 의도를 --context 로 자동 주입
 /ghflow:review-pr                          ← PR 리뷰 댓글 확인 + 처리 (디폴트: unresolved 만, 토큰 절약)
 /ghflow:review-pr 101 --all                ← resolved 까지 포함해서 다시 보기
 
@@ -324,6 +324,32 @@
 /ghflow:chronicle-lookup "결제 로직 왜 바꿨지"
                                            ← 키워드 검색
 ```
+
+---
+
+## 부가 — 세션 관리 (sessionflow, 모든 단계 공통)
+
+파이프라인 단계가 아니라 어느 시점에서든 쓰는 cross-cutting 스킬. Claude ↔ Codex 가 같은 파일을 공유한다.
+
+```
+# 지금 작업을 다음 세션이 그대로 이어받게
+/handoff [-m|-o] [메시지]                  ← in-flight 컨텍스트(편집중 파일·마지막 명령·에러·다음 한 줄)를 HANDOFF.md 로 직렬화 (워크트리 단위)
+/handoff-clear [-y] [--all]                ← HANDOFF.md + MEMORY.md 라인 정리
+
+# 나중에 처리할 일 (백로그)
+/followup [-m|-o] [메시지]                 ← 후속 조치 항목을 followups/ 에 누적 (프로젝트 단위·영속)
+/followup-clear [-y]                       ← followups/ 전체 비우기
+
+# 긴 작업을 페이즈로 쪼개 컨텍스트를 비우며 무인 진행
+/phase-run <자연어 계획>                   ← 페이즈 분해 → 경계마다 자기 pane 에 /clear + /phase-run continue 자동 주입 → 새 세션이 HANDOFF.md 읽고 다음 페이즈 진행. 자동 커밋 안 함. tmux 필요.
+/phase-run continue|status|pause|resume|stop|reset
+```
+
+- **handoff** = 지금 이 작업을 다음 세션이 그대로 (1회성·워크트리 단위).
+- **followup** = 나중에 할 일 (영속·프로젝트 단위).
+- **phase-run** = 긴 다단계 작업을 페이즈마다 컨텍스트를 리셋하며 무인 진행 — 위 Phase 1~9 파이프라인 전체를 감쌀 수도 있다.
+
+저장(Tier 1): `~/.hbrness/sessionflow/<project-key>/` → HANDOFF.md, followups/, phases/. 양쪽 MEMORY.md 자동 동기화.
 
 ---
 

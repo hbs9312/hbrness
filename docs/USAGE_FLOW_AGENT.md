@@ -162,12 +162,29 @@ ghflow:commit                              → generate message per team convent
 ghflow:commit -y                           → auto-commit (no confirmation)
 ghflow:chronicle                           → record commit intent/decisions
 ghflow:create-pr                           → GitHub PR (template-based)
-xreview:live                               → background code review by the opposite agent (claude↔codex)
+xreview:live                               → background code review by the opposite agent (claude↔codex); launcher auto-injects work intent as --context
 ghflow:review-pr                           → check + process review comments (default: unresolved only — token saver)
 ghflow:review-pr 101 --all                 → include resolved threads too
 ghflow:clear-issue                         → cleanup issue memory
 ghflow:chronicle-lookup <query>            → search past commit rationale
 ```
+
+---
+
+## Cross-cutting — Session Management (sessionflow)
+
+> Not a pipeline phase; applies anywhere. Claude ↔ Codex share the same files (Tier 1).
+
+```
+handoff         /handoff [-m|-o] [msg]        → serialize in-flight context → HANDOFF.md (worktree-scoped). Resume in place next session.
+handoff-clear   /handoff-clear [-y] [--all]   → delete HANDOFF.md + MEMORY.md line
+followup        /followup [-m|-o] [msg]       → append later-TODO to followups/ (project-scoped, persistent)
+followup-clear  /followup-clear [-y]          → clear followups/
+phase-run       /phase-run <plan>             → split into phases; auto /clear + /phase-run continue at each boundary → fresh session reads HANDOFF.md and continues. No auto-commit. tmux required. Can wrap the whole P1→P9 pipeline.
+                /phase-run continue|status|pause|resume|stop|reset
+```
+
+handoff = carry THIS work forward (1-shot/worktree). followup = LATER backlog (persistent/project). phase-run = hands-off multi-phase run that resets context between phases.
 
 ---
 

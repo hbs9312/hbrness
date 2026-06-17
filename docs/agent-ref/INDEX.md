@@ -17,6 +17,12 @@
 | P8 | [P8.md](P8.md) | E2E DB (dbflow) | QA §5 → sandbox scenarios + delta verify |
 | P9 | [P9.md](P9.md) | Commit & PR (ghflow) | changes → commit, chronicle, PR, review |
 
+## Cross-cutting (any phase)
+
+| Area | File | Summary |
+|---|---|---|
+| Session management (sessionflow) | [SESSION.md](SESSION.md) | `handoff` / `followup` / `phase-run` — preserve & resume context across sessions; `phase-run` auto-resets context between phases and can wrap the whole pipeline |
+
 ## Scenarios
 
 | Scenario | Flow |
