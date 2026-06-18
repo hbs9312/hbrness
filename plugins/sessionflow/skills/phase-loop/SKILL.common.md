@@ -85,7 +85,22 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
 
 분해 결과를 보여주고 **이대로 진행할지 확인**받는다(불변 원칙 5).
 
-#### 3. 분기 — 개인 / 팀
+#### 3. init 전 체크리스트 (pf init 직전 게이트)
+
+`pf init` 은 가볍다(페이즈 제목 + pane + 옵션만 받아 `state.env`/`phases.tsv` 작성). 하지만 init 은 **clear-and-resume 루프로 들어가는 관문**이라, `/clear` 후 fresh 세션이 대화 로그 없이 이어받을 수 있게 컨텍스트가 **디스크에 박혀 있어야** 한다. 아래를 모두 확인한 뒤에만 init 으로 간다(개인 모드 step 4, 팀 모드는 "채택"의 pf init):
+
+- [ ] **tmux pane** — `$TMUX_PANE` 존재. 없으면 자동 전진 불가(init 이 경고 + 경계마다 수동 `/clear`+continue). 사용자에게 그 사실을 알린다.
+- [ ] **PHASES.md 작성됨** — `loop.sh paths` 의 `PHASES_FILE` 경로에. 헤더(Mode/Commit policy/Stack/Integration base/Branch scheme/xreview) + **각 페이즈의 목표·완료기준·(팀)브랜치·PR base**. clear 후 fresh 세션의 **유일한 설정 진실원**이다.
+- [ ] **원본 근거 참조 가능** — 분해의 바탕이 된 스펙/PRD/이슈/계획을 **안정적 경로·URL·이슈번호로 PHASES.md 에서 참조**. 대화에만 있는 컨텍스트는 clear 후 소실된다.
+- [ ] **워킹트리 상태 known** — init 은 파일을 건드리지 않고 워킹트리가 그대로 다음 세션으로 넘어간다. clean(또는 의도된 staged) 상태인지 확인.
+- [ ] **결정 4종 확정·기록** — mode / commit 정책 / stack·parallel / 통합 base·slug·브랜치 규칙·xreview N. 전부 PHASES.md 헤더에.
+- [ ] **(팀) 부트스트랩 준비** — 워크트리 + 첫 브랜치 + remote 존재, 그리고 pf init 은 **워크트리 cwd 에서** 돈다(메인에서 돌리면 네임스페이스 어긋남).
+- [ ] **(xreview) 반대편 CLI**(claude/codex)가 PATH + tmux 안. **(push/PR) remote + `gh` 인증**(+ 있으면 PR 템플릿).
+- [ ] **비밀값 없음** — PHASES.md/HANDOFF.md 어디에도 토큰·자격증명·PII 금지.
+
+빠진 게 있으면 init 하지 말고 먼저 채운다(특히 PHASES.md — 이게 없으면 clear 후 루프가 깨진다).
+
+#### 4. 분기 — 개인 / 팀
 
 **개인 모드:**
 1. `PHASES.md` 를 `loop.sh paths` 의 `PHASES_FILE` 경로에 작성(아래 포맷).
@@ -122,8 +137,9 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
 
 워크트리 세션에서 `/phase-loop start` 로 들어와, `PHASES_FILE` 에 phase-loop 설정 헤더가 이미 있을 때:
 1. `PHASES.md` 를 읽어 모드·정책·페이즈 목록을 파악한다.
-2. 그 페이즈 제목들로 phaseflow init(개인 모드 init 과 동일, `--continue-prompt "/phase-loop continue"`). 이제 cwd 가 워크트리라 상태가 올바른 네임스페이스에 안착한다.
-3. **Phase 1 작업**으로 간다.
+2. **"init 전 체크리스트"(위 step 3)를 워크트리 cwd 에서 재확인**한다 — 특히 pane 존재, 워킹트리 상태, (xreview/PR) CLI·remote·gh 인증. PHASES.md 는 이미 스테이징돼 있으니 그 완전성만 검증.
+3. 그 페이즈 제목들로 phaseflow init(개인 모드 init 과 동일, `--continue-prompt "/phase-loop continue"`). 이제 cwd 가 워크트리라 상태가 올바른 네임스페이스에 안착한다.
+4. **Phase 1 작업**으로 간다.
 
 ---
 
