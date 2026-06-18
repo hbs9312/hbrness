@@ -20,12 +20,17 @@
 #   HBRNESS_HOME          기본 ~/.hbrness
 #   PHASEFLOW_GAP         clear 와 continue 주입 사이 간격(초). 기본 2
 #   PHASEFLOW_MAX_PHASES  안전 상한. 기본 50
+#   PHASEFLOW_STATE_DIR_NAME  상태 디렉토리명(기본 'phases'). 이 엔진을 다른 워크플로우가
+#                         같은 워크트리에서 충돌 없이 재사용할 때 다른 이름을 준다
+#                         (예: sessionflow:phase-loop 은 'phase-loop'). HANDOFF.md 경로는
+#                         이 디렉토리의 부모(= 워크트리 단위)라 이름과 무관하게 공유된다.
 
 set -euo pipefail
 
 HBRNESS_HOME="${HBRNESS_HOME:-$HOME/.hbrness}"
 GAP="${PHASEFLOW_GAP:-2}"
 MAX_PHASES="${PHASEFLOW_MAX_PHASES:-50}"
+STATE_DIR_NAME="${PHASEFLOW_STATE_DIR_NAME:-phases}"
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
@@ -55,9 +60,9 @@ resolve_state_dir() {
   project_key=$(echo "$project_root" | tr '/' '-')
 
   if [ "$is_worktree" = "1" ]; then
-    echo "$HBRNESS_HOME/sessionflow/$project_key/worktrees/$wt_name/phases"
+    echo "$HBRNESS_HOME/sessionflow/$project_key/worktrees/$wt_name/$STATE_DIR_NAME"
   else
-    echo "$HBRNESS_HOME/sessionflow/$project_key/phases"
+    echo "$HBRNESS_HOME/sessionflow/$project_key/$STATE_DIR_NAME"
   fi
 }
 
@@ -292,10 +297,14 @@ cmd_advance() {
   clear_cmd="$(b64dec "$CLEAR_B64")"
   continue_prompt="$(b64dec "$CONTINUE_B64")"
 
+  # 제어 커맨드 접두어를 continue_prompt 에서 도출 (예: '/phase-loop continue' → '/phase-loop')
+  local ctl_cmd; ctl_cmd="$(printf '%s' "$continue_prompt" | awk '{print $1}')"
+  [ -n "$ctl_cmd" ] || ctl_cmd="/phase-run"
+
   echo "Phase $((CURSOR-1)) 완료 → Phase $CURSOR ($(phase_title "$CURSOR")) 준비."
   if schedule_inject; then
     echo "⏳ ${DELAY}s 후 자동으로 '$clear_cmd' → '$continue_prompt' (pane=$PANE)."
-    echo "   중단하려면 즉시 '/phase-run pause' 실행."
+    echo "   중단하려면 즉시 '$ctl_cmd pause' 실행."
   else
     echo "⚠ tmux 자동 전진 불가. 이 세션에서 직접 실행하세요:"
     echo "     $clear_cmd"
