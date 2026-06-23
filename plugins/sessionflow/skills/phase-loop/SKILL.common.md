@@ -10,8 +10,9 @@ argument-hint: "[continue|pause|resume|stop|status|reset] | <구현 계획>"
 긴 구현 작업을 **페이즈(= PR 단위)로 쪼개고**, 각 페이즈마다 다음을 자동으로 돈다:
 
 ```
-구현 → xreview(다른 에이전트 리뷰) N라운드 → 커밋 → push → PR → 핸드오프
-     → /clear 로 컨텍스트 비우고 새 세션이 다음 페이즈 이어받기 → … 모든 페이즈 끝까지 반복
+(이미 이번 페이즈 브랜치 위) 구현 → xreview(다른 에이전트) N라운드 → 커밋 → push → PR
+     → [팀 모드] 다음 페이즈 stacked 브랜치 cut(다음 세션이 깨어날 자리) → 핸드오프
+     → /clear 로 컨텍스트 비우고 새 세션이 '이미 다음 PR 브랜치 위'에서 이어받기 → … 모든 페이즈 끝까지 반복
 ```
 
 `sessionflow:phase-run` 의 "페이즈 경계마다 컨텍스트를 리셋한다" 엔진을 그대로 재사용하고, 그 경계에 **리뷰·출하(commit/push/PR)** 를 끼워 넣은 상위 워크플로우다. 상태머신·tmux 주입은 phase-run 의 `phaseflow.sh` 가 담당하고(별도 네임스페이스 `phase-loop`), **너(LLM)는 `${SKILL_DIR}/scripts/loop.sh` 를 호출하면서 각 페이즈의 실제 작업(구현·리뷰 반영·커밋·PR·핸드오프)만 직접 수행한다.**
@@ -27,6 +28,7 @@ argument-hint: "[continue|pause|resume|stop|status|reset] | <구현 계획>"
 4. **xreview 는 비동기다.** 리뷰를 start 한 뒤엔 turn 을 끝내고 **완료 핑을 기다린다.** 핑이 오면(이 SKILL 지침이 컨텍스트에 남은 상태에서) 결과를 읽고 라운드를 잇거나 다음 단계로 간다.
 5. **계획 분해·모드는 시작 시 1회만 확인.** 그 외 경계마다 차단형 확인은 없다(개인 모드 커밋 확인 제외). 멈추려면 사용자가 `/phase-loop pause`.
 6. **자동 커밋의 범위는 "이번 페이즈 변경분"으로 한정.** 의도치 않은 파일을 끌어들이지 않는다. push 는 remote 가 있을 때만, PR 은 팀 모드(또는 명시)일 때만.
+7. **다음 페이즈 브랜치는 "완료 프로토콜"에서 미리 cut 한다(팀 모드).** 이번 페이즈를 commit→push→PR 한 뒤, advance 직전에 다음 페이즈의 stacked 브랜치를 잘라 **워킹트리를 그 위로 옮긴다.** 그래야 `/clear` 후 fresh 세션이 **이미 자기 PR 브랜치 위**에서 깨어난다(= 각 페이즈가 독립된 PR 로 확정). 첫 페이즈 브랜치는 워크트리 생성 시 이미 잘려 있고, 마지막 페이즈·개인 모드는 이 단계가 없다.
 
 ## 인자 디스패치
 
@@ -74,7 +76,7 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
 - 커밋 정책: 팀=auto / 개인=confirm 기본, `--auto`/`--confirm` 으로 override.
 - (팀) 스택 정책: 페이즈들이 **서로 의존적이면 stack**(PR base=직전 브랜치), **독립적이면 parallel**(PR base=통합 base). 점진 구현은 대개 stack.
 - (팀) 통합 base(예: `origin/main`)·slug·브랜치 명명규칙(예: `<slug>/NN`).
-- xreview: reviewer(생략=반대편 도구), 최대 라운드 N(기본 2), scope=working.
+- xreview: reviewer(생략=반대편 도구), **페이즈당 최대 라운드 N**(기본 2 — blocking 없거나 approve 면 N 전 조기종료), scope=working. 페이즈마다 이 N 라운드를 돈다.
 
 #### 2. 페이즈로 분해 → 1회 확인
 
@@ -159,11 +161,12 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf current
 
 ## 페이즈 프로토콜 (START Phase 1 / CONTINUE 공통)
 
-### 1. 브랜치 준비 (팀 모드만)
+### 1. 브랜치 확인 (팀 모드만)
 
-`PHASES.md`/`HANDOFF.md` 가 정한 이번 페이즈 브랜치·base 로 맞춘다.
-- **stack**: `git checkout -b <이번 브랜치> <base=직전 페이즈 브랜치>` (Phase 1 은 워크트리 생성 시 이미 첫 브랜치이므로 그대로).
-- **parallel**: `git checkout -b <이번 브랜치> <통합 base>`.
+이번 페이즈 브랜치는 **이미 잘려 있어야 한다** — Phase 1 은 워크트리 생성 시(`worktree-create --first-branch`), Phase 2+ 는 직전 페이즈의 완료 프로토콜(§7)에서 미리 cut 된다. 그래서 fresh 세션은 보통 **이미 올바른 브랜치 위**에 있다.
+
+- `git branch --show-current` 가 `PHASES.md`/`HANDOFF.md` 의 이번 페이즈 브랜치와 일치하는지 **확인만** 한다.
+- 어긋났거나(사용자 개입 등) 브랜치가 없으면 폴백으로 만든다: **stack** `git checkout -b <이번 브랜치> <직전 페이즈 브랜치>`, **parallel** `git checkout -b <이번 브랜치> <통합 base>`.
 - 개인 모드: 브랜치 전환 없음(현재 브랜치에서 계속).
 
 ### 2. 구현
@@ -206,7 +209,17 @@ remote 가 없으면(개인 로컬) 건너뛰고 그 사실을 보고한다.
 - 개인 모드(또는 remote 없음)는 PR 을 건너뛴다.
 - 생성된 PR 번호/URL 을 기록(핸드오프에 들어간다).
 
-### 7. HANDOFF.md 작성 + 완전성 검증
+### 7. 다음 페이즈 stacked 브랜치 cut (팀 모드 / 마지막 페이즈 아닐 때)
+
+다음 세션이 깨어날 자리를 **지금** 만든다(불변 원칙 7). 이번 페이즈를 push·PR 까지 끝낸 직후, advance 전에:
+
+- **stack**: `git checkout -b <다음 페이즈 브랜치> <이번 브랜치>` — 다음 브랜치가 이번 브랜치 끝에 쌓인다(아직 커밋 없음 — push·PR 은 다음 페이즈가 한다).
+- **parallel**: `git checkout -b <다음 페이즈 브랜치> <통합 base>`.
+- 다음 브랜치명은 `PHASES.md` 의 **다음** 페이즈 항목 `브랜치:` 를 그대로 쓴다.
+- 이 checkout 으로 **워킹트리가 다음 브랜치로 이동**한다 → `/clear` 후 fresh 세션이 이미 그 위에 있다(= 각 페이즈가 독립 PR 로 확정).
+- **마지막 페이즈**거나 **개인 모드**면 이 단계를 건너뛴다(다음 분기 없음 / 브랜치 고정).
+
+### 8. HANDOFF.md 작성 + 완전성 검증
 
 `sessionflow:handoff` 규약으로 `HANDOFF.md`(= `pf current` 의 `HANDOFF` 경로)를 **다음 페이즈 기준**으로 작성한다. 표준 섹션에 더해:
 
@@ -218,15 +231,19 @@ remote 가 없으면(개인 로컬) 건너뛰고 그 사실을 보고한다.
 - 이어받기: `/phase-loop continue`
 
 ## Stack State   (팀 모드만)
-- 워크트리: {경로} (현재 브랜치: {이번 브랜치})
-- 스택: {auth/01(#41) ← auth/02(#42) ← auth/03(this)}
-- 다음 분기 base: {이번 브랜치}  → 다음 페이즈 브랜치 {다음 브랜치명}
+- 워크트리: {경로}
+- 완료한 페이즈 브랜치: {이번 브랜치} (PR {#NN})  ← push·PR 완료
+- 현재 체크아웃: {다음 페이즈 브랜치}  ← §7 에서 미리 cut, fresh 세션이 여기서 시작
+- 스택: {auth/01(#41) ← auth/02(#42) ← auth/03(여기, PR base auth/02)}
+- 다음 페이즈 PR base: {이번 브랜치}
 - 병합 순서: 바닥(#41)부터 bottom-up. squash 머지면 위 스택 rebase 필요(루프 밖).
 ```
 
+> 이 시점엔 §7 이 이미 다음 페이즈 브랜치를 cut 하고 워킹트리를 옮겨놨다. HANDOFF 의 "현재 체크아웃"·`Current State` 는 **다음 페이즈 브랜치 기준**으로 적는다(fresh 세션이 그 위에서 깨어나므로).
+
 **검증(불변 원칙 2):** "이 핸드오프+PHASES.md 만 보고, 대화 로그 없이, 다음 페이즈를 시작할 수 있는가?" 빠진 분기 base·PR 번호·미해결 리뷰·다음 액션이 있으면 지금 채운다. 비밀값은 적지 않는다.
 
-### 8. advance (= 너의 마지막 행동)
+### 9. advance (= 너의 마지막 행동)
 
 ```bash
 bash "${SKILL_DIR}/scripts/loop.sh" pf advance --pane "$TMUX_PANE" --tool {HARNESS_NAME}
@@ -271,6 +288,8 @@ advance 출력(자동 전진 예약됨 / 완료 / tmux 없어 수동 안내)을 
 …
 ```
 
+각 페이즈의 `브랜치:` 가 그 페이즈가 올라탈 브랜치명이다. Phase N(N≥2)의 브랜치는 **Phase N-1 의 완료 프로토콜 §7 이 미리 cut** 하므로(불변 원칙 7), fresh 세션은 이 이름의 브랜치 위에서 깨어난다. 그 페이즈의 `PR base` 는 스택이면 직전 페이즈 브랜치, parallel 이면 통합 base 다.
+
 ## 디버그 / 경로
 
 ```bash
@@ -285,4 +304,5 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf paths      # phaseflow 상태/pane 도출
 - **Codex**: clear 기본 `/new` + CSI-u Enter. 다르면 `pf init … --clear-cmd '<명령>'`.
 - **tmux 밖**: 자동 전진 불가 → 경계마다 사용자가 직접 `/clear` 후 `/phase-loop continue`. 팀 부트스트랩도 사용자가 워크트리에서 세션을 직접 띄운다.
 - **리뷰·머지 캐스케이드는 루프 밖**: 루프는 스택을 앞으로 쌓기만 한다. 열린 PR 의 리뷰 반영과 bottom-up 머지(+필요 시 `git rebase --update-refs`)는 루프 종료 후 사람이 처리한다.
+- **다음 브랜치 pre-cut**: 완료 프로토콜(§7)이 다음 페이즈 브랜치를 미리 잘라 워킹트리를 그 위로 옮긴 뒤 clear 한다 → fresh 세션은 이미 자기 PR 브랜치 위다. 첫 페이즈만 워크트리 생성 시 잘리고, 마지막 페이즈는 cut 하지 않는다. CONTINUE §1 은 "이미 올바른 브랜치인지" 확인만 하고, 어긋났을 때만 폴백으로 만든다.
 - **멈춤**: `/phase-loop pause` 로 예약된 자동 전진을 취소(`resume` 재개). 개인 모드 커밋 확인 단계는 자연스러운 차단점이다.
