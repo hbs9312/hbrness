@@ -76,7 +76,7 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
 - 커밋 정책: 팀=auto / 개인=confirm 기본, `--auto`/`--confirm` 으로 override.
 - (팀) 스택 정책: 페이즈들이 **서로 의존적이면 stack**(PR base=직전 브랜치), **독립적이면 parallel**(PR base=통합 base). 점진 구현은 대개 stack.
 - (팀) 통합 base(예: `origin/main`)·slug·브랜치 명명규칙(예: `<slug>/NN`).
-- xreview: reviewer(생략=반대편 도구), **페이즈당 최대 라운드 N**(기본 2 — blocking 없거나 approve 면 N 전 조기종료), scope=working. 페이즈마다 이 N 라운드를 돈다.
+- xreview: reviewer(생략=반대편 도구), **페이즈당 최대 라운드 N**(기본 2 — blocking 없거나 approve 면 N 전 조기종료), scope=working, **review-timeout**(기본 1800초 — 핑 유실·멈춤 시 폴링으로 확인하고 이 시간 넘으면 followup 처리). 페이즈마다 이 N 라운드를 돈다.
 
 #### 2. 페이즈로 분해 → 1회 확인
 
@@ -173,18 +173,21 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf current
 
 `TITLE` 페이즈의 실제 작업을 한다. 핸드오프의 `Next Action` 부터 시작.
 
-### 3. xreview 라운드 (최대 N회, 깨끗하면 조기종료)
+### 3. xreview 라운드 (페이즈당 최대 N회, 깨끗하면 조기종료)
 
-구현이 끝나면(미커밋 상태) 다른 에이전트로 리뷰를 돌린다.
+구현이 끝나면(미커밋 상태) 다른 에이전트로 리뷰를 돌린다. N 은 `PHASES.md` 의 `xreview: max-rounds`(기본 2).
 
-1. **리뷰 start**: `xreview:live` 스킬을 start 로 호출한다 — `--scope working --approve auto --context "<이번 페이즈의 의도·설계결정 3~6줄>"` (reviewer 생략=반대편 도구). 의도 요약은 "왜 이렇게 짰는지" 중심, 비밀값 금지.
-2. **turn 종료 후 핑 대기**(불변 원칙 4). 다른 작업을 하지 말고 끝낸다.
-3. **완료 핑 수신** → `REVIEW_RESULT.md` 를 Read 해 severity 순으로 정리한다.
-   - **blocking(critical/major) 이 없거나 리뷰어가 approve** → 라운드 종료, 4단계로.
-   - blocking 이 있으면 → **반영(코드 수정)** 후 라운드 수를 +1.
-     - 아직 최대 N 미만이면 → 1번으로 돌아가 **재리뷰**(새 xreview start).
-     - 최대 N 도달이면 → 남은 미해결 항목을 `sessionflow:followup` 으로 기록하고(또는 핸드오프 Notes 에 명시) 4단계로 진행한다. (무한 루프 금지)
+1. **리뷰 start**: `xreview:live` 스킬을 start 로 호출한다 — `--scope working --approve auto --context "<이번 페이즈의 의도·설계결정 3~6줄>"` (reviewer 생략=반대편 도구). 의도 요약은 "왜 이렇게 짰는지" 중심, 비밀값 금지. 출력의 **`slug` 를 기억**한다(상태 폴링에 쓴다).
+2. **turn 종료 후 핑 대기**(불변 원칙 4). 다른 작업을 하지 말고 끝낸다. 핑은 완료뿐 아니라 **stuck/gone/timeout** 으로도 올 수 있다.
+3. **핑(또는 폴링)으로 상태 분기**:
+   - **완료** → `REVIEW_RESULT.md` 를 Read 해 severity 순으로 정리.
+     - blocking(critical/major) 없거나 리뷰어 approve → 라운드 종료, 4단계로.
+     - blocking 있으면 → **반영(코드 수정)** 후 라운드 +1. N 미만이면 1번으로(재리뷰), N 도달이면 미해결을 `sessionflow:followup`/핸드오프 Notes 에 남기고 4단계로(무한 루프 금지).
+   - **stuck**(리뷰어가 trust/권한 프롬프트에서 멈춤) → `/xreview:live peek <slug>` 로 응답하거나 `/xreview:stop <slug>` 후 1번부터 재시작. **조용히 기다리지 말 것.**
+   - **gone/ended/timeout** → `/xreview:status <slug>` 로 확인하고 1번부터 1회 재시작; 또 실패하면 미해결로 followup 남기고 4단계로(루프를 막지 않는다).
 4. 라운드 요약(돈 횟수·반영/미해결)을 짧게 보고하고 다음 단계로.
+
+> **폴링 폴백 (핑 유실·멈춤 대비).** 핑은 빠른 신호일 뿐 유일한 신호가 아니다 — xreview 의 durable 상태(`/xreview:status <slug>`)가 신뢰원이다. ① 핑이 한동안 안 오거나(유실 의심) ② 페이즈를 resume 했는데 in-flight 리뷰가 남아 있으면, 결론 내리기 전에 `/xreview:status <slug>` 로 상태를 **직접 확인**한다. 스케줄 가능한 환경이면 일정 간격(예: 120초)으로 status 재확인을 예약해 폴링한다. `--review-timeout <초>`(기본 1800)을 넘기면 더 기다리지 말고 stuck/실패로 처리 → followup 남기고 진행한다.
 
 > 리뷰 라운드는 같은 페이즈 안(=clear 전)에서 일어나므로 컨텍스트가 유지된다. 라운드 진행 상황은 in-context 로 추적한다(예: "라운드 2/2").
 
@@ -270,7 +273,7 @@ advance 출력(자동 전진 예약됨 / 완료 / tmux 없어 수동 안내)을 
 > Integration base: origin/main  (팀 모드)
 > Worktree: ../proj-<slug>        (팀 모드)
 > Branch scheme: <slug>/NN-<short>
-> xreview: reviewer={auto|claude|codex}, max-rounds=2, scope=working
+> xreview: reviewer={auto|claude|codex}, max-rounds=2, scope=working, review-timeout=1800
 > Resume: /phase-loop continue
 
 ## Phases
