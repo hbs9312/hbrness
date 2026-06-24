@@ -28,12 +28,18 @@ for f in "$XRLIVE_SESSIONS"/*.json; do
   scope="$(jq -r '.scope' "$f")"
   result="$(jq -r '.result' "$f")"
   created="$(jq -r '.created' "$f")"
+  work="$(jq -r '.work // empty' "$f")"
+  watch="$(xr_get_watch_state "$work" 2>/dev/null || true)"
+  watch_detail=""
+  [ -n "$work" ] && [ -f "$work/WATCH_STATE" ] && watch_detail="$(sed -n '2p' "$work/WATCH_STATE" 2>/dev/null || true)"
 
   if [ -s "$result" ]; then
     state="done (result ready)"
   elif xr_session_exists "$sess"; then
     if [ "$(xr_session_pane_dead "$sess")" = "1" ]; then
       state="ended (no result)"
+    elif [ "$watch" = "stuck" ]; then
+      state="stuck (trust/권한 프롬프트 — /xreview:live peek 로 응답)"
     else
       state="running"
     fi
@@ -43,6 +49,7 @@ for f in "$XRLIVE_SESSIONS"/*.json; do
 
   printf '● %s\n' "$slug"
   printf '    state    : %s\n' "$state"
+  [ "$watch" = "stuck" ] && [ -n "$watch_detail" ] && printf '    ⚠ detail : %s\n' "$watch_detail"
   printf '    reviewer : %s    scope: %s\n' "$reviewer" "$scope"
   printf '    repo     : %s  (branch %s)\n' "$repo_key" "$branch"
   printf '    session  : %s    started: %s\n' "$sess" "$created"

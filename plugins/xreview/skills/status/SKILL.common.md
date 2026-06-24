@@ -24,7 +24,8 @@ bash "${PLUGIN_ROOT}/scripts/status.sh" [slug]
 
 세션마다:
 - **slug** (브랜치-해시 식별자)
-- **state** — `running` / `done (result ready)` / `ended (no result)` / `gone`
+- **state** — `running` / `done (result ready)` / `stuck (trust/권한 프롬프트)` / `ended (no result)` / `gone` / `timeout`
+  - `stuck` 이면 리뷰어가 trust/권한 프롬프트에서 막힌 것 → `/xreview:live peek <slug>` 로 응답하거나 `/xreview:stop <slug>` 후 재시작하라고 안내한다.
 - **reviewer** (claude/codex), **scope** (branch/working/pr)
 - **repo / branch**
 - **session** (tmux 세션명), **started** (생성 시각)

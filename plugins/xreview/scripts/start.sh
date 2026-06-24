@@ -113,6 +113,7 @@ mkdir -p "$WORK"
 REQUEST="$WORK/REVIEW_REQUEST.md"
 RESULT="$WORK/REVIEW_RESULT.md"
 rm -f "$RESULT"   # fresh run
+xr_set_watch_state "$WORK" running "리뷰어 기동"   # durable status for pollers
 SESS="$(xr_session_name "$slug")"
 launcher_pane="$(xr_current_pane || echo '')"
 created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -168,6 +169,7 @@ fi
 # whichever reviewer is in play (claude and codex track trust differently).
 if [ "$reviewer" = "claude" ] || [ -n "$launch_override" ]; then
   xr_claude_pretrust_dir "$WORK"
+  xr_claude_pretrust_dir "$REPO_ROOT"   # claude reviewer adds the repo via --add-dir
 fi
 if [ "$reviewer" = "codex" ] || [ -n "$launch_override" ]; then
   xr_codex_pretrust_dir "$WORK"

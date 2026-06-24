@@ -51,7 +51,12 @@ model: sonnet
    - 사용자가 `--context` 를 직접 줬으면 그 내용을 **우선**하되, 네가 아는 의도를 덧붙여 보강해도 된다.
 2. 위 표대로 `start.sh` 를 실행한다(위에서 만든 `--context` 포함). 스크립트가 base 감지 → diff 수집 → `code` 프리셋 주입 → `REVIEW_REQUEST.md` 작성 → detached 세션 `xrev-<slug>` 로 리뷰어 실행 → 완료 watcher 기동까지 전부 처리한다.
 3. 스크립트 출력(세션명/slug/요청·결과 경로/peek·dock·status·stop 안내)을 사용자에게 그대로 보여준다.
-4. **리뷰가 끝나면** launcher 세션(=지금 너)에 `[xreview:live] 리뷰 완료 (<slug>) — Read <경로> 로 ...` 핑이 user input 으로 들어온다. 그때 `REVIEW_RESULT.md` 를 Read 해서 severity 순으로 요약해 보여준다.
+4. **리뷰가 끝나거나 멈추면** launcher 세션(=지금 너)에 한 줄 핑이 user input 으로 들어온다. watcher 는 아래 경우에 핑하고, 동시에 durable 상태 파일(`$WORK/WATCH_STATE`)도 갱신한다 — 핑이 유실돼도 상태는 남는다:
+   - **완료**: `[xreview:live] 리뷰 완료 (<slug>) …` → `REVIEW_RESULT.md` 를 Read 해 severity 순으로 요약.
+   - **멈춤(stuck)**: 리뷰어가 trust/권한 프롬프트에서 막힘 → `/xreview:live peek` 로 직접 응답하거나 `/xreview:stop` 후 재시작. (예전엔 조용히 timeout 까지 대기했지만 이제 즉시 알린다. 사용자가 응답해 풀리면 이어서 완료 핑이 온다.)
+   - **결과 없이 종료(gone/ended)**: `/xreview:status`·`peek` 로 원인 확인 후 필요 시 재시작.
+   - **시간 초과(timeout)**: `peek` 로 진행 상황 확인.
+   > 핑은 "빠른 신호"일 뿐 유일한 신호가 아니다. 리뷰를 기다리다 핑이 안 오거나(유실 의심) resume 됐는데 in-flight 리뷰가 있으면, 결론 내리기 전에 `/xreview:status <slug>` 로 durable 상태를 먼저 확인한다.
 
 ### peek / dock / undock (들여다보기)
 - `peek` → 팝업으로 리뷰어 세션을 본다(닫아도 백그라운드 유지).
@@ -75,11 +80,14 @@ model: sonnet
 
 - 리뷰어는 `xrev-<slug>` detached 세션에 산다. peek(팝업)·dock(split)은 `env -u TMUX tmux attach` 로 그 세션을 보는 **비파괴적 viewport** 일 뿐이라, 닫아도 리뷰어 프로세스는 죽지 않는다.
 - 읽기 전용 보장: codex 리뷰어는 `-s workspace-write` + cwd=작업디렉토리라 레포 쓰기를 샌드박스가 차단한다. claude 리뷰어는 레포를 `--add-dir` 로 읽기만 추가하고 결과는 작업디렉토리에 쓴다(읽기 전용은 프롬프트로 강제).
-- 저장 위치(Tier 1): `~/.hbrness/xreview/live/<repo>/<slug>/` (REVIEW_REQUEST.md, REVIEW_RESULT.md, meta.json), 인덱스 `~/.hbrness/xreview/live/.sessions/<slug>.json`.
+- 저장 위치(Tier 1): `~/.hbrness/xreview/live/<repo>/<slug>/` (REVIEW_REQUEST.md, REVIEW_RESULT.md, meta.json, **WATCH_STATE**), 인덱스 `~/.hbrness/xreview/live/.sessions/<slug>.json`.
+- **멈춤 감지(hardening)**: 리뷰어는 detached 라 trust/권한 프롬프트를 스스로 답할 수 없다. start 시 작업디렉토리(+claude 는 레포)를 pre-trust 하고, 그래도 프롬프트가 뜨면 watcher 가 `capture-pane` 으로 감지해 `stuck` 으로 핑한다(조용한 무한 대기 제거). diff 본문의 "trust" 오탐을 피하려 연속 감지(`XRLIVE_STUCK_AFTER`)를 요구한다.
+- **durable 상태**: watcher 가 매 종결 상태(running/done/stuck/ended-no-result/gone/timeout)를 `$WORK/WATCH_STATE` 에 기록한다. tmux 핑이 유실돼도 `/xreview:status` 로 폴링하면 결과를 알 수 있다(view.sh 의 인덱스 쓰기와 충돌하지 않도록 별도 파일).
 
 ## 환경 변수
 
 - `XRLIVE_HOME` — 기본 `~/.hbrness/xreview/live`. 테스트 격리용.
 - `XRLIVE_WATCH_TIMEOUT` — watcher 최대 대기 초. 기본 7200(2h).
 - `XRLIVE_WATCH_INTERVAL` — 폴링 간격 초. 기본 3.
+- `XRLIVE_STUCK_AFTER` — stuck 핑 전 연속 프롬프트 감지 횟수. 기본 2(오탐 방지).
 - `XRLIVE_LAUNCH_OVERRIDE` — `--launch-cmd` 의 환경변수 버전(임의 리뷰어 명령).

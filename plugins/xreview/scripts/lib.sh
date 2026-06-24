@@ -67,6 +67,46 @@ xr_tmux_send_line() {
   esac
 }
 
+# Capture the visible text of a session's (first) pane. Used to detect a reviewer
+# stuck on an interactive prompt the detached run can't answer.
+xr_capture_pane() {
+  local sess="$1" lines="${2:-40}"
+  tmux capture-pane -p -t "=$sess" 2>/dev/null | tail -n "$lines"
+}
+
+# Return 0 if the given pane text looks like a workspace-trust / permission prompt
+# the detached reviewer can't answer (so the run is hung, not progressing). The
+# signatures are trust-dialog phrasings unlikely to appear verbatim in a diff;
+# callers additionally require RESULT-absent + repeated detection to avoid false
+# positives from review prose.
+xr_detect_stuck_prompt() {
+  printf '%s' "${1:-}" | grep -qiE \
+    'trust the files in this folder|trust the contents of|do you trust this (folder|directory|workspace)|allow .* to work in this folder|trust this workspace'
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Durable watch state — a tiny, single-writer file so consumers can poll the
+# review outcome independent of whether the one-shot tmux ping landed. Written
+# only by the watcher (notify.sh) + seeded by start.sh; lives beside the work
+# files (NOT in the shared .sessions index) to avoid clobbering concurrent
+# viewport writes from view.sh.
+#   $WORK/WATCH_STATE : line 1 = state token, line 2+ = human detail
+#   states: running | done | stuck | ended-no-result | gone | timeout
+# ─────────────────────────────────────────────────────────────────────────────
+xr_set_watch_state() {
+  local work="$1" state="$2" detail="${3:-}"
+  [ -n "$work" ] || return 0
+  { printf '%s\n' "$state"; [ -n "$detail" ] && printf '%s\n' "$detail"; } \
+    > "$work/WATCH_STATE" 2>/dev/null || true
+}
+
+# Echo the current watch state token (line 1) for a work dir, or nothing.
+xr_get_watch_state() {
+  local work="$1"
+  [ -n "$work" ] && [ -f "$work/WATCH_STATE" ] || return 1
+  head -n1 "$work/WATCH_STATE" 2>/dev/null
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # claude config
 # ─────────────────────────────────────────────────────────────────────────────
