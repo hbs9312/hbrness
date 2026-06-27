@@ -25,8 +25,38 @@
 
 - **자기 pane 주입**: `$TMUX_PANE`(이 프로세스가 사는 pane)을 1순위로 사용 — `tmux display-message`(사용자가 보는 pane)는 여러 세션 환경에서 엉뚱한 세션을 clear 할 수 있어 쓰지 않음.
 - **무인이되 멈출 수 있음**: 경계마다 차단형 확인은 없지만, `/phase-run pause` 한 줄로 예약된 자동 전진을 취소할 수 있음(`resume` 으로 재개).
-- **상태**: `~/.hbrness/sessionflow/<project-key>/[worktrees/<wt>/]phases/` (`state.env` + `phases.tsv`), 로직은 전부 `scripts/phaseflow.sh`.
+- **상태**: `~/.hbrness/sessionflow/<project-key>/[worktrees/<wt>/]phases/` (`state.env` + `phases.tsv` + `hooks/` + `gates.tsv`), 로직은 전부 `scripts/phaseflow.sh`.
 - **Codex**: clear 기본 `/new` + CSI-u Enter 제출. 버전이 다르면 `init --clear-cmd` 로 override.
+
+### phase-run stage + hook (커스텀 워크플로우)
+
+페이즈 경계 리셋 엔진은 그대로 두고, **각 페이즈 안에서 밟을 "상태(stage)" 들을 정의하고 stage 마다 훅을 붙일 수 있다.** 기본값은 stage 하나(`work`)·훅 없음이라 위 흐름과 100% 동일하며, 필요할 때만 켠다.
+
+- **stage**: 한 페이즈가 *한 turn 안에서* 순서대로 밟는 단계. `/clear` 는 stage 마다가 아니라 페이즈 경계에서만.
+- **shell 훅**: 엔진이 직접 실행. 게이트면 `exit≠0` 시 `advance` 거부(테스트·린트·타입체크 통과 강제).
+- **prompt 훅**: 그 stage 에서 LLM 이 읽어 수행할 지침(예: xreview, CHANGELOG 갱신).
+- **게이트**: `--gates auto`(shell 훅 있는 stage) 또는 명시. `advance` 가 현재 페이즈의 게이트 통과를 확인, 미실행/실패면 거부(`--force` 우회).
+- **선언**: `hooks.spec`(아래 포맷)을 `HANDOFF.md` 와 같은 디렉토리에 두고 `load-hooks` 로 적용. 페이즈별 override(`[stage@N]`)도 가능. 한 줄짜리는 `set-hook`.
+
+```
+# hooks.spec — phase-run / phase-loop 공용 훅 선언
+stages: work, verify, ship          # (선택) STAGES 재정의
+gates:  verify                      # (선택) auto | 토큰 목록
+
+[work].prompt
+구현. HANDOFF 의 Next Action 부터.
+[end]
+
+[verify].shell
+npm run typecheck && npm test       # 게이트: 실패하면 advance 거부
+[end]
+
+[ship@2].shell                      # Phase 2 전용 override
+echo deploy-staging
+[end]
+```
+
+블록은 정확히 `[end]` 로 닫고 `#` 주석·빈 줄은 무시. 잘못된 stage·미닫힘 블록은 **원자적으로 거부**(기존 스토어 보존). 훅 정의는 디스크(Tier 1)에 박혀 `/clear` 후 fresh 세션도 본다 — 비밀값은 적지 말 것(Codex 도 같은 파일을 읽음). 바로 쓸 수 있는 프리셋은 `skills/phase-run/examples/*.hooks.spec` 참고.
 
 ### phase-loop 동작 개요
 
@@ -63,10 +93,11 @@
 │   └── <slug>.md                         # 항목별 상세 파일
 ├── HANDOFF.md                            # 메인 레포에서 호출한 핸드오프
 ├── PHASES.md                             # phase-run/phase-loop 계획 (있을 때)
-├── phases/                               # phase-run 상태 (state.env + phases.tsv)
+├── hooks.spec                            # phase-run/phase-loop 훅 선언 (load-hooks 대상, 있을 때)
+├── phases/                               # phase-run 상태 (state.env + phases.tsv + hooks/ + gates.tsv)
 ├── phase-loop/                           # phase-loop 상태 (phase-run 과 분리된 네임스페이스)
 └── worktrees/
-    └── <wt-name>/                        # 각 워크트리별 (HANDOFF.md, PHASES.md, phases/, phase-loop/)
+    └── <wt-name>/                        # 각 워크트리별 (HANDOFF.md, PHASES.md, hooks.spec, phases/, phase-loop/)
 ```
 
 > 이전 버전(≤0.2.x)은 프로젝트당 단일 `FOLLOWUPS.md` 를 썼습니다. 그 파일이 남아 있으면 `followup` 스킬이 다음 실행 때 위 `followups/` 구조로 자동 마이그레이션하고 레거시 파일을 제거합니다.
