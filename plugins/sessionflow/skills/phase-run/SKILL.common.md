@@ -144,10 +144,78 @@ tmux 밖이라 자동 전진이 안 되는 경우, advance 출력에 적힌 수�
 
 ---
 
+## Stage + Hook (커스텀 워크플로우)
+
+페이즈 경계의 컨텍스트 리셋은 그대로 두고, **각 페이즈 안에서 밟을 "상태(stage)" 들을 정의하고 stage 마다 훅을 붙일 수 있다.** 기본값은 stage 하나(`work`)·훅 없음이라 위 흐름과 동일하고, 필요할 때만 켠다.
+
+- **stage** = 한 페이즈가 *한 turn 안에서* 순서대로 밟는 단계. `/clear` 는 stage 마다가 아니라 페이즈 경계(advance)에서만 일어난다.
+- **훅** 2종:
+  - `shell` 훅 — 엔진이 직접 실행하는 명령. **게이트**면 `exit≠0` 일 때 `advance` 를 거부한다(예: 테스트·린트·타입체크를 통과해야만 다음 페이즈로).
+  - `prompt` 훅 — 그 stage 에서 네(LLM)가 읽어 수행할 지침 텍스트(예: "xreview 돌려라", "CHANGELOG 갱신").
+
+### 켜는 법
+
+init 때 stage 목록(과 게이트)을 준다:
+
+```bash
+bash "${SKILL_DIR}/scripts/phaseflow.sh" init \
+  --pane "$TMUX_PANE" --tool {HARNESS_NAME} \
+  --stages 'work,verify,ship' --gates auto <<'EOF'
+<Phase 1 제목>
+<Phase 2 제목>
+EOF
+```
+
+- `--gates auto`(기본): shell 훅이 있는 stage 가 자동으로 게이트. `--gates 'verify,ship'` 처럼 명시도 가능.
+
+### 훅 선언 — `hooks.spec` (권장)
+
+`HANDOFF.md` 와 같은 디렉토리(`~/.hbrness/sessionflow/<key>/[worktrees/<wt>/]hooks.spec`)에 한 파일로 선언하고 로드한다:
+
+```
+# hooks.spec
+stages: work, verify, ship
+gates:  verify
+
+[work].prompt
+구현. HANDOFF 의 Next Action 부터 시작.
+[end]
+
+[verify].shell
+npm run typecheck && npm test
+[end]
+
+[ship@2].shell        # Phase 2 전용 override (글로벌보다 우선)
+echo deploy-staging
+[end]
+```
+
+```bash
+bash "${SKILL_DIR}/scripts/phaseflow.sh" load-hooks   # 기본 hooks.spec 파싱·적용
+```
+
+블록은 정확히 `[end]` 로 닫고, `#` 주석·빈 줄은 무시된다. 잘못된 stage 토큰·미닫힘 블록은 **원자적으로 거부**(기존 스토어 보존)된다. 한 줄짜리는 `set-hook <stage> --shell|--prompt [--phase N]` 으로 stdin 등록할 수도 있다.
+
+### 페이즈 작업 중 흐름
+
+각 페이즈에서 stage 를 차례로 밟으며 그 stage 의 훅을 실행한다:
+
+```bash
+bash "${SKILL_DIR}/scripts/phaseflow.sh" run-hooks verify   # prompt 출력 + shell 실행(게이트 기록)
+```
+
+- `run-hooks` 가 prompt 훅 본문을 출력하면 그 지침을 수행하고, shell 훅이 게이트인데 실패하면 고친 뒤 재실행한다.
+- 모든 작업·게이트가 끝나면 평소처럼 `advance`. **게이트가 미실행/실패면 advance 가 거부된다**(불변 원칙과 정합 — 통과 못 한 페이즈는 경계를 못 넘는다). 정말 우회해야 하면 `advance --force`.
+- 현재 stage/게이트 상태는 `status` 또는 `stage`(KEY=VALUE) 로 확인.
+
+### clear-resume 안전
+
+훅 정의(`hooks.spec`/`set-hook`)는 **디스크(Tier 1 공유 경로)에** 박히므로 `/clear` 후 fresh 세션도 그대로 본다. 대화에만 있는 "이것도 해줘" 는 다음 경계에서 소실되니, 매 페이즈 반복돼야 할 단계는 반드시 `hooks.spec` 에 적는다. 훅 명령에 **비밀값을 적지 말 것**(Codex 도 같은 파일을 읽는다).
+
 ## 디버그 / 경로
 
 ```bash
-bash "${SKILL_DIR}/scripts/phaseflow.sh" paths   # STATE_DIR, HANDOFF_FILE, pane 도출 확인
+bash "${SKILL_DIR}/scripts/phaseflow.sh" paths   # STATE_DIR, HANDOFF_FILE, HOOKS_DIR, pane 도출 확인
 ```
 
 `HANDOFF_FILE` 의 부모 디렉토리에 `PHASES.md` 를 두면 사람이 전체 계획을 보기 좋다.
