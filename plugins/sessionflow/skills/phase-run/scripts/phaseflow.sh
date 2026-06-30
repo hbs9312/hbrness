@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# phaseflow.sh — phase-run 엔진
+# phaseflow.sh — phase-run 엔진 (stage + hook 일반화)
 #
 # 페이즈로 나뉜 작업을, 각 페이즈 경계에서 컨텍스트를 비우고(/clear) 새 세션이
 # HANDOFF.md 를 읽고 다음 페이즈를 이어받도록 자가 주입한다. 모든 tmux/상태 로직은
@@ -14,6 +14,18 @@
 #     자고, pause/abort 상태를 재확인한 뒤 clear + continue 키를 보낸다.
 #   - 자동 커밋은 절대 하지 않는다. /clear 는 파일을 건드리지 않으므로 워킹트리는
 #     그대로 다음 세션이 이어받는다.
+#
+# 상태 머신 (일반화):
+#   - 런(run)은 순서 페이즈 목록을 가진다(phases.tsv: n/status/title).
+#   - 각 페이즈는 순서 stage 목록(STAGES, 기본 'work')을 한 turn 안에서 차례로 밟는다.
+#     stage = "그 페이즈 안에서 실행할 상태"이며, 각 stage 에 훅을 붙일 수 있다.
+#   - 훅은 두 종류:
+#       * shell 훅  ($STATE_DIR/hooks/<stage>.shell)  — 엔진이 직접 실행(결정적).
+#                    GATES 에 든(또는 GATES=auto 면 shell 훅이 있는 모든) stage 는
+#                    "게이트": exit≠0 이면 advance(페이즈 경계 통과)를 거부한다.
+#       * prompt 훅 ($STATE_DIR/hooks/<stage>.prompt) — LLM 이 읽어 수행할 지침 텍스트.
+#   - /clear 는 stage 마다가 아니라 "페이즈 경계(advance)"에서만 주입된다.
+#   - 기본값(STAGES=work, 훅 없음)에서는 기존 phase-run 과 100% 동일하게 동작한다.
 #
 # 환경변수:
 #   PHASEFLOW_DRY_RUN=1   tmux send-keys 를 실제로 쏘지 않고 echo 만 (개발/검증용)
@@ -70,6 +82,8 @@ STATE_DIR="$(resolve_state_dir)"
 STATE_ENV="$STATE_DIR/state.env"
 PHASES_TSV="$STATE_DIR/phases.tsv"
 PAUSE_SENTINEL="$STATE_DIR/PAUSED"
+HOOKS_DIR="$STATE_DIR/hooks"
+GATES_TSV="$STATE_DIR/gates.tsv"
 # HANDOFF.md 는 phases/ 의 부모(= sessionflow:handoff 와 동일 경로)에 둔다.
 HANDOFF_FILE="$(dirname "$STATE_DIR")/HANDOFF.md"
 
@@ -80,6 +94,10 @@ load_state() {
   [ -f "$STATE_ENV" ] || die "활성 phase-run 이 없습니다 ($STATE_ENV). 먼저 'init' 하세요."
   # shellcheck disable=SC1090
   . "$STATE_ENV"
+  # 구버전 state.env 호환: stage/hook 필드가 없으면 기본값으로 채운다(= 기존 동작).
+  STAGES="${STAGES:-work}"
+  GATES="${GATES:-auto}"
+  STAGE_IDX="${STAGE_IDX:-1}"
 }
 
 # base64 helpers (clear_cmd / continue_prompt 에 공백·슬래시가 있어도 안전하게 저장)
@@ -87,7 +105,7 @@ b64enc() { printf '%s' "$1" | base64 | tr -d '\n'; }
 b64dec() { printf '%s' "$1" | base64 --decode; }
 
 write_state() {
-  # 전역 변수 TOOL PANE CURSOR TOTAL STATUS COMMIT_EACH DELAY CLEAR_B64 CONTINUE_B64 CREATED 를 직렬화
+  # 전역 변수 직렬화
   mkdir -p "$STATE_DIR"
   {
     echo "TOOL=$(printf '%q' "$TOOL")"
@@ -100,6 +118,9 @@ write_state() {
     echo "CLEAR_B64=$(printf '%q' "$CLEAR_B64")"
     echo "CONTINUE_B64=$(printf '%q' "$CONTINUE_B64")"
     echo "CREATED=$(printf '%q' "$CREATED")"
+    echo "STAGES=$(printf '%q' "$STAGES")"
+    echo "GATES=$(printf '%q' "$GATES")"
+    echo "STAGE_IDX=$STAGE_IDX"
   } > "$STATE_ENV"
 }
 
@@ -111,6 +132,65 @@ set_phase_status() { # $1=n  $2=status
   local tmp; tmp="$(mktemp)"
   awk -F'\t' -v n="$1" -v st="$2" 'BEGIN{OFS="\t"} {if($1==n)$2=st; print}' "$PHASES_TSV" > "$tmp"
   mv "$tmp" "$PHASES_TSV"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# stage / hook 헬퍼
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGES 는 쉼표 구분 토큰 목록. 토큰명은 [A-Za-z0-9_-] 만 허용(쉼표/공백 금지).
+stage_list() { printf '%s' "$STAGES" | tr ',' ' '; }
+
+stage_count() {
+  local s n=0
+  for s in $(stage_list); do n=$((n+1)); done
+  echo "$n"
+}
+
+stage_at() { # $1=idx(1-based)
+  printf '%s' "$STAGES" | awk -F, -v i="$1" '{print $i}'
+}
+
+stage_valid() { # $1=stage  → 0 if in STAGES
+  local s
+  for s in $(stage_list); do [ "$s" = "$1" ] && return 0; done
+  return 1
+}
+
+shell_hook_file()  { echo "$HOOKS_DIR/$1.shell"; }
+prompt_hook_file() { echo "$HOOKS_DIR/$1.prompt"; }
+
+# stage 가 게이트인가? GATES=auto → shell 훅이 있으면 게이트. 그 외 → GATES 목록에 들면 게이트.
+is_gate() { # $1=stage
+  local s
+  if [ "$GATES" = "auto" ]; then
+    [ -f "$(shell_hook_file "$1")" ]
+    return $?
+  fi
+  for s in $(printf '%s' "$GATES" | tr ',' ' '); do
+    [ "$s" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# gates.tsv: phase<TAB>stage<TAB>exit  (upsert)
+record_gate() { # $1=phase $2=stage $3=exit
+  mkdir -p "$STATE_DIR"
+  local tmp; tmp="$(mktemp)"
+  [ -f "$GATES_TSV" ] && awk -F'\t' -v p="$1" -v s="$2" '!($1==p && $2==s)' "$GATES_TSV" > "$tmp" || true
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$tmp"
+  mv "$tmp" "$GATES_TSV"
+}
+
+gate_result() { # $1=phase $2=stage  → echo exit code, or empty if 미실행
+  [ -f "$GATES_TSV" ] || return 0
+  awk -F'\t' -v p="$1" -v s="$2" '$1==p && $2==s {print $3}' "$GATES_TSV" 2>/dev/null
+}
+
+clear_gates_for_phase() { # $1=phase
+  [ -f "$GATES_TSV" ] || return 0
+  local tmp; tmp="$(mktemp)"
+  awk -F'\t' -v p="$1" '$1!=p' "$GATES_TSV" > "$tmp" || true
+  mv "$tmp" "$GATES_TSV"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,11 +248,27 @@ default_clear_cmd() { # $1=tool
   esac
 }
 
+# 쉼표 목록 정규화: 공백 제거, 빈 토큰 제거, 토큰 문법 검증.
+normalize_stage_list() { # $1=raw → echo normalized, die on bad token
+  local raw="$1" out="" tok
+  raw="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  local IFS=','
+  for tok in $raw; do
+    [ -z "$tok" ] && continue
+    case "$tok" in
+      *[!A-Za-z0-9_-]*) die "stage 토큰에 허용되지 않는 문자: '$tok' ([A-Za-z0-9_-] 만 가능)" ;;
+    esac
+    out="${out:+$out,}$tok"
+  done
+  echo "$out"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # subcommands
 # ─────────────────────────────────────────────────────────────────────────────
 cmd_init() {
   local pane="" tool="claude" commit_each=0 delay=4 clear_cmd="" continue_prompt="/phase-run continue"
+  local stages="work" gates="auto"
   while [ $# -gt 0 ]; do
     case "$1" in
       --pane) pane="$2"; shift 2 ;;
@@ -181,15 +277,24 @@ cmd_init() {
       --delay) delay="$2"; shift 2 ;;
       --clear-cmd) clear_cmd="$2"; shift 2 ;;
       --continue-prompt) continue_prompt="$2"; shift 2 ;;
+      --stages) stages="$2"; shift 2 ;;
+      --gates) gates="$2"; shift 2 ;;
       *) die "init: 알 수 없는 인자 $1" ;;
     esac
   done
   [ -n "$pane" ] || pane="$(current_pane)"
   [ -n "$clear_cmd" ] || clear_cmd="$(default_clear_cmd "$tool")"
 
+  stages="$(normalize_stage_list "$stages")"
+  [ -n "$stages" ] || stages="work"
+  if [ "$gates" != "auto" ]; then
+    gates="$(normalize_stage_list "$gates")"
+  fi
+
   # 페이즈 제목을 stdin 에서 (한 줄당 하나)
   mkdir -p "$STATE_DIR"
   : > "$PHASES_TSV"
+  : > "$GATES_TSV"
   local n=0 line
   while IFS= read -r line || [ -n "$line" ]; do
     line="$(printf '%s' "$line" | tr -d '\r' | sed 's/\t/ /g')"
@@ -205,11 +310,13 @@ cmd_init() {
   COMMIT_EACH="$commit_each"; DELAY="$delay"
   CLEAR_B64="$(b64enc "$clear_cmd")"; CONTINUE_B64="$(b64enc "$continue_prompt")"
   CREATED="$(date '+%Y-%m-%d %H:%M:%S')"
+  STAGES="$stages"; GATES="$gates"; STAGE_IDX=1
   write_state
   rm -f "$PAUSE_SENTINEL"
 
   echo "phase-run 시작: 총 ${TOTAL}개 페이즈, 현재 → Phase 1"
   echo "  tool=$TOOL  pane=${PANE:-<none>}  delay=${DELAY}s  commit-each=$COMMIT_EACH  clear='${clear_cmd}'"
+  echo "  stages=$STAGES  gates=$GATES"
   echo "  state: $STATE_DIR"
   if ! in_tmux; then
     echo "  ⚠ tmux 밖이라 자동 전진 불가 — 경계마다 수동으로 '$clear_cmd' 후 '$continue_prompt' 실행 필요."
@@ -217,11 +324,35 @@ cmd_init() {
   cmd_status
 }
 
+# set-hook <stage> --shell|--prompt   (본문은 stdin)
+cmd_set_hook() {
+  local stage="" kind=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --shell)  kind="shell"; shift ;;
+      --prompt) kind="prompt"; shift ;;
+      -*) die "set-hook: 알 수 없는 인자 $1" ;;
+      *) [ -z "$stage" ] && stage="$1" || die "set-hook: 인자 과다 ($1)"; shift ;;
+    esac
+  done
+  [ -n "$stage" ] || die "set-hook: <stage> 필요"
+  [ -n "$kind" ]  || die "set-hook: --shell 또는 --prompt 필요"
+  load_state
+  stage_valid "$stage" || die "set-hook: '$stage' 는 STAGES($STAGES) 에 없는 stage 입니다."
+  mkdir -p "$HOOKS_DIR"
+  local f
+  [ "$kind" = "shell" ] && f="$(shell_hook_file "$stage")" || f="$(prompt_hook_file "$stage")"
+  cat > "$f"
+  echo "✓ hook 등록: $kind[$stage] → $f"
+  is_gate "$stage" && echo "  ('$stage' 는 게이트 — 이 stage 의 shell 훅이 통과해야 advance 가능)"
+}
+
 cmd_status() {
   [ -f "$STATE_ENV" ] || { echo "활성 phase-run 없음."; return 0; }
   load_state
   echo "── phase-run 상태 ──────────────────────────────"
   echo "상태: $STATUS   진행: $CURSOR/$TOTAL   tool=$TOOL  pane=${PANE:-<none>}"
+  echo "stages: $STAGES   (현재 stage → $(stage_at "$STAGE_IDX"))"
   [ -f "$PAUSE_SENTINEL" ] && echo "⏸  PAUSED (resume 으로 재개)"
   local n stt ttl
   while IFS=$'\t' read -r n stt ttl; do
@@ -233,18 +364,132 @@ cmd_status() {
     esac
     printf '  %sPhase %s  %s\n' "$mark" "$n" "$ttl"
   done < "$PHASES_TSV"
+  # 현재 페이즈의 stage/게이트 상태
+  local s g r
+  echo "  ── 현재 페이즈 stage ──"
+  for s in $(stage_list); do
+    g=""; is_gate "$s" && g=" [gate]"
+    r="$(gate_result "$CURSOR" "$s")"
+    local rmark="·"
+    [ -n "$r" ] && { [ "$r" = "0" ] && rmark="✓" || rmark="✗($r)"; }
+    printf '    %s %s%s\n' "$rmark" "$s" "$g"
+  done
   echo "────────────────────────────────────────────────"
 }
 
 cmd_current() {
   load_state
-  # LLM 이 "지금 무슨 페이즈를 해야 하는지" 파싱하기 쉬운 형태
+  # LLM 이 "지금 무슨 페이즈/stage 를 해야 하는지" 파싱하기 쉬운 형태
   echo "STATUS=$STATUS"
   echo "CURSOR=$CURSOR"
   echo "TOTAL=$TOTAL"
   echo "COMMIT_EACH=$COMMIT_EACH"
   echo "TITLE=$(phase_title "$CURSOR")"
   echo "HANDOFF=$HANDOFF_FILE"
+  echo "STAGES=$STAGES"
+  echo "STAGE_IDX=$STAGE_IDX"
+  echo "STAGE=$(stage_at "$STAGE_IDX")"
+}
+
+# stage — 현재 stage 의 훅 정보를 LLM 파싱용으로 출력
+cmd_stage() {
+  load_state
+  local s; s="$(stage_at "$STAGE_IDX")"
+  echo "STAGE=$s"
+  echo "STAGE_IDX=$STAGE_IDX"
+  echo "STAGE_COUNT=$(stage_count)"
+  is_gate "$s" && echo "GATE=1" || echo "GATE=0"
+  [ -f "$(shell_hook_file "$s")" ]  && echo "HAS_SHELL=1"  || echo "HAS_SHELL=0"
+  [ -f "$(prompt_hook_file "$s")" ] && echo "HAS_PROMPT=1" || echo "HAS_PROMPT=0"
+}
+
+# run-hooks <stage> [--no-gate] — 그 stage 의 prompt 훅을 출력하고 shell 훅을 실행.
+# shell 훅의 exit code 를 그대로 반환하고 gates.tsv 에 기록한다.
+cmd_run_hooks() {
+  local stage="" no_gate=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-gate) no_gate=1; shift ;;
+      -*) die "run-hooks: 알 수 없는 인자 $1" ;;
+      *) [ -z "$stage" ] && stage="$1" || die "run-hooks: 인자 과다 ($1)"; shift ;;
+    esac
+  done
+  [ -n "$stage" ] || die "run-hooks: <stage> 필요"
+  load_state
+  stage_valid "$stage" || die "run-hooks: '$stage' 는 STAGES($STAGES) 에 없는 stage 입니다."
+
+  local pf sf
+  pf="$(prompt_hook_file "$stage")"
+  if [ -f "$pf" ]; then
+    echo "──PROMPT[$stage]────────────────────────────────"
+    cat "$pf"
+    echo ""
+    echo "────────────────────────────────────────────────"
+  fi
+
+  sf="$(shell_hook_file "$stage")"
+  if [ ! -f "$sf" ]; then
+    # shell 훅 없음 → 게이트 통과로 간주(기록).
+    record_gate "$CURSOR" "$stage" 0
+    [ -f "$pf" ] || echo "ℹ stage '$stage' 에 훅 없음 (no-op)."
+    return 0
+  fi
+
+  echo "▶ run-hooks[$stage] (Phase $CURSOR) — shell 훅 실행:"
+  echo "  \$ $(head -1 "$sf")$([ "$(wc -l <"$sf")" -gt 1 ] && echo ' …')"
+  local code=0
+  set +e
+  ( cd "$(pwd)" && bash "$sf" )
+  code=$?
+  set -e
+  record_gate "$CURSOR" "$stage" "$code"
+
+  if [ "$code" -eq 0 ]; then
+    echo "✓ hook 통과[$stage]"
+  else
+    if [ "$no_gate" = "1" ] || ! is_gate "$stage"; then
+      echo "⚠ hook 실패[$stage] (code=$code) — 게이트 아님/무시. advance 는 막지 않음."
+    else
+      echo "✗ 게이트 실패[$stage] (code=$code) — 수정 후 'run-hooks $stage' 재실행해야 advance 가능."
+    fi
+  fi
+  return "$code"
+}
+
+# next-stage — 현재 페이즈 안에서 stage 커서를 한 칸 전진.
+# 더 진행할 stage 가 있으면 다음 stage 를, 다 소진했으면 PHASE_COMPLETE 를 출력.
+cmd_next_stage() {
+  load_state
+  local cnt; cnt="$(stage_count)"
+  if [ "$STAGE_IDX" -lt "$cnt" ]; then
+    STAGE_IDX=$((STAGE_IDX+1))
+    write_state
+    echo "STAGE_IDX=$STAGE_IDX"
+    echo "STAGE=$(stage_at "$STAGE_IDX")"
+  else
+    echo "PHASE_COMPLETE=1"
+    echo "ℹ 이 페이즈의 모든 stage 완료 — 'advance' 로 페이즈 경계를 넘으세요."
+  fi
+}
+
+# advance 의 게이트 검사 — 현재 페이즈의 모든 게이트 stage 가 exit 0 인지 확인.
+check_gates() { # → 0 ok, 아니면 die
+  local s r missing="" failed=""
+  for s in $(stage_list); do
+    is_gate "$s" || continue
+    r="$(gate_result "$CURSOR" "$s")"
+    if [ -z "$r" ]; then
+      missing="${missing:+$missing }$s"
+    elif [ "$r" != "0" ]; then
+      failed="${failed:+$failed }$s($r)"
+    fi
+  done
+  if [ -n "$failed" ]; then
+    die "advance 거부: 게이트 실패 → $failed. 수정 후 재실행하거나 'advance --force'."
+  fi
+  if [ -n "$missing" ]; then
+    die "advance 거부: 미실행 게이트 → $missing. 'run-hooks <stage>' 먼저 실행하거나 'advance --force'."
+  fi
 }
 
 # detached injector 를 예약
@@ -264,23 +509,31 @@ schedule_inject() {
 }
 
 cmd_advance() {
-  local pane="" tool=""
+  local pane="" tool="" force=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --pane) pane="$2"; shift 2 ;;
       --tool) tool="$2"; shift 2 ;;
+      --force) force=1; shift ;;
       *) die "advance: 알 수 없는 인자 $1" ;;
     esac
   done
   load_state
   [ "$STATUS" = "active" ] || die "advance 불가: 상태가 '$STATUS' 입니다."
 
+  # 게이트 검사 (--force 면 건너뜀)
+  if [ "$force" != "1" ]; then
+    check_gates
+  fi
+
   # pane/tool 을 호출 시점 값으로 갱신(세션마다 재캡처가 가장 안전)
   [ -n "$pane" ] && PANE="$pane"
   [ -n "$tool" ] && TOOL="$tool"
 
   set_phase_status "$CURSOR" "done"
+  clear_gates_for_phase "$CURSOR"
   CURSOR=$((CURSOR+1))
+  STAGE_IDX=1
 
   if [ "$CURSOR" -gt "$TOTAL" ]; then
     STATUS="done"
@@ -349,6 +602,8 @@ cmd_paths() {
   echo "STATE_DIR=$STATE_DIR"
   echo "STATE_ENV=$STATE_ENV"
   echo "PHASES_TSV=$PHASES_TSV"
+  echo "GATES_TSV=$GATES_TSV"
+  echo "HOOKS_DIR=$HOOKS_DIR"
   echo "PAUSE_SENTINEL=$PAUSE_SENTINEL"
   echo "HANDOFF_FILE=$HANDOFF_FILE"
   echo "TMUX_PANE=${TMUX_PANE:-}"
@@ -392,23 +647,32 @@ cmd___inject() {
 main() {
   local sub="${1:-}"; shift || true
   case "$sub" in
-    init)      cmd_init "$@" ;;
-    status)    cmd_status ;;
-    current)   cmd_current ;;
-    advance)   cmd_advance "$@" ;;
-    pause)     cmd_pause ;;
-    resume)    cmd_resume ;;
+    init)       cmd_init "$@" ;;
+    set-hook)   cmd_set_hook "$@" ;;
+    status)     cmd_status ;;
+    current)    cmd_current ;;
+    stage)      cmd_stage ;;
+    run-hooks)  cmd_run_hooks "$@" ;;
+    next-stage) cmd_next_stage ;;
+    advance)    cmd_advance "$@" ;;
+    pause)      cmd_pause ;;
+    resume)     cmd_resume ;;
     stop|abort) cmd_stop ;;
-    reset)     cmd_reset ;;
-    paths)     cmd_paths ;;
-    __inject)  cmd___inject "$@" ;;
+    reset)      cmd_reset ;;
+    paths)      cmd_paths ;;
+    __inject)   cmd___inject "$@" ;;
     ""|-h|--help)
       cat <<'USAGE'
 phaseflow.sh <subcommand>
-  init --pane <id> --tool <claude|codex> [--commit-each] [--delay N] [--clear-cmd C] [--continue-prompt P]   (페이즈 제목 stdin, 한 줄당 하나)
-  status                현재 페이즈 진행/상태 표시
-  current               LLM 파싱용 현재 커서/제목 (KEY=VALUE)
-  advance [--pane id] [--tool t]   현재 페이즈 done, 다음으로 전진 + 자동 clear/continue 예약
+  init --pane <id> --tool <claude|codex> [--commit-each] [--delay N] [--clear-cmd C]
+       [--continue-prompt P] [--stages a,b,c] [--gates a,b|auto]   (페이즈 제목 stdin, 한 줄당 하나)
+  set-hook <stage> --shell|--prompt        그 stage 의 훅 본문을 stdin 으로 등록
+  status                현재 페이즈/ stage / 게이트 상태 표시
+  current               LLM 파싱용 현재 커서/제목/ stage (KEY=VALUE)
+  stage                 현재 stage 의 훅/게이트 정보 (KEY=VALUE)
+  run-hooks <stage> [--no-gate]   그 stage 의 prompt 훅 출력 + shell 훅 실행(게이트 기록)
+  next-stage            현재 페이즈 안에서 stage 커서 전진(소진 시 PHASE_COMPLETE)
+  advance [--pane id] [--tool t] [--force]   현재 페이즈 done, 게이트 확인 후 전진 + clear/continue 예약
   pause | resume | stop | reset    제어
   paths                 디버그: 경로/ pane 도출 확인
 USAGE
