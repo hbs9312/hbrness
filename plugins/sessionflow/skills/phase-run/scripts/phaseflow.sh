@@ -156,14 +156,21 @@ stage_valid() { # $1=stage  → 0 if in STAGES
   return 1
 }
 
-shell_hook_file()  { echo "$HOOKS_DIR/$1.shell"; }
-prompt_hook_file() { echo "$HOOKS_DIR/$1.prompt"; }
+# 훅 파일 경로 — 글로벌(쓰기 기본) / 페이즈 스코프
+shell_hook_file()  { echo "$HOOKS_DIR/${2:+$2.}$1.shell"; }   # $1=stage [$2=phase]
+prompt_hook_file() { echo "$HOOKS_DIR/${2:+$2.}$1.prompt"; }  # $1=stage [$2=phase]
 
-# stage 가 게이트인가? GATES=auto → shell 훅이 있으면 게이트. 그 외 → GATES 목록에 들면 게이트.
+# 읽기용 해석 — 현재 페이즈($CURSOR) override 가 있으면 그것을, 없으면 글로벌을. 둘 다 없으면 빈 문자열.
+resolve_hook() { # $1=stage $2=kind(shell|prompt) → 존재하는 경로 or ""
+  local p="$HOOKS_DIR/${CURSOR}.$1.$2" g="$HOOKS_DIR/$1.$2"
+  if [ -f "$p" ]; then echo "$p"; elif [ -f "$g" ]; then echo "$g"; fi
+}
+
+# stage 가 (현재 페이즈 기준) 게이트인가? GATES=auto → shell 훅이 해석되면 게이트. 그 외 → GATES 목록.
 is_gate() { # $1=stage
   local s
   if [ "$GATES" = "auto" ]; then
-    [ -f "$(shell_hook_file "$1")" ]
+    [ -n "$(resolve_hook "$1" shell)" ]
     return $?
   fi
   for s in $(printf '%s' "$GATES" | tr ',' ' '); do
@@ -324,27 +331,131 @@ cmd_init() {
   cmd_status
 }
 
-# set-hook <stage> --shell|--prompt   (본문은 stdin)
+# set-hook <stage> --shell|--prompt [--phase N]   (본문은 stdin)
 cmd_set_hook() {
-  local stage="" kind=""
+  local stage="" kind="" phase=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --shell)  kind="shell"; shift ;;
       --prompt) kind="prompt"; shift ;;
+      --phase)  phase="$2"; shift 2 ;;
       -*) die "set-hook: 알 수 없는 인자 $1" ;;
       *) [ -z "$stage" ] && stage="$1" || die "set-hook: 인자 과다 ($1)"; shift ;;
     esac
   done
   [ -n "$stage" ] || die "set-hook: <stage> 필요"
   [ -n "$kind" ]  || die "set-hook: --shell 또는 --prompt 필요"
+  [ -z "$phase" ] || case "$phase" in *[!0-9]*|'') die "set-hook: --phase 는 정수" ;; esac
   load_state
   stage_valid "$stage" || die "set-hook: '$stage' 는 STAGES($STAGES) 에 없는 stage 입니다."
   mkdir -p "$HOOKS_DIR"
   local f
-  [ "$kind" = "shell" ] && f="$(shell_hook_file "$stage")" || f="$(prompt_hook_file "$stage")"
+  [ "$kind" = "shell" ] && f="$(shell_hook_file "$stage" "$phase")" || f="$(prompt_hook_file "$stage" "$phase")"
   cat > "$f"
-  echo "✓ hook 등록: $kind[$stage] → $f"
-  is_gate "$stage" && echo "  ('$stage' 는 게이트 — 이 stage 의 shell 훅이 통과해야 advance 가능)"
+  echo "✓ hook 등록: $kind[$stage]${phase:+ @phase$phase} → $f"
+}
+
+# 선언적 훅 스펙(hooks.spec) 경로 — PHASES.md / HANDOFF.md 와 같은 디렉토리.
+default_spec_file() { echo "$(dirname "$STATE_DIR")/hooks.spec"; }
+
+# load-hooks [<file>] — 선언 스펙을 파싱해 STAGES/GATES 갱신 + 훅 스토어를 재구성한다.
+#
+# 스펙 문법(라인 단위):
+#   # 주석
+#   stages: work, verify, ship          (선택 — STAGES 재정의)
+#   gates:  verify, ship | auto          (선택 — GATES 재정의)
+#   [verify].shell                       글로벌 shell 훅 블록 시작
+#   npm run typecheck
+#   [end]                                블록 끝(정확히 '[end]')
+#   [verify@2].prompt                    Phase 2 전용 override 블록
+#   …
+#   [end]
+#
+# 원자성: 임시 staging 에 쓰고 전부 검증한 뒤에만 기존 hooks/ 를 교체한다.
+cmd_load_hooks() {
+  local file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -*) die "load-hooks: 알 수 없는 인자 $1" ;;
+      *) [ -z "$file" ] && file="$1" || die "load-hooks: 인자 과다 ($1)"; shift ;;
+    esac
+  done
+  load_state
+  [ -n "$file" ] || file="$(default_spec_file)"
+  [ -f "$file" ] || die "load-hooks: 스펙 파일 없음: $file"
+
+  local stage_dir; stage_dir="$(mktemp -d)"
+  trap "rm -rf '$stage_dir'" EXIT   # 경로를 즉시 전개(local 변수가 EXIT 시점엔 out-of-scope)
+  mkdir -p "$stage_dir/hooks"
+
+  local eff_stages="$STAGES" eff_gates="$GATES"
+  local seen_stages=""        # 검증용: 스펙에 등장한 stage 토큰들
+  local in_block=0 body_file="" lineno=0 line
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno+1))
+    line="${line%$'\r'}"
+    if [ "$in_block" = "1" ]; then
+      if [ "$line" = "[end]" ]; then in_block=0; body_file=""; continue; fi
+      printf '%s\n' "$line" >> "$body_file"
+      continue
+    fi
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    # 헤더: stages: / gates:
+    if [[ "$line" =~ ^stages:[[:space:]]*(.+)$ ]]; then
+      eff_stages="$(normalize_stage_list "${BASH_REMATCH[1]}")"
+      continue
+    fi
+    if [[ "$line" =~ ^gates:[[:space:]]*(.+)$ ]]; then
+      local gv; gv="$(printf '%s' "${BASH_REMATCH[1]}" | tr -d '[:space:]')"
+      [ "$gv" = "auto" ] && eff_gates="auto" || eff_gates="$(normalize_stage_list "$gv")"
+      continue
+    fi
+    # 블록 헤더: [stage].kind  또는 [stage@N].kind
+    if [[ "$line" =~ ^\[([A-Za-z0-9_-]+)(@([0-9]+))?\]\.(shell|prompt)$ ]]; then
+      local st="${BASH_REMATCH[1]}" ph="${BASH_REMATCH[3]}" kd="${BASH_REMATCH[4]}"
+      seen_stages="${seen_stages} ${st}"
+      if [ -n "$ph" ]; then body_file="$stage_dir/hooks/${ph}.${st}.${kd}"; else body_file="$stage_dir/hooks/${st}.${kd}"; fi
+      : > "$body_file"
+      in_block=1
+      continue
+    fi
+    die "load-hooks: 파싱 오류 (line $lineno): '$line'"
+  done < "$file"
+  [ "$in_block" = "0" ] || die "load-hooks: 닫히지 않은 블록 ('[end]' 누락)."
+
+  [ -n "$eff_stages" ] || eff_stages="work"
+
+  # 검증: 스펙에 등장한 모든 stage 가 최종 STAGES 에 있어야 한다.
+  local st
+  for st in $seen_stages; do
+    printf '%s' "$eff_stages" | tr ',' '\n' | grep -qx "$st" \
+      || die "load-hooks: '$st' 는 stages($eff_stages) 에 없는 stage 입니다."
+  done
+  # gates 가 auto 가 아니면 그 토큰들도 STAGES 에 있어야 한다.
+  if [ "$eff_gates" != "auto" ]; then
+    for st in $(printf '%s' "$eff_gates" | tr ',' ' '); do
+      printf '%s' "$eff_stages" | tr ',' '\n' | grep -qx "$st" \
+        || die "load-hooks: gates 의 '$st' 가 stages($eff_stages) 에 없습니다."
+    done
+  fi
+
+  # 검증 통과 → 원자적 교체.
+  rm -rf "$HOOKS_DIR"
+  mkdir -p "$HOOKS_DIR"
+  if [ -n "$(ls -A "$stage_dir/hooks" 2>/dev/null)" ]; then
+    mv "$stage_dir/hooks"/* "$HOOKS_DIR"/
+  fi
+  STAGES="$eff_stages"; GATES="$eff_gates"; STAGE_IDX=1
+  write_state
+
+  echo "✓ load-hooks: $file"
+  echo "  stages=$STAGES  gates=$GATES  (STAGE_IDX 1 로 리셋)"
+  local f cnt=0
+  for f in "$HOOKS_DIR"/*; do [ -e "$f" ] && { echo "  · $(basename "$f")"; cnt=$((cnt+1)); }; done
+  echo "  훅 $cnt 개 등록됨."
 }
 
 cmd_status() {
@@ -399,8 +510,8 @@ cmd_stage() {
   echo "STAGE_IDX=$STAGE_IDX"
   echo "STAGE_COUNT=$(stage_count)"
   is_gate "$s" && echo "GATE=1" || echo "GATE=0"
-  [ -f "$(shell_hook_file "$s")" ]  && echo "HAS_SHELL=1"  || echo "HAS_SHELL=0"
-  [ -f "$(prompt_hook_file "$s")" ] && echo "HAS_PROMPT=1" || echo "HAS_PROMPT=0"
+  [ -n "$(resolve_hook "$s" shell)" ]  && echo "HAS_SHELL=1"  || echo "HAS_SHELL=0"
+  [ -n "$(resolve_hook "$s" prompt)" ] && echo "HAS_PROMPT=1" || echo "HAS_PROMPT=0"
 }
 
 # run-hooks <stage> [--no-gate] — 그 stage 의 prompt 훅을 출력하고 shell 훅을 실행.
@@ -419,16 +530,16 @@ cmd_run_hooks() {
   stage_valid "$stage" || die "run-hooks: '$stage' 는 STAGES($STAGES) 에 없는 stage 입니다."
 
   local pf sf
-  pf="$(prompt_hook_file "$stage")"
-  if [ -f "$pf" ]; then
+  pf="$(resolve_hook "$stage" prompt)"
+  if [ -n "$pf" ]; then
     echo "──PROMPT[$stage]────────────────────────────────"
     cat "$pf"
     echo ""
     echo "────────────────────────────────────────────────"
   fi
 
-  sf="$(shell_hook_file "$stage")"
-  if [ ! -f "$sf" ]; then
+  sf="$(resolve_hook "$stage" shell)"
+  if [ -z "$sf" ]; then
     # shell 훅 없음 → 게이트 통과로 간주(기록).
     record_gate "$CURSOR" "$stage" 0
     [ -f "$pf" ] || echo "ℹ stage '$stage' 에 훅 없음 (no-op)."
@@ -649,6 +760,7 @@ main() {
   case "$sub" in
     init)       cmd_init "$@" ;;
     set-hook)   cmd_set_hook "$@" ;;
+    load-hooks) cmd_load_hooks "$@" ;;
     status)     cmd_status ;;
     current)    cmd_current ;;
     stage)      cmd_stage ;;
@@ -666,7 +778,8 @@ main() {
 phaseflow.sh <subcommand>
   init --pane <id> --tool <claude|codex> [--commit-each] [--delay N] [--clear-cmd C]
        [--continue-prompt P] [--stages a,b,c] [--gates a,b|auto]   (페이즈 제목 stdin, 한 줄당 하나)
-  set-hook <stage> --shell|--prompt        그 stage 의 훅 본문을 stdin 으로 등록
+  set-hook <stage> --shell|--prompt [--phase N]   그 stage(또는 Phase N 전용) 훅 본문을 stdin 으로 등록
+  load-hooks [<file>]   선언적 훅 스펙(기본 hooks.spec)을 파싱해 STAGES/GATES·훅 스토어 재구성
   status                현재 페이즈/ stage / 게이트 상태 표시
   current               LLM 파싱용 현재 커서/제목/ stage (KEY=VALUE)
   stage                 현재 stage 의 훅/게이트 정보 (KEY=VALUE)
