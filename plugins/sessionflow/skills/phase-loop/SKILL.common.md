@@ -106,7 +106,7 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
 
 **개인 모드:**
 1. `PHASES.md` 를 `loop.sh paths` 의 `PHASES_FILE` 경로에 작성(아래 포맷).
-2. phaseflow init:
+2. phaseflow init + 파이프라인 프리셋 로드:
    ```bash
    bash "${SKILL_DIR}/scripts/loop.sh" pf init \
      --pane "$TMUX_PANE" --tool {HARNESS_NAME} \
@@ -115,6 +115,8 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
    <Phase 2 제목>
    …
    EOF
+   # phase-loop 파이프라인(stage + 훅)을 로드한다. 이후 모든 fresh 세션은 이 stage 를 밟는다.
+   bash "${SKILL_DIR}/scripts/loop.sh" pf load-hooks "${SKILL_DIR}/phase-loop.hooks.spec"
    ```
 3. 곧바로 **Phase 1 작업**(아래 "페이즈 프로토콜")로 간다.
 
@@ -140,7 +142,7 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
 워크트리 세션에서 `/phase-loop start` 로 들어와, `PHASES_FILE` 에 phase-loop 설정 헤더가 이미 있을 때:
 1. `PHASES.md` 를 읽어 모드·정책·페이즈 목록을 파악한다.
 2. **"init 전 체크리스트"(위 step 3)를 워크트리 cwd 에서 재확인**한다 — 특히 pane 존재, 워킹트리 상태, (xreview/PR) CLI·remote·gh 인증. PHASES.md 는 이미 스테이징돼 있으니 그 완전성만 검증.
-3. 그 페이즈 제목들로 phaseflow init(개인 모드 init 과 동일, `--continue-prompt "/phase-loop continue"`). 이제 cwd 가 워크트리라 상태가 올바른 네임스페이스에 안착한다.
+3. 그 페이즈 제목들로 phaseflow init(개인 모드 init 과 동일, `--continue-prompt "/phase-loop continue"`). 이제 cwd 가 워크트리라 상태가 올바른 네임스페이스에 안착한다. **이어서 프리셋을 로드한다**: `bash "${SKILL_DIR}/scripts/loop.sh" pf load-hooks "${SKILL_DIR}/phase-loop.hooks.spec"`.
 4. **Phase 1 작업**으로 간다.
 
 ---
@@ -161,7 +163,11 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf current
 
 ## 페이즈 프로토콜 (START Phase 1 / CONTINUE 공통)
 
-### 1. 브랜치 확인 (팀 모드만)
+> **실행 모델 — phaseflow stage 머신 위에서 돈다.** init 때 로드한 프리셋(`phase-loop.hooks.spec`)이 한 페이즈의 stage 순서를 정의한다: `implement → xreview → verify → commit → ship → cut → handoff`. 각 stage 는 `loop.sh pf run-hooks <stage>` 로 실행하며, 그 stage 의 prompt 훅이 무엇을 할지 알려준다(아래 §1~§9 가 그 전체 스펙이다 — 프리셋 prompt 는 이를 요약·트리거한다). `verify` 는 **shell 게이트**(기본 `true`, 프로젝트 검증으로 교체 가능): 실패하면 `advance` 가 거부된다. xreview 는 turn 경계를 넘으므로(§3), 핑으로 돌아오면 `loop.sh pf stage` 로 현재 stage 를 확인하고 이어간다(STAGE_IDX 가 디스크에 유지된다). 모든 stage 를 마치면 §9 `advance`(게이트 통과 시에만 전진).
+>
+> 프리셋을 쓰지 않고 §1~§9 를 직접 따라도 동작은 같다 — stage 머신은 진행 추적·게이트·요약 트리거를 더해줄 뿐이다.
+
+### 1. 브랜치 확인 (팀 모드만)  — stage: `implement`(전제)
 
 이번 페이즈 브랜치는 **이미 잘려 있어야 한다** — Phase 1 은 워크트리 생성 시(`worktree-create --first-branch`), Phase 2+ 는 직전 페이즈의 완료 프로토콜(§7)에서 미리 cut 된다. 그래서 fresh 세션은 보통 **이미 올바른 브랜치 위**에 있다.
 
@@ -169,11 +175,11 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf current
 - 어긋났거나(사용자 개입 등) 브랜치가 없으면 폴백으로 만든다: **stack** `git checkout -b <이번 브랜치> <직전 페이즈 브랜치>`, **parallel** `git checkout -b <이번 브랜치> <통합 base>`.
 - 개인 모드: 브랜치 전환 없음(현재 브랜치에서 계속).
 
-### 2. 구현
+### 2. 구현  — stage: `implement`
 
 `TITLE` 페이즈의 실제 작업을 한다. 핸드오프의 `Next Action` 부터 시작.
 
-### 3. xreview 라운드 (페이즈당 최대 N회, 깨끗하면 조기종료)
+### 3. xreview 라운드 (페이즈당 최대 N회, 깨끗하면 조기종료)  — stage: `xreview`
 
 구현이 끝나면(미커밋 상태) 다른 에이전트로 리뷰를 돌린다. N 은 `PHASES.md` 의 `xreview: max-rounds`(기본 2).
 
@@ -191,20 +197,20 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf current
 
 > 리뷰 라운드는 같은 페이즈 안(=clear 전)에서 일어나므로 컨텍스트가 유지된다. 라운드 진행 상황은 in-context 로 추적한다(예: "라운드 2/2").
 
-### 4. 커밋 (정책별)
+### 4. 커밋 (정책별)  — stage: `verify`(게이트) → `commit`
 
-이번 페이즈 변경분을 스테이징한다(의도치 않은 파일 제외).
+먼저 `run-hooks verify` 로 기계적 게이트(테스트/린트/타입체크 — 기본 `true`)를 통과시킨다. 실패하면 고친 뒤 재실행한다(통과 못 하면 §9 `advance` 가 거부된다). 그 다음 이번 페이즈 변경분을 스테이징한다(의도치 않은 파일 제외).
 - **무인(팀/`--auto`)**: 저장소 커밋 컨벤션에 맞는 메시지로 바로 커밋한다(프로젝트에 `ghflow:commit` 규약이 있으면 그 스타일로).
 - **확인(개인/`--confirm`)**: 변경 요약(`git status`/`git diff --stat`)을 보여주고 **커밋해도 될지 확인**받는다. 확인 전엔 커밋하지 않고 turn 을 끝낸다. 확인되면 커밋하고 이어서 진행.
 
-### 5. push (remote 가 있을 때만)
+### 5. push (remote 가 있을 때만)  — stage: `ship`
 
 ```bash
 git push -u origin <이번 브랜치>
 ```
 remote 가 없으면(개인 로컬) 건너뛰고 그 사실을 보고한다.
 
-### 6. PR 생성 (팀 모드 / 명시 시)
+### 6. PR 생성 (팀 모드 / 명시 시)  — stage: `ship`
 
 - **stack**: `gh pr create --base <직전 페이즈 브랜치> --head <이번 브랜치> …` (Phase 1 의 base 는 통합 base).
 - **parallel**: `--base <통합 base>`.
@@ -212,7 +218,7 @@ remote 가 없으면(개인 로컬) 건너뛰고 그 사실을 보고한다.
 - 개인 모드(또는 remote 없음)는 PR 을 건너뛴다.
 - 생성된 PR 번호/URL 을 기록(핸드오프에 들어간다).
 
-### 7. 다음 페이즈 stacked 브랜치 cut (팀 모드 / 마지막 페이즈 아닐 때)
+### 7. 다음 페이즈 stacked 브랜치 cut (팀 모드 / 마지막 페이즈 아닐 때)  — stage: `cut`
 
 다음 세션이 깨어날 자리를 **지금** 만든다(불변 원칙 7). 이번 페이즈를 push·PR 까지 끝낸 직후, advance 전에:
 
@@ -222,7 +228,7 @@ remote 가 없으면(개인 로컬) 건너뛰고 그 사실을 보고한다.
 - 이 checkout 으로 **워킹트리가 다음 브랜치로 이동**한다 → `/clear` 후 fresh 세션이 이미 그 위에 있다(= 각 페이즈가 독립 PR 로 확정).
 - **마지막 페이즈**거나 **개인 모드**면 이 단계를 건너뛴다(다음 분기 없음 / 브랜치 고정).
 
-### 8. HANDOFF.md 작성 + 완전성 검증
+### 8. HANDOFF.md 작성 + 완전성 검증  — stage: `handoff`
 
 `sessionflow:handoff` 규약으로 `HANDOFF.md`(= `pf current` 의 `HANDOFF` 경로)를 **다음 페이즈 기준**으로 작성한다. 표준 섹션에 더해:
 
@@ -246,7 +252,9 @@ remote 가 없으면(개인 로컬) 건너뛰고 그 사실을 보고한다.
 
 **검증(불변 원칙 2):** "이 핸드오프+PHASES.md 만 보고, 대화 로그 없이, 다음 페이즈를 시작할 수 있는가?" 빠진 분기 base·PR 번호·미해결 리뷰·다음 액션이 있으면 지금 채운다. 비밀값은 적지 않는다.
 
-### 9. advance (= 너의 마지막 행동)
+### 9. advance (= 너의 마지막 행동)  — 페이즈 경계
+
+`verify` 게이트(§4)가 통과돼 있어야 advance 가 진행된다(미실행/실패면 거부 — 정말 우회해야 하면 `pf advance --force`).
 
 ```bash
 bash "${SKILL_DIR}/scripts/loop.sh" pf advance --pane "$TMUX_PANE" --tool {HARNESS_NAME}
