@@ -5,7 +5,7 @@
   "frontmatter": {
     "strip": ["harness"],
     "add": {
-      "model": "claude-opus-4-6"
+      "model": "opus"
     },
     "transform_tools_to": "allowed-tools",
     "tool_map": {
