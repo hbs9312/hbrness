@@ -12,6 +12,8 @@
 #   detect-mode                        remote/기여자 휴리스틱으로 personal|team 추정
 #   worktree-create --slug S --base R [--first-branch B] [--parent DIR]
 #                                      워크트리 + 첫 브랜치 생성, 그 워크트리의 PHASES.md 경로 echo
+#   review-worktree --branch B [--path DIR] [--parent DIR] [--name N] [--force]
+#                                      루프 중 PR 피드백 검토용 리뷰 워크트리 생성/재사용 + 체크아웃
 #   pf <args...>                       phaseflow.sh 를 'phase-loop' 네임스페이스로 forward
 #
 # 환경변수:
@@ -162,6 +164,89 @@ cmd_worktree_create() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 리뷰 워크트리 (루프 중 PR 피드백 검토용). 루프가 쓰는 워크트리는 절대 건드리지 않는다.
+#   --branch B   열 브랜치 (보통 이미 push 된 과거 페이즈 브랜치)
+#   --path DIR   워크트리 경로 직접 지정
+#   --parent DIR 경로 자동 계산 시 부모 디렉토리 (기본: 메인 레포의 부모)
+#   --name N     경로 자동 계산 시 접미사 (기본 review → <메인레포명>-review)
+#   --force      리뷰 워크트리에 미커밋 변경이 있어도 체크아웃 시도
+# 하나를 만들어 계속 재사용한다(있으면 브랜치만 교체). 경로는 **메인 레포** 기준으로
+# 잡으므로, 루프 워크트리 안에서 호출해도 이름이 누적되지 않는다.
+# ─────────────────────────────────────────────────────────────────────────────
+cmd_review_worktree() {
+  local branch="" path="" parent="" name="review" force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --branch) branch="$2"; shift 2 ;;
+      --path)   path="$2"; shift 2 ;;
+      --parent) parent="$2"; shift 2 ;;
+      --name)   name="$2"; shift 2 ;;
+      --force)  force=1; shift ;;
+      *) die "review-worktree: 알 수 없는 인자 $1" ;;
+    esac
+  done
+  [ -n "$branch" ] || die "review-worktree: --branch 필수"
+  git rev-parse --git-dir >/dev/null 2>&1 || die "review-worktree: git 레포가 아님"
+
+  resolve_ctx                              # CTX_ROOT = (워크트리 안이어도) 메인 레포 루트
+  local main_root main_name
+  main_root="$CTX_ROOT"
+  main_name="$(basename "$main_root")"
+  if [ -z "$path" ]; then
+    [ -n "$parent" ] || parent="$(dirname "$main_root")"
+    path="$parent/${main_name}-${name}"
+  fi
+  [ -d "$path" ] && path="$(cd "$path" && pwd)"   # 비교 전에 경로 정규화
+
+  # 그 브랜치를 이미 다른 워크트리가 잡고 있으면 거부한다 (루프의 현재 페이즈 브랜치일 수 있다).
+  local holder
+  holder="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '
+    /^worktree /{wt=$2} /^branch /{ if ($2 == b) print wt }')"
+  if [ -n "$holder" ] && [ "$holder" != "$path" ]; then
+    die "review-worktree: '$branch' 는 워크트리 '$holder' 가 이미 체크아웃 중이다 — 루프가 쓰는 브랜치일 수 있으니 건드리지 말 것"
+  fi
+
+  # 로컬에 없으면 remote 추적 브랜치에서 만든다.
+  local start_ref="$branch" track=0
+  if ! git show-ref --verify --quiet "refs/heads/$branch"; then
+    start_ref="$(git for-each-ref --count=1 --format='%(refname)' "refs/remotes/*/$branch")"
+    [ -n "$start_ref" ] || die "review-worktree: 브랜치를 찾을 수 없음: $branch (로컬·remote 모두 — 먼저 git fetch)"
+    track=1
+  fi
+
+  local reused=0
+  if [ -d "$path" ]; then
+    git -C "$path" rev-parse --git-dir >/dev/null 2>&1 \
+      || die "review-worktree: 경로가 이미 있으나 git 워크트리가 아님: $path"
+    reused=1
+    if [ -n "$(git -C "$path" status --porcelain)" ] && [ "$force" = "0" ]; then
+      die "review-worktree: 리뷰 워크트리에 미커밋 변경이 있음: $path (커밋/스태시 후 재시도, 또는 --force)"
+    fi
+    if [ "$(git -C "$path" branch --show-current)" != "$branch" ]; then
+      if [ "$track" = "1" ]; then
+        git -C "$path" checkout -q --track -b "$branch" "$start_ref" >&2
+      else
+        git -C "$path" checkout -q "$branch" >&2
+      fi
+    fi
+  else
+    if [ "$track" = "1" ]; then
+      git worktree add --track -b "$branch" "$path" "$start_ref" >&2
+    else
+      git worktree add "$path" "$branch" >&2
+    fi
+    path="$(cd "$path" && pwd)"
+  fi
+
+  resolve_ctx "$path"
+  echo "REVIEW_WORKTREE=$path"
+  echo "BRANCH=$branch"
+  echo "REUSED=$reused"
+  echo "WT_NAME=$CTX_WT"
+  echo "SESSION_DIR=$CTX_DIR"      # 루프 워크트리와 분리된 상태 네임스페이스
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # phaseflow forward — 'phase-loop' 네임스페이스로 phase-run 엔진 호출.
 # init/advance/current/status/pause/resume/stop/reset/paths 그대로 전달.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -176,6 +261,7 @@ main() {
     paths)            cmd_paths "$@" ;;
     detect-mode)      cmd_detect_mode ;;
     worktree-create)  cmd_worktree_create "$@" ;;
+    review-worktree)  cmd_review_worktree "$@" ;;
     pf)               cmd_pf "$@" ;;
     ""|-h|--help)
       cat <<'USAGE'
@@ -183,6 +269,8 @@ loop.sh <subcommand>
   paths [dir]                        세션/PHASES/HANDOFF/state 경로 도출 (기본 cwd)
   detect-mode                        personal|team 추정 (휴리스틱)
   worktree-create --slug S --base R [--first-branch B] [--parent DIR]
+  review-worktree --branch B [--path DIR] [--parent DIR] [--name N] [--force]
+                                     리뷰 워크트리 생성/재사용 + 그 브랜치 체크아웃
   pf <phaseflow args...>             phaseflow.sh 를 'phase-loop' 네임스페이스로 호출
 USAGE
       ;;

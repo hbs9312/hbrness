@@ -70,10 +70,11 @@ echo deploy-staging
 [모든 페이즈 완료] 종료 보고(생성된 PR·미해결 followup)
 ```
 
-- **엔진 재사용**: 상태머신·tmux 주입은 `phase-run` 의 `scripts/phaseflow.sh` 를 그대로 쓰되, `PHASEFLOW_STATE_DIR_NAME=phase-loop` 로 상태를 분리한다(HANDOFF.md 경로는 워크트리 단위라 공유). 보조 로직(모드 감지·워크트리 생성·경로·forward)은 `skills/phase-loop/scripts/loop.sh`.
+- **엔진 재사용**: 상태머신·tmux 주입은 `phase-run` 의 `scripts/phaseflow.sh` 를 그대로 쓰되, `PHASEFLOW_STATE_DIR_NAME=phase-loop` 로 상태를 분리한다(HANDOFF.md 경로는 워크트리 단위라 공유). 보조 로직(모드 감지·워크트리 생성·리뷰 워크트리·경로·forward)은 `skills/phase-loop/scripts/loop.sh`.
 - **stage 머신 위에서**: 한 페이즈의 파이프라인은 stage 프리셋(`skills/phase-loop/phase-loop.hooks.spec`)으로 표현된다 — `implement → xreview → verify → commit → ship → cut → handoff`. init 때 `pf load-hooks` 로 로드하고, 각 stage 를 `pf run-hooks` 로 밟는다. `verify` 는 커밋 전 **기계적 게이트**(기본 `true`, 프로젝트 검증으로 교체 시 통과해야 advance). 프리셋 없이 §1~§9 를 직접 따라도 동작은 동일.
 - **모드별 자동화**: 팀(워크트리+PR)은 PR 이 리뷰 게이트라 무인, 개인(브랜치 직접)은 커밋 전 확인. `--auto`/`--confirm` 로 override.
-- **스택 PR (각 페이즈 = 독립 PR)**: 같은 워크트리에서 브랜치만 페이즈마다 직전 브랜치 HEAD 에서 분기 → PR base 를 직전 브랜치로. 다음 페이즈 브랜치는 **완료 프로토콜에서 미리 cut**(워킹트리를 그 위로 옮긴 뒤 clear)하므로 fresh 세션은 이미 자기 PR 브랜치 위에서 깨어난다. 첫 페이즈만 워크트리 생성 시 잘린다. 리뷰 반영·bottom-up 머지·rebase 캐스케이드는 **루프 밖**(사람/도구) 책임.
+- **스택 PR (각 페이즈 = 독립 PR)**: 같은 워크트리에서 브랜치만 페이즈마다 직전 브랜치 HEAD 에서 분기 → PR base 를 직전 브랜치로. 다음 페이즈 브랜치는 **완료 프로토콜에서 미리 cut**(워킹트리를 그 위로 옮긴 뒤 clear)하므로 fresh 세션은 이미 자기 PR 브랜치 위에서 깨어난다. 첫 페이즈만 워크트리 생성 시 잘린다. bottom-up 머지·rebase 캐스케이드는 **루프 밖**(사람/도구) 책임.
+- **루프 중 PR 피드백**: 루프 워크트리는 이번 페이즈 브랜치를 잡고 있으므로 체크아웃을 갈아타지 않는다. 이전 PR 의 피드백은 `loop.sh review-worktree --branch <PR브랜치>` 로 만든(있으면 재사용) **리뷰 전용 워크트리**에서 별도 세션으로 처리하고, 루프가 도는 동안엔 **append-only 커밋**만 한다(rebase 는 pause 후 또는 루프 종료 후). 루프가 쥔 브랜치·dirty 워크트리는 스크립트가 거부한다.
 - **상태**: `~/.hbrness/sessionflow/<project-key>/[worktrees/<wt>/]phase-loop/` + 계획은 같은 디렉토리의 `PHASES.md`.
 
 ## followup vs handoff — 언제 무엇을 쓰는가
