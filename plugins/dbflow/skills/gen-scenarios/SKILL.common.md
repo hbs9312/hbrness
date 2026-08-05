@@ -1,6 +1,6 @@
 ---
 name: gen-scenarios
-description: "specflow QA §5 → .e2e/scenarios/*.yml 자동 생성. \"시나리오 생성\" 요청 시 사용."
+description: "QA 명세 §5 E2E DB 시나리오 표 → .e2e/scenarios/*.yml 자동 생성. \"시나리오 생성\" 요청 시 사용."
 argument-hint: [QA 명세 경로]
 tools: [file:read, file:write, file:edit, search:grep, search:glob]
 effort: high

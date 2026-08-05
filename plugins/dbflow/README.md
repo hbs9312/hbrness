@@ -1,8 +1,8 @@
 # dbflow — E2E 샌드박스 DB 오케스트레이션
 
-Phase 1 산출물(backflow / specflow 출력)을 **실제 DB · 실제 API 서버 위에서 검증**하는 인프라 플러그인.
+구현된 백엔드를 **실제 DB · 실제 API 서버 위에서 검증**하는 인프라 플러그인.
 
-새 코드를 생성하는 것이 아니라 환경을 오케스트레이션한다. specflow QA §5 → dbflow scenario YAML → run → DB delta 검증.
+새 코드를 생성하는 것이 아니라 환경을 오케스트레이션한다. QA 명세의 E2E DB 시나리오 표 → dbflow scenario YAML → run → DB delta 검증.
 
 > **Origin**: velvetalk `~/development/velvetalk/backend/.claude/skills/e2e-db/` 를 hbrness 패턴(skill 분리 + Tier 0 + 4-tier storage)으로 포팅. config / scenario schema 는 velvetalk 원본과 **1:1 호환**.
 
@@ -30,7 +30,7 @@ Phase 1 산출물(backflow / specflow 출력)을 **실제 DB · 실제 API 서�
 | `dbflow:watch` | 1.5.4 | 지정 테이블의 full row JSON + PK 집합을 watch-before.json 에 저장 |
 | `dbflow:diff` | 1.5.4 | sandbox 현재 상태 vs watch-before.json 비교 (PK 기준 inserted/deleted/modified) |
 | `dbflow:run` | 1.5.5 | scenario YAML 실행 → 각 step request/response/db_diff 검증 → JSON report |
-| `dbflow:gen-scenarios` | 1.5.5 | specflow QA §5 표 + TS §3.2 fragment → `.e2e/scenarios/*.yml` 자동 생성 |
+| `dbflow:gen-scenarios` | 1.5.5 | QA 명세 E2E DB 시나리오 표 + TS OpenAPI fragment → `.e2e/scenarios/*.yml` 자동 생성 |
 | `dbflow:validate-scenarios` | 1.5.6 | `.e2e/scenarios/*.yml` + config + fixtures 무결성 검증 (§A~§F) |
 
 ---
@@ -43,7 +43,7 @@ Phase 1 산출물(backflow / specflow 출력)을 **실제 DB · 실제 API 서�
 3. dbflow:snapshot      ← source → sandbox 첫 복제
 4. dbflow:migrate       ← sandbox 에 마이그레이션
 5. dbflow:up            ← API 서버 기동
-6. specflow:generate-qa ← QA §5 E2E DB 시나리오 생성
+6. specs/QA-*.md 준비    ← E2E DB 시나리오 표를 담은 QA 명세 (직접 작성)
 7. dbflow:gen-scenarios ← .e2e/scenarios/*.yml 자동 생성
 8. dbflow:run <scenario> ← 검증
 ```

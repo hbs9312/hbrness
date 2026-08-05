@@ -163,11 +163,11 @@ reset               ← sandbox drop (사용자 confirm 필수)
 
 | 항목 | 내용 |
 |---|---|
-| **Purpose** | specflow QA §5 표 + TS §3.2 fragment → `.e2e/scenarios/<scenario_name>.yml` 자동 생성. 멱등 |
+| **Purpose** | QA 명세 §5 표 + TS §3.2 fragment → `.e2e/scenarios/<scenario_name>.yml` 자동 생성. 멱등 |
 | **Reads** | `specs/QA/*` §5 E2E DB 시나리오 표, `specs/TS/*` §3.2 OpenAPI fragment, `.e2e/config.yml` (auth 섹션) |
 | **Writes** | `.e2e/scenarios/<scenario_name>.yml` |
 | **Storage Tier** | Tier 0 |
-| **Depends on** | init, (specflow:generate-qa §5 완료 후) |
+| **Depends on** | init, (QA 명세 §5 E2E DB 시나리오 표가 준비된 후) |
 | **Notes** | 본문은 Phase 1.5.5 에서 작성. 기존 시나리오 사용자 변경 시 confirm. steps 는 steps_summary 에서 합성 (다단계는 사용자가 수정). |
 
 ### validate-scenarios
@@ -183,9 +183,11 @@ reset               ← sandbox drop (사용자 confirm 필수)
 
 ---
 
-## specflow 섹션 → 스킬 역매핑
+## 입력 명세 섹션 → 스킬 역매핑
 
-| specflow 출력 섹션 | 소비하는 dbflow 스킬 |
+명세 파일(`specs/`)은 dbflow 밖에서 작성된다. dbflow 는 아래 섹션만 읽는다.
+
+| 입력 명세 섹션 | 소비하는 dbflow 스킬 |
 |---|---|
 | QA §5 E2E DB 시나리오 표 | **gen-scenarios** (시나리오 YAML 자동 생성) |
 | QA §5 scenario_name / watch_tables / steps_summary / db_diff_summary | **gen-scenarios** (YAML 필드 매핑) |
@@ -204,4 +206,4 @@ reset               ← sandbox drop (사용자 confirm 필수)
 - [ ] Storage Tier: Tier 0 확인 (dbflow 는 전부 Tier 0)
 - [ ] Depends on: 선행 스킬
 - [ ] Safety invariant 해당 여부: destructive 명령이면 sandbox 이름 검증 + confirm 필수 명시
-- [ ] specflow 역매핑 표 갱신 (해당 시)
+- [ ] 입력 명세 역매핑 표 갱신 (해당 시)

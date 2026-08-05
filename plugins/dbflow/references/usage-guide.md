@@ -9,7 +9,7 @@
 3. `dbflow:snapshot` — source → sandbox 첫 복제
 4. `dbflow:migrate` — sandbox 에 마이그레이션
 5. `dbflow:up` — API 서버 기동
-6. `specflow:generate-qa` 후 `dbflow:gen-scenarios` — `.e2e/scenarios/*.yml` 생성
+6. QA 명세(`specs/QA-*.md`) 준비 후 `dbflow:gen-scenarios` — `.e2e/scenarios/*.yml` 생성
 7. `dbflow:run <scenario>` — 검증
 
 ## velvetalk 마이그레이션 (Scenario B)
