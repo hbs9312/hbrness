@@ -11,7 +11,7 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 
 | Plugin | Version | Skills | Description |
 |--------|---------|--------|-------------|
-| dbflow | 0.1.1 | 12 | Sandbox E2E DB scenario testing |
+| dbflow | 0.1.2 | 12 | Sandbox E2E DB scenario testing |
 | ghflow | 0.5.3 | 10 | GitHub issue/PR/review workflow |
 | sessionflow | 0.12.0 | 6 | Session handoff, followup backlog & phase loop |
 | agentbus | 0.2.0 | 5 | Cross-agent messaging over tmux |
