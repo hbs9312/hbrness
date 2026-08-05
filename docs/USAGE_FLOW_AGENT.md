@@ -3,8 +3,8 @@
 > Compact version of `USAGE_FLOW.md`. Both files must be updated together.
 > Human-readable version: `docs/USAGE_FLOW.md`
 
-> **Scope**: 6 plugins — meeting-prep / ghflow / xreview / dbflow / sessionflow / agentbus.
-> Spec generation (specflow) and code generation (frontflow / backflow) were removed. Specs and implementation live outside hbrness; hbrness handles planning intake, issue/PR workflow, cross-model review, E2E DB verification, and session management.
+> **Scope**: 5 plugins — ghflow / xreview / dbflow / sessionflow / agentbus.
+> Spec generation (specflow), code generation (frontflow / backflow), and planning intake (meeting-prep) were removed. Planning, specs, and implementation live outside hbrness; hbrness handles issue/PR workflow, cross-model review, E2E DB verification, and session management.
 
 ---
 
@@ -12,15 +12,7 @@
 
 Skills run top-to-bottom per phase. Each phase's output feeds the next.
 
-### P1: Planning (meeting-prep)
-
-```
-meeting-prep:spec-scanner  specs/          → gap report
-meeting-prep:impl-scanner  src/            → impl status
-meeting-prep:meeting-doc-gen               → meeting doc (consumes both above)
-```
-
-### P2: Issue & Branch (ghflow)
+### P1: Issue & Branch (ghflow)
 
 ```
 ghflow:list-work          → available work
@@ -29,13 +21,13 @@ ghflow:pick-issue         → select + save to memory
 ghflow:draft-pr           → branch + empty commit + draft PR + issue link
 ```
 
-### P3: Implementation
+### P2: Implementation
 
 Outside hbrness. Write the code directly or use another tool.
 
-For long runs, wrap with `sessionflow:phase-loop` (see Cross-cutting) — it automates P3→P5 per PR unit.
+For long runs, wrap with `sessionflow:phase-loop` (see Cross-cutting) — it automates P2→P4 per PR unit.
 
-### P4: E2E DB (dbflow — after backend work lands)
+### P3: E2E DB (dbflow — after backend work lands)
 
 ```
 # setup (once)
@@ -63,7 +55,7 @@ dbflow:reset                               → drop sandbox + reinit
 
 `gen-scenarios` input is a hand-authored (or externally generated) QA spec file under `specs/`.
 
-### P5: Review, Commit & PR (xreview + ghflow)
+### P4: Review, Commit & PR (xreview + ghflow)
 
 ```
 xreview:live                               → background code review by the opposite agent (claude↔codex); launcher auto-injects work intent as --context
@@ -93,7 +85,7 @@ followup        /followup [-m|-o] [msg]       → append later-TODO to followups
 followup-clear  /followup-clear [-y]          → clear followups/
 phase-run       /phase-run <plan>             → split into phases; auto /clear + /phase-run continue at each boundary → fresh session reads HANDOFF.md and continues. No auto-commit. tmux required.
                 /phase-run continue|status|pause|resume|stop|reset
-phase-loop      /phase-loop <plan>            → phase-run + per-phase xreview → commit → push → PR. Personal repo: direct branch. Team repo: worktree + stacked PRs. Wraps P3→P5.
+phase-loop      /phase-loop <plan>            → phase-run + per-phase xreview → commit → push → PR. Personal repo: direct branch. Team repo: worktree + stacked PRs. Wraps P2→P4.
                 /phase-loop continue|status|pause|resume|stop|reset
 ```
 
@@ -123,10 +115,10 @@ Short messages go straight to the prompt; long or structured payloads land in `~
 | Scenario | Start at | Skip |
 |---|---|---|
 | New feature (full) | P1 | — |
-| Hotfix | P2 `pick-issue` → `draft-pr` → fix → P5 | P1, P4 |
-| Schema change re-verify | write migration → P4 `migrate --fresh` → `up` → `run` | P1~P3, P5 |
-| Code archaeology | P5 `chronicle-lookup` | everything else |
-| Long unattended run | `phase-loop <plan>` (wraps P3→P5) | — |
+| Hotfix | P1 `pick-issue` → `draft-pr` → fix → P4 | P3 |
+| Schema change re-verify | write migration → P3 `migrate --fresh` → `up` → `run` | P1, P2, P4 |
+| Code archaeology | P4 `chronicle-lookup` | everything else |
+| Long unattended run | `phase-loop <plan>` (wraps P2→P4) | — |
 | Parallel front/back sessions | `agent-register` per session → `agent-send` to sync | — |
 
 ---
@@ -134,24 +126,24 @@ Short messages go straight to the prompt; long or structured payloads land in `~
 ## Dependency Graph (compact)
 
 ```
-meeting-prep → ghflow(issue/PR)
-                    │
-               implementation (outside hbrness)
-                    │
-                    ├──────────► dbflow (E2E, after backend)
-                    │               └── gen-scenarios ← QA spec (specs/)
-                    ▼
-               xreview (cross-model review)
-                    │
-                    ▼
-               ghflow (commit · chronicle · create-pr · review-pr)
+ghflow (issue / branch / draft PR)
+     │
+implementation (outside hbrness)
+     │
+     ├──────────► dbflow (E2E, after backend)
+     │               └── gen-scenarios ← QA spec (specs/)
+     ▼
+xreview (cross-model review)
+     │
+     ▼
+ghflow (commit · chronicle · create-pr · review-pr)
 
 sessionflow — spans every phase (handoff / followup / phase-run / phase-loop)
 agentbus    — cross-session messaging (pipeline-independent)
 ```
 
 Key cross-plugin data flows:
-- **`specs/` is read-only input** — meeting-prep and dbflow consume it; nothing in hbrness generates it
+- **`specs/` is read-only input** — dbflow consumes it; nothing in hbrness generates it
 - **QA spec drives dbflow** — `gen-scenarios` reads the QA spec's E2E DB scenario table
 - **Review before commit** — `xreview:live` runs on the opposite provider, then `ghflow:commit`
 
@@ -161,8 +153,8 @@ Key cross-plugin data flows:
 
 | Model | Skills | Ratio |
 |---|---|---|
-| **Sonnet** (auto, via frontmatter) | `ghflow` all (incl. `commit`), `meeting-prep` all, `agentbus` all, `xreview` all, `dbflow` (init~diff), `sessionflow` handoff/followup family | 34/39 (87%) |
-| **Opus** (session default) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/39 (13%) |
+| **Sonnet** (auto, via frontmatter) | `ghflow` all (incl. `commit`), `agentbus` all, `xreview` all, `dbflow` (init~diff), `sessionflow` handoff/followup family | 31/36 (86%) |
+| **Opus** (session default) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/36 (14%) |
 
 ---
 

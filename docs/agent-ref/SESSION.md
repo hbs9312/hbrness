@@ -17,7 +17,7 @@ phase-loop      /phase-loop <plan>            → phase-run + per-phase xreview 
 
 - `handoff` — carry THIS in-flight work to the next session (1-shot, per-worktree).
 - `followup` — record work to do LATER (persistent backlog, per-project).
-- `phase-run` — drive a long multi-phase task hands-off, clearing context between phases. It can wrap *any* work — including the whole P1→P5 pipeline — so each phase starts with a fresh context window. (`phase-run` writes a per-phase `HANDOFF.md` at the boundary, so it builds on the same handoff plumbing.)
-- `phase-loop` — `phase-run` plus shipping: each phase boundary also runs review, commit, push, and PR. Wraps P3→P5.
+- `phase-run` — drive a long multi-phase task hands-off, clearing context between phases. It can wrap *any* work — including the whole P1→P4 pipeline — so each phase starts with a fresh context window. (`phase-run` writes a per-phase `HANDOFF.md` at the boundary, so it builds on the same handoff plumbing.)
+- `phase-loop` — `phase-run` plus shipping: each phase boundary also runs review, commit, push, and PR. Wraps P2→P4.
 
 **Storage** (Tier 1, tool-agnostic): `~/.hbrness/sessionflow/<project-key>/` → `HANDOFF.md`, `followups/`, `phases/`. Both harnesses' `MEMORY.md` auto-synced to point here.

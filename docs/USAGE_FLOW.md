@@ -1,28 +1,18 @@
 # hbrness 플러그인 사용 플로우 — 실무 가이드
 
-> 이 문서는 hbrness 6개 플러그인 (meeting-prep / ghflow / xreview / dbflow / sessionflow / agentbus) 을 **실제 프로젝트에서 사용하는 순서**를 시나리오별로 정리합니다.
+> 이 문서는 hbrness 5개 플러그인 (ghflow / xreview / dbflow / sessionflow / agentbus) 을 **실제 프로젝트에서 사용하는 순서**를 시나리오별로 정리합니다.
 >
 > 각 명령은 Claude Code 세션에서 `/plugin:skill` 형태로 실행합니다.
 
-> **범위 안내** — 명세 생성(specflow)과 코드 생성(frontflow / backflow) 플러그인은 제거되었습니다. hbrness 는 이제 **기획 파악 · 이슈/PR 워크플로우 · 교차 코드리뷰 · E2E DB 검증 · 세션 관리**를 담당하고, 명세 작성과 구현 자체는 hbrness 밖(직접 작성 또는 다른 도구)에서 진행합니다.
+> **범위 안내** — 명세 생성(specflow), 코드 생성(frontflow / backflow), 기획 분석(meeting-prep) 플러그인은 제거되었습니다. hbrness 는 이제 **이슈/PR 워크플로우 · 교차 코드리뷰 · E2E DB 검증 · 세션 관리**를 담당하고, 기획·명세·구현 자체는 hbrness 밖(직접 작성 또는 다른 도구)에서 진행합니다.
 
 ---
 
 ## 시나리오 1 — 신규 기능 개발 (전체 파이프라인)
 
-기획 회의 → 이슈 → 구현 → E2E 검증 → 리뷰 → PR 까지 전체 흐름.
+이슈 → 구현 → E2E 검증 → 리뷰 → PR 까지 전체 흐름.
 
-### Phase 1: 기획 · 회의 준비 (meeting-prep)
-
-```
-/meeting-prep:spec-scanner specs/          ← 기존 명세 현황 파악
-/meeting-prep:impl-scanner src/            ← 기존 구현 현황 파악
-/meeting-prep:meeting-doc-gen              ← 기획·구현 갭 리포트 + 회의 자료
-```
-
-회의에서 이번 스프린트 범위 확정.
-
-### Phase 2: 이슈 · 브랜치 셋업 (ghflow)
+### Phase 1: 이슈 · 브랜치 셋업 (ghflow)
 
 ```
 /ghflow:list-work                          ← 지금 잡을 수 있는 일감 조회
@@ -31,7 +21,7 @@
 /ghflow:draft-pr                           ← 브랜치 + 빈 커밋 + Draft PR + 이슈 링크
 ```
 
-### Phase 3: 구현
+### Phase 2: 구현
 
 hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 
@@ -39,10 +29,10 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 
 ```
 /phase-loop <자연어 구현 계획>             ← 구현 → 리뷰 → 커밋 → push → PR → 핸드오프를
-                                             페이즈마다 반복 (Phase 3~5 를 통째로 자동화)
+                                             페이즈마다 반복 (Phase 2~4 를 통째로 자동화)
 ```
 
-### Phase 4: E2E DB 검증 (dbflow)
+### Phase 3: E2E DB 검증 (dbflow)
 
 백엔드 구현 완료 후. 실제 DB + 실제 API 서버 위에서 검증.
 
@@ -77,7 +67,7 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 
 `gen-scenarios` 는 QA 명세 파일을 입력으로 받습니다. 해당 파일은 직접 작성하거나 다른 도구로 생성해서 `specs/` 에 두면 됩니다.
 
-### Phase 5: 리뷰 · 커밋 · PR (xreview + ghflow)
+### Phase 4: 리뷰 · 커밋 · PR (xreview + ghflow)
 
 ```
 # 코드 리뷰 — 반대편 모델에 교차검증
@@ -181,7 +171,7 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 - **handoff** = 지금 이 작업을 다음 세션이 그대로 (1회성·워크트리 단위).
 - **followup** = 나중에 할 일 (영속·프로젝트 단위).
 - **phase-run** = 긴 다단계 작업을 페이즈마다 컨텍스트를 리셋하며 무인 진행.
-- **phase-loop** = phase-run 에 출하(리뷰→커밋→push→PR)를 끼운 상위 루프 — 위 Phase 3~5 를 통째로 감쌀 수 있다.
+- **phase-loop** = phase-run 에 출하(리뷰→커밋→push→PR)를 끼운 상위 루프 — 위 Phase 2~4 를 통째로 감쌀 수 있다.
 
 저장(Tier 1): `~/.hbrness/sessionflow/<project-key>/` → HANDOFF.md, followups/, phases/. 양쪽 MEMORY.md 자동 동기화.
 
@@ -210,29 +200,29 @@ skill 에 `model: sonnet` 이 지정된 기계적 작업은 자동으로 Sonnet 
 
 | 모델 | 대상 skill | 비율 |
 |---|---|---|
-| **Sonnet** (자동) | ghflow 전체(commit 포함), meeting-prep 전체, agentbus 전체, xreview 전체, dbflow (init~diff), sessionflow (handoff/followup 계열) | 34/39 (87%) |
-| **Opus** (세션 기본) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/39 (13%) |
+| **Sonnet** (자동) | ghflow 전체(commit 포함), agentbus 전체, xreview 전체, dbflow (init~diff), sessionflow (handoff/followup 계열) | 31/36 (86%) |
+| **Opus** (세션 기본) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/36 (14%) |
 
 ---
 
 ## 플러그인 상호 의존 맵
 
 ```
-meeting-prep ──────► ghflow (이슈·PR)
-                          │
-                          ▼
-                     구현 (hbrness 범위 밖)
-                          │
-                          ├──────────────► dbflow (E2E DB 검증)
-                          │                   │
-                          │                   ├── gen-scenarios ◄── QA 명세 (specs/)
-                          │                   ├── run ◄── .e2e/scenarios/*.yml
-                          │                   └── validate-scenarios (invariant 검사)
-                          ▼
-                     xreview (교차 코드리뷰)
-                          │
-                          ▼
-                     ghflow (commit · chronicle · create-pr · review-pr)
+ghflow (이슈·브랜치·Draft PR)
+     │
+     ▼
+구현 (hbrness 범위 밖)
+     │
+     ├──────────────► dbflow (E2E DB 검증)
+     │                   │
+     │                   ├── gen-scenarios ◄── QA 명세 (specs/)
+     │                   ├── run ◄── .e2e/scenarios/*.yml
+     │                   └── validate-scenarios (invariant 검사)
+     ▼
+xreview (교차 코드리뷰)
+     │
+     ▼
+ghflow (commit · chronicle · create-pr · review-pr)
 
 sessionflow ── 모든 단계에 걸침 (handoff / followup / phase-run / phase-loop)
 agentbus ───── 세션 간 통신 (파이프라인 무관)
@@ -242,7 +232,7 @@ agentbus ───── 세션 간 통신 (파이프라인 무관)
 
 ## 원칙
 
-1. **명세는 hbrness 밖에서** — `specs/` 는 사람이 소유하는 산출물. dbflow·meeting-prep 이 이를 **읽기만** 한다
+1. **명세는 hbrness 밖에서** — `specs/` 는 사람이 소유하는 산출물. dbflow 가 이를 **읽기만** 한다
 2. **리뷰는 반대편 모델로** — 같은 모델이 자기 코드를 리뷰하면 놓치는 게 생긴다. `xreview` 로 claude↔codex 교차
 3. **Safety invariant 는 hardcode** — dbflow 의 sandbox naming / pg_dump only / confirm
 4. **커밋 의도는 코드 밖에 남긴다** — `chronicle` 이 diff 가 답 못 하는 "왜"를 보존

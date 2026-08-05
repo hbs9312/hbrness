@@ -16,7 +16,6 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 | sessionflow | 0.12.0 | 6 | Session handoff, followup backlog & phase loop |
 | agentbus | 0.2.0 | 5 | Cross-agent messaging over tmux |
 | xreview | 1.2.0 | 3 | Background peer code review (claude↔codex) |
-| meeting-prep | 0.1.1 | 3 | Meeting preparation automation |
 
 ## Install
 
