@@ -43,7 +43,7 @@ Options:
 Examples:
   hbrness install claude                   # install all plugins into ~/.claude/
   hbrness install claude ghflow            # install one plugin
-  hbrness install codex specflow --dry-run
+  hbrness install codex sessionflow --dry-run
   hbrness uninstall claude ghflow
   hbrness list claude
 `;

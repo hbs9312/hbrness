@@ -11,16 +11,12 @@ Multi-harness AI coding plugin repository. Harness-neutral common sources build 
 
 | Plugin | Version | Skills | Description |
 |--------|---------|--------|-------------|
-| specflow | 1.5.0 | 23 | Spec generation & validation workflow |
-| frontflow | 1.3.1 | 20 | Frontend implementation (tokens → pages) |
-| backflow | 0.4.1 | 21 | Backend implementation (schema → API) |
-| dbflow | 0.1.0 | 12 | Sandbox E2E DB scenario testing |
+| dbflow | 0.1.1 | 12 | Sandbox E2E DB scenario testing |
 | ghflow | 0.5.3 | 10 | GitHub issue/PR/review workflow |
-| xreview | 1.0.0 | 3 | Background peer code review (claude↔codex) |
-| meeting-prep | 0.1.0 | 3 | Meeting preparation automation |
-| planflow | 0.1.4 | 2 | Plan visualization as interactive HTML |
-| sessionflow | 0.3.0 | 4 | Session handoff & followup backlog |
+| sessionflow | 0.12.0 | 6 | Session handoff, followup backlog & phase loop |
 | agentbus | 0.2.0 | 5 | Cross-agent messaging over tmux |
+| xreview | 1.2.0 | 3 | Background peer code review (claude↔codex) |
+| meeting-prep | 0.1.1 | 3 | Meeting preparation automation |
 
 ## Install
 
@@ -34,12 +30,12 @@ Then inside Claude Code, paste the commands the installer prints — something l
 ```
 /plugin marketplace add ~/.claude/plugins/marketplaces/hbrness
 /plugin install ghflow@hbrness
-/plugin install specflow@hbrness
+/plugin install dbflow@hbrness
 ```
 
 Claude Code owns the final registration — it writes its own `known_marketplaces.json` and `installed_plugins.json` entries, which means hbrness never drifts out of sync with Claude's plugin-config schema.
 
-Invocation afterwards: `/ghflow:review-pr`, `/specflow:generate-fs`, etc.
+Invocation afterwards: `/ghflow:review-pr`, `/sessionflow:handoff`, etc.
 
 ### Modes
 
@@ -61,7 +57,7 @@ Invocation afterwards: `/ghflow:review-pr`, `/specflow:generate-fs`, etc.
 # One-off — no global install
 npx hbrness install claude               # all plugins
 npx hbrness install claude ghflow        # single plugin
-npx hbrness install codex specflow
+npx hbrness install codex sessionflow
 
 # Or install globally
 npm install -g hbrness
@@ -114,7 +110,7 @@ Restart the harness (Claude Code / Codex) after install or uninstall so it picks
 ./scripts/build.sh all
 
 # Build a single plugin
-./scripts/build.sh claude specflow
+./scripts/build.sh claude ghflow
 
 # Validate build outputs
 ./scripts/validate.sh

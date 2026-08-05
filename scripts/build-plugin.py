@@ -5,7 +5,7 @@ Usage:
     build-plugin.py <harness> <plugin-dir> <adapter-json> <output-dir>
 
 Example:
-    build-plugin.py claude plugins/specflow adapters/claude.adapter.json dist/claude/specflow
+    build-plugin.py claude plugins/ghflow adapters/claude.adapter.json dist/claude/ghflow
 """
 
 import json

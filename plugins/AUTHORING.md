@@ -41,10 +41,9 @@
 
 - **Dot-prefixed (툴 관리 워킹 스토리지)** — 스킬이 쓰고 읽는 임시·상태 파일. 대부분 gitignore 대상.
   - `.e2e/` — dbflow 의 config·state·scenarios·snapshots
-  - `.specflow/` (예정) — specflow 의 상태·캐시
   - 규약: 스킬은 `.gitignore` 에 cache/state/snapshots/reports 를 **자동 append** (idempotent)
 - **Plain (유저 산출물)** — 팀이 직접 다루는 명세·문서. 보통 커밋 대상.
-  - `specs/` — specflow 의 FS/TS/WF/UI/QA 명세
+  - `specs/` — 프로젝트 명세 (dbflow 의 `gen-scenarios` 가 QA 명세를 여기서 읽음)
   - `docs/` — 프로젝트 문서
   - 규약: 스킬이 덮어쓸 때 기존 사람 편집이 있으면 **확인 후**
 
@@ -62,7 +61,6 @@
 
 **현재 Tier 0 스킬/플러그인:**
 - `dbflow` — `.e2e/` 전체 (config.yml + scenarios/ + fixtures/ commit, snapshots/state/cache/reports gitignore)
-- `specflow` — `specs/` 출력 (플러그인 전체가 Tier 0 산출물 생성)
 
 ---
 

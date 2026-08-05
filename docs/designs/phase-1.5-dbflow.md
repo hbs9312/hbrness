@@ -1,8 +1,10 @@
 # Phase 1.5 — dbflow 플러그인 설계
 
+> ⚠️ **2026-08-05 기준 안내** — 이 문서는 작성 시점(2026-04-27)의 설계 기록이다. 이후 `specflow` / `backflow` / `frontflow` / `planflow` 플러그인이 제거되었으므로, 아래 §1 (specflow 측 변경), §1.5.1 / §1.5.6 연계 항목 등 해당 플러그인을 전제로 한 부분은 **더 이상 유효하지 않다**. dbflow 자체의 설계(config/scenario schema, safety invariant, 스킬 분해)는 그대로 유효하며, `gen-scenarios` 의 입력인 QA 명세는 이제 hbrness 밖에서 작성한다. 현재 계약은 `plugins/dbflow/CONTRACTS.md` 를 참조.
+>
 > **Generated**: 2026-04-27
 > **Scope**: 신규 플러그인 `dbflow` (E2E 샌드박스 DB 오케스트레이션). velvetalk `e2e-db` skill (`~/development/velvetalk/backend/.claude/skills/e2e-db/`, Python CLI + 3 reference docs) 을 hbrness 패턴(skill 분리 + Tier 0 + 4-tier storage)으로 포팅
-> **Parent roadmap**: `docs/plugin-gaps-and-plan.md` §3.4
+> **Parent roadmap**: (삭제됨 — `docs/plugin-gaps-and-plan.md` §3.4)
 > **Tier**: Tier 0 (project-local, `.e2e/`)
 > **Origin schema**: velvetalk reference 문서와 **1:1 호환** (config / scenario)
 >
