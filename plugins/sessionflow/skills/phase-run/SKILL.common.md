@@ -212,6 +212,17 @@ bash "${SKILL_DIR}/scripts/phaseflow.sh" run-hooks verify   # prompt 출력 + sh
 
 훅 정의(`hooks.spec`/`set-hook`)는 **디스크(Tier 1 공유 경로)에** 박히므로 `/clear` 후 fresh 세션도 그대로 본다. 대화에만 있는 "이것도 해줘" 는 다음 경계에서 소실되니, 매 페이즈 반복돼야 할 단계는 반드시 `hooks.spec` 에 적는다. 훅 명령에 **비밀값을 적지 말 것**(Codex 도 같은 파일을 읽는다).
 
+## relay 로 넘기기
+
+tmux 밖에서는 자동 전진이 안 된다(`init` 이 그때 경고한다). `sessionflow:relay` 가 같은 `HANDOFF.md` 를 쓰므로 페이즈 경계에서 넘길 수 있다.
+
+```bash
+/phase-run pause
+bash <relay SKILL_DIR>/scripts/relay.sh adopt --from phases
+```
+
+페이즈 목록과 커서가 그대로 옮겨가고, 이 스킬의 상태는 남는다 — tmux 로 돌아오면 `/phase-run resume` 로 되돌아갈 수 있다. 넘긴 뒤에는 relay 가 페이즈마다 서브에이전트를 띄우므로, 이 스킬의 stage/hook 설정은 따라가지 않는다.
+
 ## 디버그 / 경로
 
 ```bash

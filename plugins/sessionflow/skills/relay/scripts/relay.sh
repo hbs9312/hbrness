@@ -19,6 +19,8 @@
 #
 # Usage:
 #   relay.sh init --plan <file> [--review none|cleanroom|xreview|both] [--mode auto|confirm]
+#   relay.sh adopt [--from phases|phase-loop] [--review …] [--mode …]
+#                                     # 돌던 phase-run/phase-loop 을 경계에서 이어받는다
 #   relay.sh paths | status | metrics
 #   relay.sh report <file>            # 이번 페이즈 서브에이전트 리포트 보관
 #   relay.sh review <file>            # 이번 페이즈 리뷰 findings 보관
@@ -62,6 +64,9 @@ PLAN_FILE="$STATE_DIR/PLAN.md"
 METRICS="$STATE_DIR/METRICS.tsv"
 PHASES_DIR="$STATE_DIR/phases"
 PAUSED="$STATE_DIR/PAUSED"
+# 이어받은 직후 딱 한 번, 남의 핸드오프에 대해 섹션 검사를 경고로 낮춘다. relay 가
+# 자기 손으로 핸드오프를 한 번 쓰면 사라진다.
+ADOPT_LENIENT="$STATE_DIR/ADOPT_LENIENT"
 HANDOFF_FILE="$(dirname "$STATE_DIR")/HANDOFF.md"
 
 load_state() {
@@ -84,6 +89,12 @@ save_state() {
 }
 
 pad() { printf '%02d' "$1"; }
+
+# src 와 dst 가 같은 실체면 복사하지 않는다 (cp 는 그 경우 실패한다).
+copy_unless_same() {
+  [ "$1" -ef "$2" ] 2>/dev/null && return 0
+  cp "$1" "$2"
+}
 
 # 파일 하나의 줄/바이트/대략 토큰. 토큰은 정확할 필요가 없다 — 페이즈 간 비교가 목적이라
 # 한글이 섞인 산문 기준으로 바이트/3 이면 자릿수는 맞는다.
@@ -110,12 +121,18 @@ REQUIRED_SECTIONS='## 지금 상태
 ## 열린 질문'
 
 check_handoff() {
-  local f="$1" missing=0 sec
+  local f="$1" missing=0 sec lenient=0
   [ -s "$f" ] || die "핸드오프 파일이 비어 있습니다: $f"
+  [ -f "$ADOPT_LENIENT" ] && lenient=1
   while IFS= read -r sec; do
     [ -n "$sec" ] || continue
     grep -qF "$sec" "$f" || { log "빠진 섹션: $sec"; missing=1; }
   done <<< "$REQUIRED_SECTIONS"
+  if [ "$missing" -ne 0 ] && [ "$lenient" -eq 1 ]; then
+    log "이어받은 직후라 통과시킵니다 — 이 핸드오프는 phase-run/phase-loop 이 쓴 것이라 relay 규약을 모릅니다."
+    log "다음 핸드오프부터는 위 섹션이 전부 있어야 합니다."
+    return 0
+  fi
   [ "$missing" -eq 0 ] || die "핸드오프에 필수 섹션이 빠졌습니다. 다음 서브에이전트는 컨텍스트가 0이라 여기 없는 건 영영 모릅니다."
   grep -qiE '(TODO|TBD|\bXXX\b|채워넣기|나중에 적기)' "$f" \
     && die "핸드오프에 미완성 표시가 남아 있습니다. 채우고 다시 부르세요."
@@ -152,10 +169,85 @@ cmd_init() {
   printf '  상태  : %s\n  계획  : %s\n  핸드오프: %s\n' "$STATE_DIR" "$PLAN_FILE" "$HANDOFF_FILE"
 }
 
+cmd_adopt() {
+  local from="" review="none" mode="confirm" src parent cursor total n st title
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from)   from="$2"; shift 2 ;;
+      --review) review="$2"; shift 2 ;;
+      --mode)   mode="$2"; shift 2 ;;
+      *) die "adopt: 알 수 없는 인자 $1" ;;
+    esac
+  done
+  case "$review" in none|cleanroom|xreview|both) ;; *) die "adopt: --review 는 none|cleanroom|xreview|both" ;; esac
+  case "$mode" in auto|confirm) ;; *) die "adopt: --mode 는 auto|confirm" ;; esac
+  [ -f "$STATE_ENV" ] && die "이미 진행 중인 relay 가 있습니다. 'status' 로 보거나 'reset' 하세요."
+
+  parent="$(dirname "$STATE_DIR")"
+  if [ -n "$from" ]; then
+    case "$from" in phases|phase-loop) ;; *) die "adopt: --from 은 phases 또는 phase-loop" ;; esac
+    src="$parent/$from"
+    [ -f "$src/state.env" ] || die "adopt: '$from' 상태가 없습니다 ($src/state.env)"
+  else
+    local found=()
+    for cand in phases phase-loop; do
+      [ -f "$parent/$cand/state.env" ] && found+=("$cand")
+    done
+    [ "${#found[@]}" -eq 0 ] && die "adopt: 이어받을 phase-run/phase-loop 상태가 없습니다 ($parent)"
+    [ "${#found[@]}" -gt 1 ] && die "adopt: 둘 다 있습니다 (${found[*]}). --from 으로 고르세요."
+    from="${found[0]}"; src="$parent/$from"
+  fi
+  [ -f "$src/phases.tsv" ] || die "adopt: $src/phases.tsv 가 없습니다 — 이어받을 페이즈 목록을 못 찾습니다."
+
+  # CURSOR/TOTAL 은 정수로 그대로 쓰이므로 source 하지 않고 뽑아 쓴다.
+  cursor="$(sed -n 's/^CURSOR=\([0-9][0-9]*\)$/\1/p' "$src/state.env" | tail -1)"
+  total="$(sed -n 's/^TOTAL=\([0-9][0-9]*\)$/\1/p' "$src/state.env" | tail -1)"
+  [ -n "$cursor" ] && [ -n "$total" ] || die "adopt: $src/state.env 에서 CURSOR/TOTAL 을 못 읽었습니다."
+
+  if [ "$from" = "phase-loop" ] && [ ! -f "$src/PAUSED" ]; then
+    log "경고: phase-loop 이 pause 상태가 아닙니다. injector 가 예약돼 있으면 /clear 가 날아올 수 있으니 먼저 '/phase-loop pause' 하세요."
+  fi
+
+  mkdir -p "$STATE_DIR" "$PHASES_DIR"
+  # 페이즈 번호는 원본 그대로 유지한다 — 사용자가 보던 번호와 어긋나면 안 된다.
+  {
+    printf '# %s 에서 이어받은 계획\n\n' "$from"
+    printf '## 목표\n원본 계획 문서를 보라: `%s`\n' "$parent/PHASES.md"
+    printf '(없으면 phase-run 으로 시작한 런이다 — 목표는 HANDOFF.md 에 있다.)\n\n'
+    printf '## 제약\n- 이 계획은 %s 상태에서 자동 변환된 것이다. 페이즈 번호는 원본과 같다.\n' "$from"
+    printf -- '- Phase %s 부터 relay 가 맡는다. 그 앞은 이미 끝났다.\n\n' "$cursor"
+    while IFS=$'\t' read -r n st title; do
+      [ -n "${n:-}" ] || continue
+      printf '## Phase %s — %s\n' "$n" "$title"
+      if [ "$n" -lt "$cursor" ]; then
+        printf -- '- 상태: %s 에서 완료됨 (relay 가 다시 하지 않는다)\n\n' "$from"
+      else
+        printf -- '- 할 일: 원본 계획 문서와 HANDOFF.md 를 보고 구체화할 것\n'
+        printf -- '- 원본 상태: %s\n\n' "$st"
+      fi
+    done < "$src/phases.tsv"
+  } > "$PLAN_FILE"
+
+  PHASE_IDX="$cursor"; TOTAL="$total"; REVIEW="$review"; MODE="$mode"
+  STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  save_state
+  printf 'ADOPTED_FROM=%s\n' "$from" >> "$STATE_ENV"
+  touch "$ADOPT_LENIENT"
+
+  printf 'relay 가 %s 를 이어받았습니다 — phase %s / %s, review=%s, mode=%s\n' "$from" "$cursor" "$total" "$review" "$mode"
+  printf '  계획    : %s  (원본: %s)\n' "$PLAN_FILE" "$parent/PHASES.md"
+  printf '  핸드오프: %s  (그대로 이어받음)\n' "$HANDOFF_FILE"
+  printf '\n다음에 할 일:\n'
+  printf '  1. 원본 계획 문서를 읽어 남은 페이즈의 할 일을 구체화한다.\n'
+  printf '  2. %s 상태는 지우지 말고 남겨둔다 (되돌아갈 수 있게).\n' "$from"
+  printf '  3. 이번 한 번은 남의 핸드오프라 섹션 검사를 경고로 낮춘다. 다음부터는 relay 규약을 지켜야 한다.\n'
+}
+
 cmd_paths() {
   printf 'state_dir=%s\nplan=%s\nphases_dir=%s\nhandoff=%s\nmetrics=%s\npaused=%s\n' \
     "$STATE_DIR" "$PLAN_FILE" "$PHASES_DIR" "$HANDOFF_FILE" "$METRICS" \
     "$([ -f "$PAUSED" ] && echo yes || echo no)"
+  printf 'adopted_from=%s\n' "$(sed -n 's/^ADOPTED_FROM=//p' "$STATE_ENV" 2>/dev/null | tail -1)"
 }
 
 cmd_status() {
@@ -180,7 +272,7 @@ cmd_archive() { # <kind> <file>
   n="$(pad "$PHASE_IDX")"
   mkdir -p "$PHASES_DIR"
   dst="$PHASES_DIR/$n-$kind.md"
-  cp "$src" "$dst"
+  copy_unless_same "$src" "$dst"
   metric_row "$PHASE_IDX" "$kind" "$dst"
   printf '%s 보관: %s\n' "$kind" "$dst"
 }
@@ -192,9 +284,10 @@ cmd_handoff() {
   check_handoff "$src"
   n="$(pad "$PHASE_IDX")"
   mkdir -p "$PHASES_DIR" "$(dirname "$HANDOFF_FILE")"
-  cp "$src" "$PHASES_DIR/$n-handoff.md"
-  cp "$src" "$HANDOFF_FILE"
+  copy_unless_same "$src" "$PHASES_DIR/$n-handoff.md"
+  copy_unless_same "$src" "$HANDOFF_FILE"
   metric_row "$PHASE_IDX" "handoff" "$HANDOFF_FILE"
+  rm -f "$ADOPT_LENIENT"
   printf '핸드오프 설치: %s\n' "$HANDOFF_FILE"
 }
 
@@ -237,6 +330,7 @@ cmd_reset() {
 
 case "${1:-}" in
   init)    shift; cmd_init "$@" ;;
+  adopt)   shift; cmd_adopt "$@" ;;
   paths)   cmd_paths ;;
   status)  cmd_status ;;
   report)  shift; cmd_archive report "${1:-}" ;;

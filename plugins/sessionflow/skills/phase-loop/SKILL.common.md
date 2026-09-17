@@ -328,6 +328,17 @@ bash "${SKILL_DIR}/scripts/loop.sh" review-worktree --branch <PR브랜치>
 
 각 페이즈의 `브랜치:` 가 그 페이즈가 올라탈 브랜치명이다. Phase N(N≥2)의 브랜치는 **Phase N-1 의 완료 프로토콜 §7 이 미리 cut** 하므로(불변 원칙 7), fresh 세션은 이 이름의 브랜치 위에서 깨어난다. 그 페이즈의 `PR base` 는 스택이면 직전 페이즈 브랜치, parallel 이면 통합 base 다.
 
+## relay 로 넘기기
+
+tmux 밖(예: Orca)에서는 이 루프가 전진하지 못한다 — `/clear` 를 쏠 pane 이 없다. 그럴 때는 `sessionflow:relay` 로 넘겨 이어간다. `HANDOFF.md` 가 같은 자리라 바통은 그대로 이어진다.
+
+1. `/phase-loop pause` — **먼저 멈춘다.** injector 가 예약된 채로 넘기면 `/clear` 가 날아와 이어받은 세션이 지워진다.
+2. 페이즈 경계인지 확인한다. 구현 중이거나 xreview 를 기다리는 중이면 그 페이즈를 끝내고 핸드오프까지 쓴 뒤에 넘긴다.
+3. `bash <relay SKILL_DIR>/scripts/relay.sh adopt --from phase-loop`
+4. 이 루프의 상태는 **지우지 않는다.** tmux 로 돌아오면 `/phase-loop resume` 로 되돌아갈 수 있다.
+
+넘길 때 사용자에게 반드시 알릴 것: relay 는 기본이 **커밋 금지**라, 페이즈마다 자동으로 PR 이 나가던 흐름이 멈춘다. 출하를 계속하려면 relay 를 `--mode auto` 로 시작하거나, 커밋·PR 을 사용자가 직접 처리해야 한다.
+
 ## 디버그 / 경로
 
 ```bash

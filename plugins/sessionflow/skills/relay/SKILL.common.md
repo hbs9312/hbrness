@@ -86,6 +86,31 @@ bash "${SKILL_DIR}/scripts/relay.sh" init --plan <계획파일> --review <none|c
 
 ---
 
+## 이어받기 — 돌던 phase-run / phase-loop 을 relay 로
+
+`HANDOFF.md` 는 세 스킬이 같은 자리에 쓰므로 바통 자체는 이미 이어진다. 옮길 것은 페이즈 목록과 커서뿐이고, 그걸 `adopt` 가 한다.
+
+```bash
+bash "${SKILL_DIR}/scripts/relay.sh" adopt [--from phases|phase-loop] [--review …] [--mode …]
+```
+
+- `--from` 을 생략하면 자동으로 찾는다. 둘 다 있으면 어느 쪽인지 물어본다(`phases` = phase-run, `phase-loop` = phase-loop).
+- 원본 `phases.tsv` 의 페이즈 제목으로 `PLAN.md` 를 만들고 **번호를 원본 그대로 유지한다.** 사용자가 보던 번호와 어긋나면 안 된다.
+- 원본 상태 디렉토리는 **지우지 않는다.** 되돌아갈 수 있어야 한다.
+- 이어받은 직후 **한 번만** 핸드오프 섹션 검사를 경고로 낮춘다. 남이 쓴 핸드오프는 relay 규약을 모르기 때문이다. 네가 핸드오프를 한 번 쓰면 그때부터 엄격해진다.
+
+adopt 직후에 **반드시** 할 것:
+
+1. 원본 계획 문서(`PHASES.md`, 경로는 adopt 출력에 있다)를 읽고 남은 페이즈의 할 일을 `PLAN.md` 에 구체화한다. 자동 변환본은 제목만 있고 내용이 비어 있다.
+2. phase-loop 에서 넘어왔으면 **출하 정책을 사용자와 다시 정한다.** phase-loop 은 페이즈마다 commit→push→PR 이 루프의 일부였지만 relay 는 기본이 커밋 금지다. 지금까지 나간 PR 과 앞으로의 페이즈를 어떻게 맞출지 물어야 한다.
+3. phase-loop 은 넘어오기 전에 `/phase-loop pause` 로 멈춰 있어야 한다. injector 가 예약돼 있으면 `/clear` 가 날아와 이 세션이 지워진다. adopt 가 경고하지만 막지는 못한다.
+
+**언제 넘길 수 있나** — 페이즈 경계에서만. 핸드오프가 설치되고 advance 직전/직후다. 서브에이전트가 돌고 있거나 `/clear` 가 예약된 한가운데서는 안 된다.
+
+**반대 방향**(relay → phase-loop)은 자동화하지 않았다. `PHASES.md` 헤더(Mode / Commit policy / Stack / Integration base / Branch scheme / xreview)를 사람이 정해야 해서 자동 변환의 이득이 거의 없다. 필요하면 남은 페이즈 제목으로 `phaseflow init` 을 직접 부르면 되고, `HANDOFF.md` 는 그대로 쓰인다. 다만 relay 가 커밋을 안 해왔다면 워킹트리에 여러 페이즈 분량이 뭉쳐 있으니 PR 단위로 쪼개는 게 먼저다. 그리고 tmux 안이어야 한다.
+
+---
+
 ## 페이즈 루프
 
 각 페이즈마다 이 순서를 돈다. `relay.sh status` 로 지금 몇 번째인지 확인하고 시작한다.
