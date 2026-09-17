@@ -1,6 +1,6 @@
 ---
 name: stop
-description: "xreview:live 로 띄운 백그라운드 코드리뷰 세션을 종료하는 스킬. tmux 세션·완료 watcher·docked pane 만 정리하고 **리뷰 내역(REVIEW_REQUEST/REVIEW_RESULT/meta)은 기본 보존**한다 — 나중에 다시 읽을 수 있다. 인자 없이 부르면 /xreview:status 목록을 먼저 보여주고 어떤 세션을 끝낼지 고르게 한다. slug 직접 지정, --all(전부), --purge(작업 디렉토리까지 삭제)도 지원. 사용자가 '리뷰 종료', '리뷰 세션 종료', '리뷰 중지', '리뷰 끝내', '리뷰 정리', '리뷰 닫아줘', 'xreview stop', '/xreview:stop' 등을 말하면 트리거. Usage: /xreview:stop [slug | --all] [--purge]"
+description: "xreview:live 로 띄운 백그라운드 코드리뷰 세션을 종료하는 스킬. 리뷰어 세션·완료 watcher·docked pane 만 정리하고 **리뷰 내역(REVIEW_REQUEST/REVIEW_RESULT/meta)은 기본 보존**한다 — 나중에 다시 읽을 수 있다. 인자 없이 부르면 /xreview:status 목록을 먼저 보여주고 어떤 세션을 끝낼지 고르게 한다. slug 직접 지정, --all(전부), --purge(작업 디렉토리까지 삭제)도 지원. 사용자가 '리뷰 종료', '리뷰 세션 종료', '리뷰 중지', '리뷰 끝내', '리뷰 정리', '리뷰 닫아줘', 'xreview stop', '/xreview:stop' 등을 말하면 트리거. Usage: /xreview:stop [slug | --all] [--purge]"
 argument-hint: "[slug | --all] [--purge]"
 tools: [shell]
 effort: low
@@ -13,7 +13,8 @@ model: sonnet
 
 ## 보존 원칙 (중요)
 
-- `stop` 은 **세션만 종료**한다: tmux 세션 kill + watcher kill + docked pane 닫기 + 인덱스 항목 제거.
+- `stop` 은 **세션만 종료**한다: 리뷰어 세션 kill + watcher kill + docked pane 닫기 + 인덱스 항목 제거. tmux 세션이면 tmux 가, Orca 탭이면 Orca 가 닫는다.
+- 다른 backend 에서 시작한 세션은 여기서 못 죽인다. 인덱스 항목은 지우되 "그쪽 환경에서 닫아야 한다"는 경고를 출력하니, 그 문구를 사용자에게 그대로 전달한다.
 - **리뷰 내역은 남는다**: 작업 디렉토리(`{HBRNESS_HOME}/xreview/live/<repo>/<slug>/` 의 REVIEW_REQUEST.md / REVIEW_RESULT.md / meta.json)는 그대로 보존된다. `/xreview:status` 의 result 경로로 계속 열어볼 수 있다.
 - 내역까지 지우려면 사용자가 명시적으로 `--purge` 를 줄 때만. 임의로 붙이지 말 것.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# xreview:live shared library — tmux background-review session helpers.
+# xreview:live shared library — background-review session helpers (tmux / orca).
 #
 # Storage (Tier 1, namespaced under live/):
 #   $XRLIVE_HOME/<repo-key>/<slug>/REVIEW_REQUEST.md
@@ -7,9 +7,9 @@
 #   $XRLIVE_HOME/<repo-key>/<slug>/meta.json
 #   $XRLIVE_HOME/.sessions/<slug>.json     (flat index for status/stop)
 #
-# A "reviewer" agent runs in a detached tmux session `xrev-<slug>`. The launcher
-# (current) pane only sees a completion ping; peek/dock open non-destructive
-# viewports (nested `tmux attach`) onto that detached session.
+# A "reviewer" agent runs in its own background session named `xrev-<slug>` —
+# a detached tmux session, or an Orca terminal tab. The launcher pane only sees
+# a completion ping; peek/dock show that session without disturbing it.
 #
 # Source-only: scripts should `source` this then call functions.
 
@@ -28,50 +28,204 @@ xr_init_home() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# tmux helpers
+# Terminal backend — tmux or orca
+#
+# xreview needs six things from whatever owns the terminals: spawn a detached
+# reviewer, say whether it is alive, type a line into a pane, read the rendered
+# screen, kill it, and show it to the user. tmux and Orca both offer all six, so
+# everything dispatches through the xr_be_* helpers below and nothing outside
+# this section calls `tmux` or `orca` directly.
+#
+#   session ref : tmux → session name `xrev-<slug>`, orca → terminal handle
+#   launcher id : tmux → $TMUX_PANE,                 orca → $ORCA_TERMINAL_HANDLE
+#
+# Every session records its backend in the index, so a review started under tmux
+# stays listable from an Orca session (status/stop fall back to the durable
+# files instead of dying).
 # ─────────────────────────────────────────────────────────────────────────────
 
-xr_in_tmux() { [ -n "${TMUX:-}" ] || [ -n "${TMUX_PANE:-}" ]; }
-
-xr_current_pane() {
-  if [ -n "${TMUX_PANE:-}" ]; then
-    printf '%s\n' "$TMUX_PANE"; return 0
+# Which backend owns THIS shell. tmux wins when both look present: nesting runs
+# tmux inside an Orca tab, and the launcher we ping back is then the tmux pane.
+xr_backend() {
+  if [ -z "${XR_BACKEND:-}" ]; then
+    if [ -n "${XRLIVE_BACKEND:-}" ]; then      XR_BACKEND="$XRLIVE_BACKEND"
+    elif [ -n "${TMUX_PANE:-}" ] || [ -n "${TMUX:-}" ]; then XR_BACKEND=tmux
+    elif [ -n "${ORCA_TERMINAL_HANDLE:-}" ]; then XR_BACKEND=orca
+    else XR_BACKEND=none
+    fi
   fi
-  [ -n "${TMUX:-}" ] || return 1
-  tmux display-message -p '#{pane_id}' 2>/dev/null
+  printf '%s' "$XR_BACKEND"
+}
+
+# Can <backend> be driven from here? A session started under the other one is
+# still listed, just not controllable.
+xr_be_usable() {
+  case "${1:-}" in
+    tmux) command -v tmux >/dev/null 2>&1 && { [ -n "${TMUX_PANE:-}" ] || [ -n "${TMUX:-}" ]; } ;;
+    orca) command -v orca >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+xr_backend_require() {
+  local be; be="$(xr_backend)"
+  case "$be" in
+    tmux) xr_need tmux ;;
+    orca) xr_need orca ;;
+    *) xr_die "no terminal backend found — start tmux, or run inside Orca. (force one with XRLIVE_BACKEND=tmux|orca)" ;;
+  esac
+  xr_be_usable "$be" || xr_die "backend '$be' is not usable from this shell"
+}
+
+# This pane/terminal, so the watcher knows where to send the completion ping.
+xr_launcher_id() {
+  case "$(xr_backend)" in
+    tmux)
+      if [ -n "${TMUX_PANE:-}" ]; then printf '%s' "$TMUX_PANE"; return 0; fi
+      tmux display-message -p '#{pane_id}' 2>/dev/null ;;
+    orca) printf '%s' "${ORCA_TERMINAL_HANDLE:-}" ;;
+  esac
 }
 
 xr_session_name() { printf '%s%s' "$XRLIVE_SESSION_PREFIX" "$1"; }
 
-xr_session_exists() {
-  tmux has-session -t "=$1" 2>/dev/null
+# Run an orca CLI call and apply <jq-filter> to its .result, or echo nothing and
+# fail when the call itself failed.
+xr_orca_json() {
+  local filter="$1"; shift
+  "$@" --json 2>/dev/null | jq -er "if .ok then (.result | ${filter}) else empty end" 2>/dev/null
 }
 
-# Echo 1 if the reviewer pane in the session has exited (remain-on-exit), else 0.
-xr_session_pane_dead() {
-  local sess="$1" out
-  out="$(tmux list-panes -t "=$sess" -F '#{pane_dead}' 2>/dev/null | head -1)"
-  [ "$out" = "1" ] && printf '1' || printf '0'
-}
-
-# Submit a line of text to a pane + Enter. Recipient tool decides submit mode:
-# codex needs a CSI-u plain Enter (enhanced keyboard reporting), others plain Enter.
-xr_tmux_send_line() {
-  local pane="$1" text="$2" recipient_tool="${3:-}"
-  text="$(printf '%s' "$text" | tr -d '\r\n')"
-  if [ "${#text}" -gt 4000 ]; then text="${text:0:4000}…(truncated)"; fi
-  tmux send-keys -t "$pane" -l "$text"
-  case "$recipient_tool" in
-    codex) tmux send-keys -t "$pane" -l $'\e[13;1u' ;;
-    *)     tmux send-keys -t "$pane" Enter ;;
+# Spawn the reviewer detached. Echoes the session ref the other helpers take.
+#   xr_be_spawn <slug> <work-dir> <repo-root> <command>
+xr_be_spawn() {
+  local slug="$1" work="$2" root="$3" cmd="$4" sess ref
+  sess="$(xr_session_name "$slug")"
+  case "$(xr_backend)" in
+    tmux)
+      tmux new-session -d -s "$sess" -x 220 -y 50 -c "$work" "$cmd" || return 1
+      # remain-on-exit keeps the pane and its scrollback after the agent exits so
+      # peek/dock still show the final state; stop.sh tears it down.
+      tmux set-option -t "$sess" remain-on-exit on 2>/dev/null || true
+      tmux set-option -t "$sess" window-size manual 2>/dev/null || true
+      printf '%s' "$sess" ;;
+    orca)
+      # Orca terminals belong to a workspace rather than an arbitrary cwd, so the
+      # reviewer opens in the repo's worktree and the runner cd's into the scratch
+      # dir itself. A repo path Orca does not know falls back to this worktree.
+      ref="$(xr_orca_json '.terminal.handle' orca terminal create \
+               --worktree "path:$root" --title "$sess" --command "$cmd")" \
+        || ref="$(xr_orca_json '.terminal.handle' orca terminal create \
+               --worktree current --title "$sess" --command "$cmd")" \
+        || return 1
+      [ -n "$ref" ] || return 1
+      printf '%s' "$ref" ;;
+    *) return 1 ;;
   esac
 }
 
-# Capture the visible text of a session's (first) pane. Used to detect a reviewer
-# stuck on an interactive prompt the detached run can't answer.
-xr_capture_pane() {
-  local sess="$1" lines="${2:-40}"
-  tmux capture-pane -p -t "=$sess" 2>/dev/null | tail -n "$lines"
+# Is the session still there? (The container, not the reviewer process.)
+xr_be_alive() {
+  local ref="${1:-}" be="${2:-}"
+  [ -n "$ref" ] || return 1
+  [ -n "$be" ] || be="$(xr_backend)"
+  xr_be_usable "$be" || return 1
+  case "$be" in
+    tmux) tmux has-session -t "=$ref" 2>/dev/null ;;
+    orca) [ "$(xr_orca_json '.terminal.connected' orca terminal show --terminal "$ref")" = "true" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Has the reviewer PROCESS finished? The runner writes RUN_EXIT with its exit
+# code the moment the agent returns, which is the backend-independent signal —
+# Orca keeps the shell alive after the command ends, so a live terminal says
+# nothing about the review. tmux's dead pane stays as a fallback for sessions
+# started before the runner existed.
+xr_be_ended() {
+  local work="${1:-}" ref="${2:-}" be="${3:-}"
+  [ -n "$work" ] && [ -f "$work/RUN_EXIT" ] && return 0
+  [ -n "$be" ] || be="$(xr_backend)"
+  case "$be" in
+    tmux)
+      xr_be_usable tmux || return 1
+      [ "$(tmux list-panes -t "=$ref" -F '#{pane_dead}' 2>/dev/null | head -1)" = "1" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Type a line into a pane and submit it.
+xr_be_send() {
+  local ref="$1" text="$2" recipient_tool="${3:-}" be="${4:-}"
+  [ -n "$be" ] || be="$(xr_backend)"
+  text="$(printf '%s' "$text" | tr -d '\r\n')"
+  if [ "${#text}" -gt 4000 ]; then text="${text:0:4000}…(truncated)"; fi
+  case "$be" in
+    tmux)
+      tmux send-keys -t "$ref" -l "$text"
+      # codex needs a CSI-u plain Enter (enhanced keyboard reporting) to submit;
+      # every other tool takes a plain Enter.
+      case "$recipient_tool" in
+        codex) tmux send-keys -t "$ref" -l $'\e[13;1u' ;;
+        *)     tmux send-keys -t "$ref" Enter ;;
+      esac ;;
+    orca)
+      # Orca submits the prompt itself and reports whether it landed, so the
+      # codex CSI-u workaround is not needed here.
+      orca terminal send --terminal "$ref" --text "$text" --enter --json >/dev/null 2>&1 ;;
+  esac
+}
+
+# The visible text of a session's pane. Used to spot a reviewer hung on an
+# interactive prompt the detached run cannot answer.
+xr_be_capture() {
+  local ref="$1" lines="${2:-40}" be="${3:-}"
+  [ -n "$be" ] || be="$(xr_backend)"
+  case "$be" in
+    tmux) tmux capture-pane -p -t "=$ref" 2>/dev/null | tail -n "$lines" ;;
+    orca) xr_orca_json '.terminal.tail | join("\n")' \
+            orca terminal read --terminal "$ref" --screen --limit "$lines" ;;
+  esac
+}
+
+xr_be_kill() {
+  local ref="${1:-}" be="${2:-}"
+  [ -n "$ref" ] || return 0
+  [ -n "$be" ] || be="$(xr_backend)"
+  xr_be_usable "$be" || return 0
+  case "$be" in
+    tmux) tmux kill-session -t "=$ref" 2>/dev/null || true ;;
+    orca) orca terminal close --terminal "$ref" --tab --json >/dev/null 2>&1 || true ;;
+  esac
+}
+
+# Close a docked viewport pane. Only tmux has one — under Orca the reviewer tab
+# IS the view, so there is nothing separate to close.
+xr_be_close_viewport() {
+  local vp="${1:-}" be="${2:-}"
+  [ -n "$vp" ] || return 1
+  [ -n "$be" ] || be="$(xr_backend)"
+  case "$be" in
+    tmux)
+      xr_be_usable tmux || return 1
+      tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$vp" || return 1
+      tmux kill-pane -t "$vp" 2>/dev/null || true ;;
+    *) return 1 ;;
+  esac
+}
+
+# Backend + session ref recorded for a slug. Sessions written before the backend
+# layer carry neither, and were all tmux with the session name as the ref.
+xr_slug_backend() {
+  local b; b="$(xr_meta "$1" backend 2>/dev/null || true)"
+  printf '%s' "${b:-tmux}"
+}
+xr_slug_ref() {
+  local r
+  r="$(xr_meta "$1" session_ref 2>/dev/null || true)"
+  [ -n "$r" ] || r="$(xr_meta "$1" session 2>/dev/null || true)"
+  [ -n "$r" ] || r="$(xr_session_name "$1")"
+  printf '%s' "$r"
 }
 
 # Return 0 if the given pane text looks like a workspace-trust / permission prompt
@@ -203,7 +357,7 @@ xr_resolve_slug() {
   for f in "$XRLIVE_SESSIONS"/*.json; do
     [ -e "$f" ] || continue
     s="$(basename "$f" .json)"
-    xr_session_exists "$(xr_session_name "$s")" && slugs+=("$s")
+    xr_be_alive "$(xr_slug_ref "$s")" "$(xr_slug_backend "$s")" && slugs+=("$s")
   done
   if [ "${#slugs[@]}" -eq 0 ]; then
     xr_die "no active review session. (start one with /xreview:live, or see /xreview:status)"

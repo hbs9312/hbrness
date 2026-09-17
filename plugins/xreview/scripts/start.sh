@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Start a background peer-review: launch the *other* coding agent in a detached
-# tmux session to review the current branch's diff, write its review to a file,
-# and ping this pane when done.
+# Start a background peer-review: launch the *other* coding agent in its own
+# background session (detached tmux session, or Orca terminal tab) to review the
+# current branch's diff, write its review to a file, and ping this pane when done.
 #
 # Usage:
 #   start.sh --current-tool <claude|codex> [--reviewer <claude|codex>]
@@ -40,8 +40,7 @@ done
 
 xr_need git
 xr_need jq
-xr_need tmux
-xr_in_tmux || xr_die "not inside a tmux session — this skill opens the reviewer in a tmux pane/popup. Start tmux first."
+xr_backend_require
 xr_init_home
 
 # Resolve tools
@@ -115,7 +114,8 @@ RESULT="$WORK/REVIEW_RESULT.md"
 rm -f "$RESULT"   # fresh run
 xr_set_watch_state "$WORK" running "리뷰어 기동"   # durable status for pollers
 SESS="$(xr_session_name "$slug")"
-launcher_pane="$(xr_current_pane || echo '')"
+BACKEND="$(xr_backend)"
+launcher_pane="$(xr_launcher_id || echo '')"
 created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Assemble the review request the reviewer will read
@@ -175,11 +175,27 @@ if [ "$reviewer" = "codex" ] || [ -n "$launch_override" ]; then
   xr_codex_pretrust_dir "$WORK"
 fi
 
-# Launch detached. remain-on-exit keeps the pane (and its scrollback) after the
-# agent exits so peek/dock still show the final state; stop.sh tears it down.
-tmux new-session -d -s "$SESS" -x 220 -y 50 -c "$WORK" "$launch"
-tmux set-option -t "$SESS" remain-on-exit on 2>/dev/null || true
-tmux set-option -t "$SESS" window-size manual 2>/dev/null || true
+# Wrap the reviewer in a runner script. Two reasons: the launch line carries a
+# long quoted seed prompt that would need re-quoting for every backend, and the
+# runner records the agent's exit code in RUN_EXIT — the one end-of-run signal
+# that works on both backends (Orca leaves the shell alive after the command
+# returns, so a live terminal says nothing about the review).
+RUNNER="$WORK/run.sh"
+rm -f "$WORK/RUN_EXIT"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'cd %s || exit 1\n' "$(xr_shq "$WORK")"
+  printf '%s\n' "$launch"
+  printf 'printf %%s "$?" > %s\n' "$(xr_shq "$WORK/RUN_EXIT")"
+  # tmux keeps a finished pane around via remain-on-exit; Orca ends the terminal
+  # with its command, which would take the reviewer's scrollback with it. Hold
+  # the tab open with a shell so peek still shows how the run ended.
+  [ "$BACKEND" = orca ] && printf 'exec "${SHELL:-/bin/bash}" -i\n'
+} > "$RUNNER"
+chmod +x "$RUNNER"
+
+SESSION_REF="$(xr_be_spawn "$slug" "$WORK" "$REPO_ROOT" "bash $(xr_shq "$RUNNER")")" \
+  || xr_die "could not start the reviewer session on backend '$BACKEND'"
 
 # Background watcher: pings the launcher pane when RESULT appears (or the run ends).
 watcher_pid=""
@@ -198,16 +214,18 @@ jq -n \
   --arg repo_key "$repo_key" --arg repo_root "$REPO_ROOT" \
   --arg branch "$branch" --arg base "$base" --arg scope "$scope" \
   --arg launcher_pane "$launcher_pane" --arg watcher_pid "$watcher_pid" \
+  --arg backend "$BACKEND" --arg session_ref "$SESSION_REF" \
   --arg created "$created" \
   '{slug:$slug, session:$session, work:$work, request:$request, result:$result,
     reviewer:$reviewer, current_tool:$current_tool, repo_key:$repo_key,
     repo_root:$repo_root, branch:$branch, base:$base, scope:$scope,
+    backend:$backend, session_ref:$session_ref,
     launcher_pane:$launcher_pane, watcher_pid:$watcher_pid, viewport:"",
     created:$created}' > "$XRLIVE_SESSIONS/$slug.json"
 
 cat <<EOF
 xreview:live started — reviewer running in the background.
-  session : $SESS  (slug: $slug)
+  session : $SESS  (slug: $slug, backend: $BACKEND)
   reviewer: $reviewer   scope: $scope_desc
   request : $REQUEST
   result  : $RESULT  (pending — you'll be pinged here when ready)

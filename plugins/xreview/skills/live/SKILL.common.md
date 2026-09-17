@@ -1,6 +1,6 @@
 ---
 name: live
-description: "xreview 의 기본 코드리뷰 스킬. 반대편 코딩 에이전트(claude↔codex)를 tmux 백그라운드 세션으로 띄워 현재 브랜치/작업트리/PR 의 diff 를 읽기 전용으로 리뷰시키고, 완료되면 이 세션에 핑을 보낸다. 리뷰어는 detached 세션에서 독립 실행되며, 진행 상황은 popup(peek) 또는 split pane(dock) 으로 들여다보고 서로 전환할 수 있다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '리뷰해줘', '코드 리뷰', '코드 리뷰해줘', '다른 모델로 리뷰', '다른 에이전트로 리뷰', '백그라운드 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 팝업', '/xreview:live' 등을 말하면 트리거. 리뷰 세션 목록 확인은 /xreview:status, 종료는 /xreview:stop. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] | peek|dock|undock [slug]"
+description: "xreview 의 기본 코드리뷰 스킬. 반대편 코딩 에이전트(claude↔codex)를 백그라운드 세션(tmux 또는 Orca 터미널 탭)으로 띄워 현재 브랜치/작업트리/PR 의 diff 를 읽기 전용으로 리뷰시키고, 완료되면 이 세션에 핑을 보낸다. 리뷰어는 detached 세션에서 독립 실행되며, 진행 상황은 popup(peek) 또는 split pane(dock) 으로 들여다보고 서로 전환할 수 있다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '리뷰해줘', '코드 리뷰', '코드 리뷰해줘', '다른 모델로 리뷰', '다른 에이전트로 리뷰', '백그라운드 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 팝업', '/xreview:live' 등을 말하면 트리거. 리뷰 세션 목록 확인은 /xreview:status, 종료는 /xreview:stop. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] | peek|dock|undock [slug]"
 argument-hint: "[start|peek|dock|undock] [--reviewer ..] [--scope ..] [slug]"
 tools: [shell]
 effort: low
@@ -9,7 +9,9 @@ model: sonnet
 
 # xreview:live — 다른 에이전트로 백그라운드 코드리뷰 (기본 리뷰 스킬)
 
-지금 돌고 있는 코딩 에이전트가 **반대편 에이전트**(claude면 codex, codex면 claude)를 별도 tmux 세션으로 띄워, 현재 브랜치의 변경분을 읽기 전용으로 리뷰하게 한다. 리뷰어는 백그라운드 detached 세션에서 독립 실행되고, 이 세션(launcher)은 완료 시 한 줄 핑만 받는다. 진행 상황은 **popup(peek)** 또는 **split pane(dock)** 으로 언제든 들여다볼 수 있고 서로 전환된다.
+지금 돌고 있는 코딩 에이전트가 **반대편 에이전트**(claude면 codex, codex면 claude)를 별도 백그라운드 세션으로 띄워, 현재 브랜치의 변경분을 읽기 전용으로 리뷰하게 한다. 리뷰어는 독립 실행되고, 이 세션(launcher)은 완료 시 한 줄 핑만 받는다.
+
+세션을 뭐가 들고 있는지는 **backend** 가 정한다. tmux 안이면 detached tmux 세션, Orca 안이면 Orca 터미널 탭이다. 실행 환경을 보고 자동으로 고르며, `XRLIVE_BACKEND=tmux|orca` 로 강제할 수 있다. 진행 상황은 **peek**/**dock** 으로 들여다본다 — tmux 는 popup 과 split pane, Orca 는 리뷰어 탭으로 전환하는 방식이다.
 
 이것이 xreview 의 **기본 리뷰 동작**이다. 사용자가 그냥 "리뷰해줘" / "코드 리뷰" 라고만 해도 이 스킬로 처리한다 (별도의 동기·블로킹 리뷰 모드는 없다).
 
@@ -72,21 +74,24 @@ model: sonnet
 
 - 완료 핑을 받으면 **결과를 읽어 요약**까지 한다. 단, **리뷰 findings 에 따른 코드 자동 수정은 하지 않는다** — 사용자가 명시적으로 "고쳐줘" 라고 할 때만. (xreview 플러그인 공통 규칙)
 - 리뷰어 출력을 재해석·왜곡하지 말고, severity(critical/warning/info)와 file:line, VERDICT 를 보존해 정리한다.
-- tmux 밖에서 호출되면 `start.sh` 가 죽고 안내를 출력한다 → 사용자에게 tmux 세션에서 실행하라고 알린다.
+- tmux 도 Orca 도 아닌 곳에서 호출되면 `start.sh` 가 죽고 안내를 출력한다 → 사용자에게 tmux 세션을 띄우거나 Orca 안에서 실행하라고 알린다.
+- 다른 backend 에서 시작한 세션은 `/xreview:status` 에 `unknown — backend '<be>' not reachable` 로 뜬다. peek·stop 이 안 되니 결과 파일을 직접 읽어 요약하거나, 그쪽 환경에서 다시 열라고 안내한다.
 - 리뷰어 CLI(claude/codex)가 PATH 에 없으면 스크립트가 거절한다 → 설치/PATH 안내.
 - 이 스킬은 "백그라운드로 띄워 지켜보는" 흐름이다. 리뷰 결과를 받으려면 완료 핑을 기다리거나 `peek`/`dock` 으로 들여다본다.
 
 ## 동작 방식 메모
 
-- 리뷰어는 `xrev-<slug>` detached 세션에 산다. peek(팝업)·dock(split)은 `env -u TMUX tmux attach` 로 그 세션을 보는 **비파괴적 viewport** 일 뿐이라, 닫아도 리뷰어 프로세스는 죽지 않는다.
+- 리뷰어는 `xrev-<slug>` 세션에 산다. 보는 행위는 어느 backend 든 **비파괴적**이라 닫아도 리뷰어는 죽지 않는다. tmux 는 `env -u TMUX tmux attach` 로 붙는 viewport 를 열고(peek=팝업, dock=split), Orca 는 리뷰어 탭이 곧 뷰라서 peek 과 dock 이 똑같이 그 탭으로 전환하고 undock 이 원래 탭으로 돌아온다.
+- 리뷰어는 `run.sh` 를 거쳐 실행되고, 끝나면 종료 코드를 `$WORK/RUN_EXIT` 에 남긴다. backend 와 무관하게 "리뷰어가 끝났는가"를 이 파일 하나로 판단한다 — Orca 는 명령이 끝나도 터미널이 살아 있어서 세션 생존 여부로는 알 수 없기 때문이다. 끝난 뒤에도 화면을 볼 수 있도록 tmux 는 `remain-on-exit`, Orca 는 runner 끝에 셸을 남겨 탭을 유지한다.
 - 읽기 전용 보장: codex 리뷰어는 `-s workspace-write` + cwd=작업디렉토리라 레포 쓰기를 샌드박스가 차단한다. claude 리뷰어는 레포를 `--add-dir` 로 읽기만 추가하고 결과는 작업디렉토리에 쓴다(읽기 전용은 프롬프트로 강제).
 - 저장 위치(Tier 1): `~/.hbrness/xreview/live/<repo>/<slug>/` (REVIEW_REQUEST.md, REVIEW_RESULT.md, meta.json, **WATCH_STATE**), 인덱스 `~/.hbrness/xreview/live/.sessions/<slug>.json`.
-- **멈춤 감지(hardening)**: 리뷰어는 detached 라 trust/권한 프롬프트를 스스로 답할 수 없다. start 시 작업디렉토리(+claude 는 레포)를 pre-trust 하고, 그래도 프롬프트가 뜨면 watcher 가 `capture-pane` 으로 감지해 `stuck` 으로 핑한다(조용한 무한 대기 제거). diff 본문의 "trust" 오탐을 피하려 연속 감지(`XRLIVE_STUCK_AFTER`)를 요구한다.
-- **durable 상태**: watcher 가 매 종결 상태(running/done/stuck/ended-no-result/gone/timeout)를 `$WORK/WATCH_STATE` 에 기록한다. tmux 핑이 유실돼도 `/xreview:status` 로 폴링하면 결과를 알 수 있다(view.sh 의 인덱스 쓰기와 충돌하지 않도록 별도 파일).
+- **멈춤 감지(hardening)**: 리뷰어는 백그라운드라 trust/권한 프롬프트를 스스로 답할 수 없다. start 시 작업디렉토리(+claude 는 레포)를 pre-trust 하고, 그래도 프롬프트가 뜨면 watcher 가 화면을 읽어(tmux `capture-pane` / Orca `terminal read --screen`) 감지해 `stuck` 으로 핑한다(조용한 무한 대기 제거). diff 본문의 "trust" 오탐을 피하려 연속 감지(`XRLIVE_STUCK_AFTER`)를 요구한다.
+- **durable 상태**: watcher 가 매 종결 상태(running/done/stuck/ended-no-result/gone/timeout)를 `$WORK/WATCH_STATE` 에 기록한다. 완료 핑이 유실돼도 `/xreview:status` 로 폴링하면 결과를 알 수 있다(view.sh 의 인덱스 쓰기와 충돌하지 않도록 별도 파일).
 
 ## 환경 변수
 
 - `XRLIVE_HOME` — 기본 `~/.hbrness/xreview/live`. 테스트 격리용.
+- `XRLIVE_BACKEND` — `tmux` 또는 `orca`. 자동 감지를 덮어쓴다. 기본은 tmux 안이면 tmux, 아니면 Orca(`$ORCA_TERMINAL_HANDLE` 존재 시).
 - `XRLIVE_WATCH_TIMEOUT` — watcher 최대 대기 초. 기본 7200(2h).
 - `XRLIVE_WATCH_INTERVAL` — 폴링 간격 초. 기본 3.
 - `XRLIVE_STUCK_AFTER` — stuck 핑 전 연속 프롬프트 감지 횟수. 기본 2(오탐 방지).

@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 xr_need jq
-xr_need tmux
 xr_init_home
 
 want="${1:-}"
@@ -22,6 +21,8 @@ for f in "$XRLIVE_SESSIONS"/*.json; do
   found=1
 
   sess="$(jq -r '.session' "$f")"
+  be="$(jq -r '.backend // "tmux"' "$f")"
+  ref="$(jq -r '.session_ref // .session' "$f")"
   reviewer="$(jq -r '.reviewer' "$f")"
   repo_key="$(jq -r '.repo_key' "$f")"
   branch="$(jq -r '.branch' "$f")"
@@ -35,10 +36,14 @@ for f in "$XRLIVE_SESSIONS"/*.json; do
 
   if [ -s "$result" ]; then
     state="done (result ready)"
-  elif xr_session_exists "$sess"; then
-    if [ "$(xr_session_pane_dead "$sess")" = "1" ]; then
-      state="ended (no result)"
-    elif [ "$watch" = "stuck" ]; then
+  elif xr_be_ended "$work" "$ref" "$be"; then
+    state="ended (no result)"
+  elif ! xr_be_usable "$be"; then
+    # Started under the other backend (e.g. a tmux review, listed from Orca).
+    # The durable watch state is all we can honestly report.
+    state="unknown — backend '$be' not reachable from here (last known: ${watch:-?})"
+  elif xr_be_alive "$ref" "$be"; then
+    if [ "$watch" = "stuck" ]; then
       state="stuck (trust/권한 프롬프트 — /xreview:live peek 로 응답)"
     else
       state="running"
@@ -52,7 +57,7 @@ for f in "$XRLIVE_SESSIONS"/*.json; do
   [ "$watch" = "stuck" ] && [ -n "$watch_detail" ] && printf '    ⚠ detail : %s\n' "$watch_detail"
   printf '    reviewer : %s    scope: %s\n' "$reviewer" "$scope"
   printf '    repo     : %s  (branch %s)\n' "$repo_key" "$branch"
-  printf '    session  : %s    started: %s\n' "$sess" "$created"
+  printf '    session  : %s (%s)    started: %s\n' "$sess" "$be" "$created"
   [ -s "$result" ] && printf '    result   : %s\n' "$result"
   printf '\n'
 done

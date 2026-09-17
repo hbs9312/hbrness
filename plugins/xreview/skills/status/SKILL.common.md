@@ -24,11 +24,12 @@ bash "${PLUGIN_ROOT}/scripts/status.sh" [slug]
 
 세션마다:
 - **slug** (브랜치-해시 식별자)
-- **state** — `running` / `done (result ready)` / `stuck (trust/권한 프롬프트)` / `ended (no result)` / `gone` / `timeout`
+- **state** — `running` / `done (result ready)` / `stuck (trust/권한 프롬프트)` / `ended (no result)` / `gone` / `timeout` / `unknown`
+  - `unknown` 은 그 세션이 다른 backend(tmux ↔ orca)에서 시작돼 여기서 확인이 안 되는 경우다. 마지막으로 기록된 상태를 같이 보여주니 그대로 전달하고, 결과 파일이 있으면 그걸 읽어 요약한다.
   - `stuck` 이면 리뷰어가 trust/권한 프롬프트에서 막힌 것 → `/xreview:live peek <slug>` 로 응답하거나 `/xreview:stop <slug>` 후 재시작하라고 안내한다.
 - **reviewer** (claude/codex), **scope** (branch/working/pr)
 - **repo / branch**
-- **session** (tmux 세션명), **started** (생성 시각)
+- **session** (세션명 + backend), **started** (생성 시각)
 - result 파일이 있으면 그 경로
 
 ## 가이드라인 (너 = LLM)
