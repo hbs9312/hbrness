@@ -1,0 +1,48 @@
+{
+  "harness": "devin",
+  "manifest_dir": ".devin-plugin",
+  "frontmatter": {
+    "strip": [
+      "harness",
+      "model",
+      "effort",
+      "skills"
+    ],
+    "add": {},
+    "transform_tools_to": null,
+    "tool_map": {
+      "sub-agent": "run_subagent",
+      "file:read": "read",
+      "file:write": "write",
+      "file:edit": "edit",
+      "search:grep": "grep",
+      "search:glob": "glob",
+      "shell": "exec",
+      "invoke-skill": "skill"
+    },
+    "keep": [
+      "disable-model-invocation",
+      "argument-hint",
+      "user-invocable"
+    ]
+  },
+  "body_replacements": {
+    "${SKILL_DIR}": "{HBRNESS_SKILL_PATH}",
+    "${PLUGIN_ROOT}": "{HBRNESS_PLUGIN_PATH}",
+    "{HARNESS_HOME}": "~/.config/devin",
+    "{HARNESS_NAME}": "devin",
+    "{HBRNESS_HOME}": "~/.hbrness",
+    "{CLAUDE_MEMORY_PREFIX}": "~/.claude/projects",
+    "{CLAUDE_MEMORY_SUFFIX}": "/memory",
+    "{CODEX_MEMORY_PREFIX}": "~/.codex/memories",
+    "{CODEX_MEMORY_SUFFIX}": "",
+    "\"/phase-loop continue\"": "\"/sessionflow:phase-loop continue\"",
+    "\"/phase-run continue\"": "\"/sessionflow:phase-run continue\""
+  },
+  "mcp": {
+    "format": "json",
+    "output_file": ".mcp.json"
+  },
+  "hooks_source": "adapters/hooks/devin.hooks.json",
+  "hooks_output": "hooks.json"
+}

@@ -233,6 +233,14 @@ def transform_file(src_path, dst_path, adapter, is_agent=False):
     else:
         content = transform_body(content, adapter)
 
+    if adapter.get("harness") in ("grok", "devin") and os.path.basename(dst_path) == "SKILL.md":
+        content += (
+            "\n\n## Runtime paths\n\n"
+            "이 스킬은 " + adapter["harness"] + "에서 실행합니다. "
+            "본문의 스크립트 경로는 hbrness install이 실제 설치 경로로 치환합니다. "
+            "`$ARGUMENTS`는 스킬 호출 시 사용자가 전달한 인자로 해석합니다.\n"
+        )
+
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
     with open(dst_path, "w") as f:
         f.write(content)
@@ -325,7 +333,8 @@ def handle_hooks(plugin_dir, output_dir, adapter, repo_root):
 
     dst_hooks_dir = os.path.join(output_dir, "hooks")
     os.makedirs(dst_hooks_dir, exist_ok=True)
-    shutil.copy2(src, os.path.join(dst_hooks_dir, "hooks.json"))
+    destination = adapter.get("hooks_output", "hooks/hooks.json")
+    shutil.copy2(src, os.path.join(output_dir, destination))
 
 
 def load_agent_definitions(plugin_dir, target_harness=None):
@@ -458,6 +467,7 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
 
     # Walk source and process files
     for root, dirs, files in os.walk(plugin_dir):
+        dirs[:] = [d for d in dirs if d not in ("__pycache__", ".git", "node_modules")]
         rel_root = os.path.relpath(root, plugin_dir)
 
         # Skip entire subtree if it's under a gated-out skill/agent dir
@@ -465,6 +475,8 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
             continue
 
         for fname in files:
+            if fname.endswith(".pyc") or fname == ".DS_Store":
+                continue
             src_path = os.path.join(root, fname)
             rel_path = os.path.join(rel_root, fname) if rel_root != "." else fname
 

@@ -72,7 +72,13 @@ cmd="$(printf '%s'    "$info" | awk -F'|' '{print $4}')"
 pid="$(printf '%s'    "$info" | awk -F'|' '{print $5}')"
 
 if [ -z "$tool" ]; then
-  if ab_is_codex_session; then
+  if [ "$cmd" = grok ] || [ "$cmd" = devin ]; then
+    tool="$cmd"
+  elif [ -n "${DEVIN_PROJECT_DIR:-}" ]; then
+    tool="devin"
+  elif [ -n "${GROK_SESSION_ID:-}" ]; then
+    tool="grok"
+  elif ab_is_codex_session; then
     tool="codex"
   elif [ "$cmd" = "claude" ] || [ "$cmd" = "node" ]; then
     tool="claude"

@@ -9,7 +9,7 @@ const {
 const { diagnose, repair } = require('./doctor.js');
 const { update, detectMode } = require('./update.js');
 
-const SUPPORTED_HARNESSES = ['claude', 'codex'];
+const SUPPORTED_HARNESSES = ['claude', 'codex', 'grok', 'devin'];
 
 function help() {
   return `hbrness — multi-harness plugin installer
@@ -19,6 +19,8 @@ Usage:
                                            Claude default: build marketplace dir, then invoke "claude plugin
                                              marketplace add" and "claude plugin install" automatically
                                            Codex default: symlink into ~/.codex/skills
+                                           Grok default: native plugins in ~/.grok/plugins
+                                           Devin default: native local plugins (no cloud registration)
                                            --print-only (claude): skip running claude CLI; print commands to paste manually
                                            --mode user-level (claude): symlink fallback instead of plugin mode
   hbrness uninstall <harness> [plugin]     Remove installed hbrness plugin + user-level symlinks
@@ -122,6 +124,8 @@ async function cmdInstall(positional, flags) {
     return { plan, results };
   });
 
+  if (runs.some((r) => r.results.some((x) => x.status === 'error'))) process.exitCode = 1;
+
   if (flags.json) {
     process.stdout.write(JSON.stringify({ action: 'install', runs }, null, 2) + '\n');
     return;
@@ -163,6 +167,8 @@ async function cmdUninstall(positional, flags) {
     });
     return { plan, results };
   });
+
+  if (runs.some((r) => r.results.some((x) => x.status === 'error'))) process.exitCode = 1;
 
   if (flags.json) {
     process.stdout.write(JSON.stringify({ action: 'uninstall', runs }, null, 2) + '\n');

@@ -106,7 +106,7 @@ else
 fi
 
 # --- 2. Per-harness validation ---
-for harness in claude codex; do
+for harness in claude codex grok devin; do
   harness_dir="$DIST_DIR/$harness"
   if [ ! -d "$harness_dir" ]; then
     warn "$harness build output not found (skipping)"
@@ -272,11 +272,11 @@ for harness in claude codex; do
   # Manifest check
   for plugin_dir in "$harness_dir"/*/; do
     plugin_name=$(basename "$plugin_dir")
-    if [ "$harness" = "claude" ]; then
-      manifest="$plugin_dir/.claude-plugin/plugin.json"
-    else
-      manifest="$plugin_dir/.codex-plugin/plugin.json"
-    fi
+    case "$harness" in
+      claude|grok) manifest="$plugin_dir/.claude-plugin/plugin.json" ;;
+      codex) manifest="$plugin_dir/.codex-plugin/plugin.json" ;;
+      devin) manifest="$plugin_dir/.devin-plugin/plugin.json" ;;
+    esac
     if [ ! -f "$manifest" ]; then
       err "Missing manifest for $plugin_name in dist/$harness/"
     fi

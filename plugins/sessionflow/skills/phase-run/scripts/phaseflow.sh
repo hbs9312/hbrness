@@ -250,8 +250,9 @@ tmux_submit() { # $1=pane  $2=tool
 # ─────────────────────────────────────────────────────────────────────────────
 default_clear_cmd() { # $1=tool
   case "$1" in
-    codex) echo "/new" ;;   # ⚠ codex 버전에 따라 다를 수 있음 — --clear-cmd 로 override 가능
-    *)     echo "/clear" ;;
+    codex|grok|devin) echo "/new" ;;
+    claude) echo "/clear" ;;
+    *) die "unsupported tool: $1 (claude|codex|grok|devin)" ;;
   esac
 }
 
@@ -275,7 +276,7 @@ normalize_stage_list() { # $1=raw → echo normalized, die on bad token
 # ─────────────────────────────────────────────────────────────────────────────
 cmd_init() {
   local pane="" tool="claude" commit_each=0 delay=4 clear_cmd="" continue_prompt="/phase-run continue"
-  local stages="work" gates="auto"
+  local stages="work" gates="auto" continue_explicit=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --pane) pane="$2"; shift 2 ;;
@@ -283,12 +284,16 @@ cmd_init() {
       --commit-each) commit_each=1; shift ;;
       --delay) delay="$2"; shift 2 ;;
       --clear-cmd) clear_cmd="$2"; shift 2 ;;
-      --continue-prompt) continue_prompt="$2"; shift 2 ;;
+      --continue-prompt) continue_prompt="$2"; continue_explicit=1; shift 2 ;;
       --stages) stages="$2"; shift 2 ;;
       --gates) gates="$2"; shift 2 ;;
       *) die "init: 알 수 없는 인자 $1" ;;
     esac
   done
+  case "$tool" in claude|codex|grok|devin) ;; *) die "unsupported tool: $tool" ;; esac
+  if [ "$continue_explicit" -eq 0 ] && { [ "$tool" = grok ] || [ "$tool" = devin ]; }; then
+    continue_prompt="/sessionflow:phase-run continue"
+  fi
   [ -n "$pane" ] || pane="$(current_pane)"
   [ -n "$clear_cmd" ] || clear_cmd="$(default_clear_cmd "$tool")"
 

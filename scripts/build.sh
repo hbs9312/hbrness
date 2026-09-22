@@ -8,8 +8,8 @@ ADAPTERS_DIR="$ROOT/adapters"
 DIST_DIR="$ROOT/dist"
 
 usage() {
-  echo "Usage: build.sh <claude|codex|all> [plugin-name]"
-  echo "  harness:     claude, codex, or all"
+  echo "Usage: build.sh <claude|codex|grok|devin|all> [plugin-name]"
+  echo "  harness:     claude, codex, grok, devin, or all"
   echo "  plugin-name: optional, build only this plugin"
   exit 1
 }
@@ -52,12 +52,14 @@ if [ -z "$HARNESS" ]; then
 fi
 
 case "$HARNESS" in
-  claude|codex)
+  claude|codex|grok|devin)
     build_harness "$HARNESS" "$PLUGIN"
     ;;
   all)
     build_harness "claude" "$PLUGIN"
     build_harness "codex" "$PLUGIN"
+    build_harness "grok" "$PLUGIN"
+    build_harness "devin" "$PLUGIN"
     ;;
   *)
     echo "Error: unknown harness '$HARNESS'"

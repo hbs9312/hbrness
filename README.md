@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/npm/l/hbrness.svg)](./LICENSE)
 [![node](https://img.shields.io/node/v/hbrness.svg)](https://www.npmjs.com/package/hbrness)
 
-Multi-harness AI coding plugin repository. Harness-neutral common sources build into Claude Code and Codex CLI plugin packages.
+Multi-harness AI coding plugin repository. Common sources build into Claude Code, Codex CLI, Grok Build, and Devin CLI packages.
 
 ## Plugins
 
@@ -42,6 +42,60 @@ Invocation afterwards: `/ghflow:review-pr`, `/sessionflow:handoff`, etc.
 |---|---|---|---|
 | Claude | marketplace-only | builds `~/.claude/plugins/marketplaces/hbrness/` | `/plugin marketplace add <path>` + `/plugin install <name>@hbrness` |
 | Codex  | user-level | symlinks into `~/.codex/skills/<plugin>-<name>` | nothing — already live after restart |
+| Grok Build | plugin | copies native packages into `$GROK_HOME/plugins/<plugin>` (default `~/.grok`) | restart the session |
+| Devin CLI | plugin | copies packages into `$XDG_CONFIG_HOME/devin/hbrness-plugins/<plugin>` and registers with `devin plugins install --local --yes` | restart the session |
+
+### Grok Build and Devin CLI
+
+```bash
+npm run build
+node bin/hbrness.js install grok --dry-run
+node bin/hbrness.js install grok
+node bin/hbrness.js install devin
+node bin/hbrness.js doctor grok
+node bin/hbrness.js doctor devin
+```
+
+Both use `/<plugin>:<skill>`, for example `/ghflow:create-pr`,
+`/sessionflow:handoff`, and `/xreview:status`. Each gets 35 skills across the five
+plugins. `ghflow:pick-issue` and `ghflow:clear-issue` remain Claude-only because
+they manage Claude session memory. Skill-level Claude model pins and tool
+auto-approval lists are omitted; the current session's model and permissions apply.
+
+Grok's native packages take precedence over Claude-imported plugins with the
+same name, preventing duplicate hbrness skills. Other Claude imports remain
+enabled. Devin installations are **local only**, not added to the personal cloud
+manifest. Devin must be signed in for its plugin registration command.
+
+Installations contain concrete script paths; they do not depend on
+`CLAUDE_PLUGIN_ROOT` or undocumented environment variables. The installer owns
+only directories marked `.hbrness-origin`, refuses to overwrite other plugins,
+backs up an existing package outside the discovery directory, and restores it
+if registration fails. `--no-hooks` omits hook registration files. Install again
+after rebuilding to refresh the installed copy. `uninstall grok|devin` removes
+the owned local package; Grok may then discover the original Claude plugin again.
+
+Runtime differences:
+
+- `xreview` accepts Grok/Devin as the **caller**, defaults to a Codex reviewer,
+  and returns its notification to that caller. Built-in reviewer launchers remain
+  Claude/Codex; other reviewers require `--launch-cmd`.
+- `agentbus` identifies Grok/Devin recipients and submits with Enter, even when
+  the sender inherited Codex environment variables.
+- `phase-run`/`phase-loop` use `/new` and namespaced resume commands for the new
+  CLIs. These workflows still need tmux. `relay` uses the current agent's subagent
+  capability; enable that capability before starting a relay.
+- Devin's `PostToolUse` hook reminds the agent to run `ghflow:chronicle` after a
+  successful `exec` commit. Grok ignores passive hook stdout, so invoke
+  `/ghflow:chronicle` explicitly there. Template-fetch hooks remain disabled.
+- Shared handoff/followup files stay in `~/.hbrness`; the existing skills also
+  maintain the Claude/Codex memory indexes. This does not create a native
+  Grok/Devin automatic-memory integration.
+
+Verify discovery with `grok inspect --json`, `devin skills list`, and
+`devin plugins info ghflow`. `npm test` checks local-only registration, rollback,
+quoting, hook outcomes, and session-control command selection without sending
+messages or resetting a live session.
 
 ### Flags
 
@@ -96,7 +150,8 @@ Options:
 
 When a Claude plugin ships a `hooks/hooks.json`, `hbrness install claude <plugin>` also merges its entries into `~/.claude/settings.json` under the matching event (e.g. `SessionStart`). Each injected entry is tagged with an `_hbrness` sentinel so uninstall removes only hbrness-owned entries and leaves the rest of your hook configuration untouched. A timestamped backup (`settings.json.hbrness-bak.<ts>`) is written before every modification. Use `--no-hooks` to opt out.
 
-Codex hook merging is not supported yet.
+Codex hook merging is not supported yet. Devin uses a native plugin hook file;
+Grok does not install the passive commit-reminder hook (see above).
 
 Restart the harness (Claude Code / Codex) after install or uninstall so it picks up new skills.
 
@@ -130,6 +185,8 @@ bin/
 dist/              # Build output (gitignored)
   claude/          # Claude Code plugin packages
   codex/           # Codex CLI plugin packages
+  grok/            # Grok native packages (Claude-compatible manifest)
+  devin/           # Devin native packages
 ```
 
 **Source files** use abstract tool names (`file:read`, `sub-agent`, `${SKILL_DIR}`) and the build script transforms them to harness-specific equivalents.

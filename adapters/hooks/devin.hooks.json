@@ -1,0 +1,14 @@
+{
+  "PostToolUse": [
+    {
+      "matcher": "^exec$",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 \"{HBRNESS_PLUGIN_PATH}/hooks/commit-chronicle.py\"",
+          "timeout": 20
+        }
+      ]
+    }
+  ]
+}

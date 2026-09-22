@@ -16,10 +16,13 @@ const { SENTINEL } = require('./hooks.js');
  *   }
  */
 
-function diagnose({ harnesses = ['claude', 'codex'] } = {}) {
+function diagnose({ harnesses = ['claude', 'codex', 'grok', 'devin'] } = {}) {
   const issues = [];
   for (const harness of harnesses) {
     issues.push(...scanSymlinks(harness));
+    if (require('./native.js').supports(harness)) {
+      issues.push(...require('./native.js').diagnose(harness));
+    }
   }
   if (harnesses.includes('claude')) {
     issues.push(...scanHooks());

@@ -9,6 +9,7 @@ const {
 const hooksModule = require('./hooks.js');
 const registry = require('./plugin-registry.js');
 const claudeCli = require('./claude-cli.js');
+const native = require('./native.js');
 
 /**
  * Install modes:
@@ -29,7 +30,7 @@ function ensureDir(p) {
 }
 
 function defaultMode(harness) {
-  return harness === 'claude' ? 'plugin' : 'user-level';
+  return harness === 'codex' ? 'user-level' : 'plugin';
 }
 
 function readPluginManifest(pluginDir) {
@@ -472,6 +473,11 @@ function replaceWithSymlink(target, source) {
 
 function planInstall({ harness, plugin, mode, printOnly = false }) {
   const pluginDir = requirePluginBuilt(harness, plugin);
+  if (native.supports(harness)) {
+    if (mode && mode !== 'plugin') throw new Error(`${harness} requires --mode plugin`);
+    if (printOnly) throw new Error(`${harness} uses --dry-run to preview installation`);
+    return native.planInstall({ harness, plugin, pluginDir });
+  }
   const resolvedMode = mode || defaultMode(harness);
   // Codex does not have a plugin system we target; force user-level.
   const effectiveMode = harness === 'codex' ? 'user-level' : resolvedMode;
@@ -502,6 +508,7 @@ function planInstall({ harness, plugin, mode, printOnly = false }) {
 }
 
 function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
+  if (native.supports(plan.harness)) return native.install(plan, { dryRun, skipHooks });
   const results = [];
 
   // Migration: if the opposite mode has leftovers for this plugin, clean them
@@ -550,6 +557,10 @@ function applyPlan(plan, { dryRun = false, skipHooks = false } = {}) {
  * Uninstall always cleans both modes so migration and legacy removal Just Work.
  */
 function planUninstall({ harness, plugin, printOnly = false }) {
+  if (native.supports(harness)) {
+    if (printOnly) throw new Error(`${harness} uses --dry-run to preview removal`);
+    return native.planUninstall({ harness, plugin });
+  }
   const userLevel = planUninstallUserLevel({ harness, plugin });
   const plugin_ =
     harness === 'claude' ? planUninstallClaudePlugin({ plugin, printOnly }) : { ops: [] };
@@ -584,6 +595,7 @@ function planUninstall({ harness, plugin, printOnly = false }) {
 }
 
 function applyUninstall(plan, { dryRun = false, skipHooks = false } = {}) {
+  if (native.supports(plan.harness)) return native.uninstall(plan, { dryRun });
   const results = [];
   applyUninstallUserLevel({
     plan,
@@ -605,6 +617,7 @@ function applyUninstall(plan, { dryRun = false, skipHooks = false } = {}) {
 }
 
 function listInstalled(harness) {
+  if (native.supports(harness)) return native.listInstalled(harness);
   const found = [];
 
   // Plugin-mode (Claude only): read from installed_plugins.json

@@ -54,7 +54,8 @@ def _read_stdin_json() -> dict:
         data = sys.stdin.read()
         if not data:
             return {}
-        return json.loads(data)
+        value = json.loads(data)
+        return value if isinstance(value, dict) else {}
     except Exception:
         return {}
 
@@ -148,12 +149,28 @@ def _emit(additional_context: str) -> None:
 
 def main() -> int:
     event = _read_stdin_json()
-    if event.get("tool_name") != "Bash":
+    if event.get("tool_name") not in ("Bash", "exec"):
         return 0
 
     tool_input = event.get("tool_input") or {}
     tool_response = event.get("tool_response") or {}
-    command = (tool_input.get("command") or "").strip()
+    if not isinstance(tool_input, dict) or not isinstance(tool_response, dict):
+        return 0
+    if tool_response.get("success") is False or tool_response.get("error"):
+        return 0
+    command = tool_input.get("command") or ""
+    if not isinstance(command, str):
+        return 0
+    command = command.strip()
+
+    # Devin's success flag describes the tool call, not the shell exit status.
+    # Its exec response embeds the process result at the end of output. Missing
+    # status also means an asynchronous command may still be running: stay quiet.
+    if event.get("tool_name") == "exec" and tool_response.get("exit_code") is None:
+        output = tool_response.get("output")
+        match = re.search(r"(?:^|\n)Exit code:\s*(-?\d+)\s*$", output) if isinstance(output, str) else None
+        if match is None or int(match.group(1)) != 0:
+            return 0
 
     # Exit code may live under a few keys depending on harness version.
     exit_code = (
@@ -171,7 +188,7 @@ def main() -> int:
     if not _looks_like_commit(command):
         return 0
 
-    cwd = os.getcwd()
+    cwd = event.get("cwd") or os.environ.get("DEVIN_PROJECT_DIR") or os.getcwd()
     code, _ = _run(["git", "rev-parse", "--is-inside-work-tree"], cwd=cwd)
     if code != 0:
         return 0

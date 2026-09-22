@@ -35,6 +35,7 @@ model: sonnet
 ### start 플래그 (start.sh 로 그대로 전달)
 
 - `--reviewer claude|codex` — 리뷰어 지정. 생략 시 현재 도구의 반대편.
+- Grok·Devin에서 호출할 때 기본 리뷰어는 Codex다. 현재 도구는 adapter가 전달하며, 완료 알림은 원래 Grok·Devin 세션으로 돌아온다. Grok·Devin을 **리뷰어로 실행**하려면 `--launch-cmd`가 필요하다.
 - `--scope branch|working|pr` — 리뷰 대상. 기본 `branch`(현재 브랜치 vs 자동 감지 base). `working`=미커밋 변경, `pr`=`gh pr diff`.
 - `--base <ref>` — branch 스코프의 base 를 수동 지정.
 - `--approve auto|manual` — 기본 `auto`(hands-off, 리뷰어가 승인 없이 진행). `manual`이면 리뷰어가 승인을 물어봄(peek 으로 직접 승인).

@@ -310,7 +310,7 @@ ab_tmux_submit() {
   if [ -z "$mode" ]; then
     case "$recipient_tool" in
       codex) mode="codex-enhanced-enter" ;;
-      claude|node|shell|bash|sh|zsh|python|python3) mode="Enter" ;;
+      claude|grok|devin|node|shell|bash|sh|zsh|python|python3) mode="Enter" ;;
       *)
         if ab_is_codex_session; then
           mode="codex-enhanced-enter"
@@ -453,6 +453,7 @@ _ab_detect_tool_by_pane() {
   case "$cmd" in
     claude) printf 'claude' ;;
     codex)  printf 'codex' ;;
+    grok|devin) printf '%s' "$cmd" ;;
     node)   printf 'claude' ;;   # claude CLI wrapper on some installs
     "")     printf 'unknown' ;;
     *)
@@ -471,7 +472,7 @@ _ab_normalize_tool() {
   # trust it. Otherwise fall back to a live detection from the pane.
   local tool="$1" pane="$2"
   case "$tool" in
-    claude|codex|shell|node|bash|sh|zsh|python|python3) printf '%s' "$tool" ;;
+    claude|codex|grok|devin|shell|node|bash|sh|zsh|python|python3) printf '%s' "$tool" ;;
     *) _ab_detect_tool_by_pane "$pane" ;;
   esac
 }
@@ -633,7 +634,7 @@ ab_send() {
     info="$(ab_pane_info "$pane" || true)"
     cmd="$(printf '%s' "$info" | awk -F'|' '{print $4}')"
     case "$cmd" in
-      claude|codex|node|python|python3|sh|bash|zsh) : ;;
+      claude|codex|grok|devin|node|python|python3|sh|bash|zsh) : ;;
       *) ab_die "strict: pane $pane current_command='$cmd' — not a known agent CLI" ;;
     esac
   fi

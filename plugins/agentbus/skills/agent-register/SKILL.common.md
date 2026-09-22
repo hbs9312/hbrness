@@ -24,7 +24,7 @@ agent-register <alias> [--tool claude|codex|shell] [--pane <%paneId>]
 ## 동작
 
 ```bash
-bash "${SKILL_DIR}/../agent-send/scripts/register.sh" "$@"
+bash "${SKILL_DIR}/../agent-send/scripts/register.sh" --tool {HARNESS_NAME} "$@"
 ```
 
 내부 절차:

@@ -1,7 +1,7 @@
 {
   "name": "hbrness",
   "version": "0.6.2",
-  "description": "Multi-harness AI coding plugin repository. Install hbrness skills, agents, and hooks into Claude Code and Codex CLI.",
+  "description": "Multi-harness AI coding plugins for Claude Code, Codex CLI, Grok Build, and Devin CLI.",
   "bin": {
     "hbrness": "./bin/hbrness.js"
   },
@@ -13,6 +13,7 @@
     "README.md"
   ],
   "scripts": {
+    "test": "node --test tests/*.test.js && python3 -m unittest discover -s tests -p 'test_*.py'",
     "build": "bash scripts/build.sh all",
     "validate": "bash scripts/validate.sh",
     "prepublishOnly": "bash scripts/build.sh all && bash scripts/validate.sh"
@@ -32,7 +33,9 @@
     "agents",
     "plugin",
     "spec",
-    "workflow"
+    "workflow",
+    "grok-build",
+    "devin"
   ],
   "author": "hbs9312",
   "license": "MIT"

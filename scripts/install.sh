@@ -23,7 +23,7 @@ fi
 
 # Build dist first if it's missing or stale compared to source.
 need_build=0
-for harness in claude codex; do
+for harness in claude codex grok devin; do
   if [ ! -d "$ROOT/dist/$harness" ]; then
     need_build=1
     break
@@ -43,7 +43,7 @@ case "$CMD" in
   install|uninstall|list|plugins|--version|-v)
     exec node "$CLI" "$@"
     ;;
-  claude|codex)
+  claude|codex|grok|devin)
     # Legacy shorthand: "install.sh claude [plugin]" → "hbrness install claude [plugin]"
     exec node "$CLI" install "$@"
     ;;

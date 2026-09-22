@@ -22,6 +22,18 @@ function codexRoot() {
 
 /** Where we drop namespaced items into the harness config. */
 function harnessTargets(harness) {
+  if (harness === 'grok' || harness === 'devin') {
+    const root = harness === 'grok'
+      ? (process.env.GROK_HOME || path.join(os.homedir(), '.grok'))
+      : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'devin');
+    return {
+      skills: path.join(root, 'skills'),
+      agents: path.join(root, 'agents'),
+      commands: null,
+      hooks: path.join(root, 'hooks'),
+      plugins: path.join(root, harness === 'grok' ? 'plugins' : 'hbrness-plugins'),
+    };
+  }
   if (harness === 'claude') {
     const root = claudeRoot();
     return {

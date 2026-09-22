@@ -1,0 +1,46 @@
+{
+  "harness": "grok",
+  "manifest_dir": ".claude-plugin",
+  "frontmatter": {
+    "strip": [
+      "harness",
+      "model",
+      "effort",
+      "skills"
+    ],
+    "add": {},
+    "transform_tools_to": null,
+    "tool_map": {
+      "sub-agent": "task",
+      "file:read": "read",
+      "file:write": "write",
+      "file:edit": "edit",
+      "search:grep": "grep",
+      "search:glob": "glob",
+      "shell": "bash",
+      "invoke-skill": "skill"
+    },
+    "keep": [
+      "disable-model-invocation",
+      "argument-hint",
+      "user-invocable"
+    ]
+  },
+  "body_replacements": {
+    "${SKILL_DIR}": "{HBRNESS_SKILL_PATH}",
+    "${PLUGIN_ROOT}": "{HBRNESS_PLUGIN_PATH}",
+    "{HARNESS_HOME}": "~/.grok",
+    "{HARNESS_NAME}": "grok",
+    "{HBRNESS_HOME}": "~/.hbrness",
+    "{CLAUDE_MEMORY_PREFIX}": "~/.claude/projects",
+    "{CLAUDE_MEMORY_SUFFIX}": "/memory",
+    "{CODEX_MEMORY_PREFIX}": "~/.codex/memories",
+    "{CODEX_MEMORY_SUFFIX}": "",
+    "\"/phase-loop continue\"": "\"/sessionflow:phase-loop continue\"",
+    "\"/phase-run continue\"": "\"/sessionflow:phase-run continue\""
+  },
+  "mcp": {
+    "format": "json",
+    "output_file": ".mcp.json"
+  }
+}

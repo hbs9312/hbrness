@@ -38,7 +38,7 @@ function runStreamed(cmd, cwd) {
 
 function currentlyInstalled() {
   const byKey = new Map();
-  for (const h of ['claude', 'codex']) {
+  for (const h of ['claude', 'codex', 'grok', 'devin']) {
     for (const it of listInstalled(h)) {
       const key = `${h}:${it.plugin}`;
       if (!byKey.has(key)) byKey.set(key, { harness: h, plugin: it.plugin });
