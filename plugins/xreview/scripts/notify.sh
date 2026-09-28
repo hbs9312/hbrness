@@ -27,7 +27,20 @@ elapsed=0
 stuck_streak=0
 stuck_pinged=0
 
-ping() { xr_be_send "$launcher_pane" "$1" "$launcher_tool" "$be"; }
+ping() {
+  local attempt
+  for attempt in 1 2 3; do
+    if xr_be_send "$launcher_pane" "$1" "$launcher_tool" "$be"; then
+      printf 'sent\n' > "$work/PING_STATE"
+      date -u '+%Y-%m-%dT%H:%M:%SZ' > "$work/PING_SENT_AT"
+      return 0
+    fi
+    printf 'delivery attempt %s failed\n' "$attempt" >&2
+    sleep "$interval"
+  done
+  printf 'failed\n' > "$work/PING_STATE"
+  return 1
+}
 
 while :; do
   if [ -s "$result" ]; then

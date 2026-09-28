@@ -48,6 +48,9 @@ _stop_one() {
     stranded=1
   fi
   [ -n "${watcher_pid:-}" ] && kill "$watcher_pid" 2>/dev/null || true
+  if [ "$be" = "tmux" ]; then
+    tmux kill-session -t "xwatch-$slug" 2>/dev/null || true
+  fi
   rm -f "$f"
   if [ "$stranded" -eq 1 ]; then
     xr_log "session '$sess' ran under backend '$be', which is not reachable from here — the index entry is gone, but if the reviewer is still running you have to close it from a $be session."

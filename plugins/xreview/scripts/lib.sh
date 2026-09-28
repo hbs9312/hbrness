@@ -162,7 +162,7 @@ xr_be_send() {
   if [ "${#text}" -gt 4000 ]; then text="${text:0:4000}…(truncated)"; fi
   case "$be" in
     tmux)
-      tmux send-keys -t "$ref" -l "$text"
+      tmux send-keys -t "$ref" -l "$text" || return $?
       # codex needs a CSI-u plain Enter (enhanced keyboard reporting) to submit;
       # every other tool takes a plain Enter.
       case "$recipient_tool" in

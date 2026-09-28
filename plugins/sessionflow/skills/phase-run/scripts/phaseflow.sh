@@ -10,8 +10,8 @@
 #   - 주입 대상 pane 은 $TMUX_PANE(이 프로세스 트리에 고정된 pane)을 1순위로 쓴다.
 #     tmux display-message 는 "사용자가 현재 보고 있는 pane" 을 주므로, 머신에 여러
 #     Claude/Codex 세션이 떠 있으면 엉뚱한 세션에 /clear 를 쏠 수 있다. 절대 금지.
-#   - 자동 전진은 detached 프로세스(__inject)가 담당: turn 이 idle 되도록 delay 만큼
-#     자고, pause/abort 상태를 재확인한 뒤 clear + continue 키를 보낸다.
+#   - Codex: 입력 감시 PTY + 예약 worker가 idle/전환/접수를 확인한다.
+#     다른 런타임: 기존 DELAY/GAP + native Enter 경로(__inject)를 유지한다.
 #   - 자동 커밋은 절대 하지 않는다. /clear 는 파일을 건드리지 않으므로 워킹트리는
 #     그대로 다음 세션이 이어받는다.
 #
@@ -25,7 +25,7 @@
 #                    "게이트": exit≠0 이면 advance(페이즈 경계 통과)를 거부한다.
 #       * prompt 훅 ($STATE_DIR/hooks/<stage>.prompt) — LLM 이 읽어 수행할 지침 텍스트.
 #   - /clear 는 stage 마다가 아니라 "페이즈 경계(advance)"에서만 주입된다.
-#   - 기본값(STAGES=work, 훅 없음)에서는 기존 phase-run 과 100% 동일하게 동작한다.
+#   - 기본값(STAGES=work, 훅 없음)은 기존 페이즈/stage 의미를 유지한다.
 #
 # 환경변수:
 #   PHASEFLOW_DRY_RUN=1   tmux send-keys 를 실제로 쏘지 않고 echo 만 (개발/검증용)
@@ -95,6 +95,7 @@ load_state() {
   # shellcheck disable=SC1090
   . "$STATE_ENV"
   # 구버전 state.env 호환: stage/hook 필드가 없으면 기본값으로 채운다(= 기존 동작).
+  RUN_ID="${RUN_ID:-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')}"
   STAGES="${STAGES:-work}"
   GATES="${GATES:-auto}"
   STAGE_IDX="${STAGE_IDX:-1}"
@@ -104,10 +105,22 @@ load_state() {
 b64enc() { printf '%s' "$1" | base64 | tr -d '\n'; }
 b64dec() { printf '%s' "$1" | base64 --decode; }
 
+continuation_prompt() {
+  local prompt; prompt="$(b64dec "$CONTINUE_B64")"
+  if [ "$TOOL" = codex ]; then
+    case "$prompt" in
+      '/phase-loop '*|'/phase-run '*) prompt="\$${prompt#/}" ;;
+      '/sessionflow:phase-loop '*|'/sessionflow:phase-run '*) prompt="\$${prompt#/sessionflow:}" ;;
+    esac
+  fi
+  printf '%s' "$prompt"
+}
+
 write_state() {
   # 전역 변수 직렬화
   mkdir -p "$STATE_DIR"
   {
+    echo "RUN_ID=$(printf '%q' "$RUN_ID")"
     echo "TOOL=$(printf '%q' "$TOOL")"
     echo "PANE=$(printf '%q' "$PANE")"
     echo "CURSOR=$CURSOR"
@@ -121,7 +134,8 @@ write_state() {
     echo "STAGES=$(printf '%q' "$STAGES")"
     echo "GATES=$(printf '%q' "$GATES")"
     echo "STAGE_IDX=$STAGE_IDX"
-  } > "$STATE_ENV"
+  } > "$STATE_ENV.tmp"
+  mv "$STATE_ENV.tmp" "$STATE_ENV"
 }
 
 phase_title() { # $1=n
@@ -201,13 +215,11 @@ clear_gates_for_phase() { # $1=phase
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# pane 도출 — $TMUX_PANE 1순위, 폴백은 display-message
+# pane 도출 — 명시된 $TMUX_PANE만; 다른 사용자의 현재 pane으로 폴백하지 않는다
 # ─────────────────────────────────────────────────────────────────────────────
 current_pane() {
   if [ -n "${TMUX_PANE:-}" ]; then
     echo "$TMUX_PANE"
-  elif [ -n "${TMUX:-}" ]; then
-    tmux display-message -p '#{pane_id}' 2>/dev/null || true
   fi
 }
 
@@ -226,22 +238,12 @@ tmux_send_line() { # $1=pane  $2=text
   fi
 }
 
-tmux_submit() { # $1=pane  $2=tool
-  local pane="$1" tool="$2"
-  if [ "$tool" = "codex" ]; then
-    # codex TUI(enhanced keyboard reporting): plain Enter 는 Ctrl-M 으로 들어가 줄바꿈됨.
-    # CSI-u plain Enter 시퀀스로 제출.
-    if [ "${PHASEFLOW_DRY_RUN:-}" = "1" ]; then
-      echo "[dry-run] tmux send-keys -t $pane -l <CSI-u Enter>"
-    else
-      tmux send-keys -t "$pane" -l $'\e[13;1u'
-    fi
+tmux_submit() { # $1=pane $2=tool; Codex must use the guarded adapter.
+  [ "$2" != "codex" ] || die "Codex requires codex-guard.py; raw submit disabled"
+  if [ "${PHASEFLOW_DRY_RUN:-}" = "1" ]; then
+    echo "[dry-run] tmux send-keys -t $1 Enter"
   else
-    if [ "${PHASEFLOW_DRY_RUN:-}" = "1" ]; then
-      echo "[dry-run] tmux send-keys -t $pane Enter"
-    else
-      tmux send-keys -t "$pane" Enter
-    fi
+    tmux send-keys -t "$1" Enter
   fi
 }
 
@@ -321,10 +323,11 @@ cmd_init() {
   TOOL="$tool"; PANE="$pane"; CURSOR=1; TOTAL="$n"; STATUS="active"
   COMMIT_EACH="$commit_each"; DELAY="$delay"
   CLEAR_B64="$(b64enc "$clear_cmd")"; CONTINUE_B64="$(b64enc "$continue_prompt")"
+  RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
   CREATED="$(date '+%Y-%m-%d %H:%M:%S')"
   STAGES="$stages"; GATES="$gates"; STAGE_IDX=1
   write_state
-  rm -f "$PAUSE_SENTINEL"
+  rm -f "$PAUSE_SENTINEL" "$STATE_DIR/inject-ticket.json" "$STATE_DIR/legacy-ticket" "$STATE_DIR/RECOVERY.md"
 
   echo "phase-run 시작: 총 ${TOTAL}개 페이즈, 현재 → Phase 1"
   echo "  tool=$TOOL  pane=${PANE:-<none>}  delay=${DELAY}s  commit-each=$COMMIT_EACH  clear='${clear_cmd}'"
@@ -614,14 +617,25 @@ schedule_inject() {
   if ! in_tmux || [ -z "${PANE:-}" ]; then
     return 1
   fi
+  local inject_command ticket
   if [ "${PHASEFLOW_DRY_RUN:-}" = "1" ]; then
-    # 드라이런: detach 하지 않고 즉시 동기 실행(검증용)
-    "$SELF" __inject --immediate
+    echo "[dry-run] reservation only; no worker/keys, readiness/transition/acceptance NOT verified."
     return 0
   fi
-  nohup bash "$SELF" __inject >/dev/null 2>&1 &
-  disown 2>/dev/null || true
-  return 0
+  if [ "$TOOL" = "codex" ]; then
+    ticket=$(python3 "$(dirname "$SELF")/inject.py" prepare "$STATE_DIR") || return 1
+    printf -v inject_command 'cd %q && python3 %q worker %q %q >>%q 2>&1' \
+      "$(pwd)" "$(dirname "$SELF")/inject.py" "$STATE_DIR" "$ticket" "$STATE_DIR/inject-worker.log"
+  else
+    # Preserve the native /clear or /new + plain Enter path for other runtimes.
+    ticket="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+    printf '%s' "$ticket" > "$STATE_DIR/legacy-ticket"
+    local target_identity
+    target_identity=$(tmux display-message -p -t "$PANE" '#{pid}|#{pane_id}|#{pane_pid}|#{pane_current_command}') || return 1
+    printf -v inject_command 'cd %q && env HBRNESS_HOME=%q PHASEFLOW_STATE_DIR_NAME=%q PHASEFLOW_GAP=%q PHASEFLOW_LOCK_HELD=0 bash %q __inject %q %q %q %q >>%q 2>&1' \
+      "$(pwd)" "$HBRNESS_HOME" "$STATE_DIR_NAME" "$GAP" "$SELF" "$RUN_ID" "$CURSOR" "$ticket" "$target_identity" "$STATE_DIR/inject.log"
+  fi
+  tmux run-shell -b "$inject_command"
 }
 
 cmd_advance() {
@@ -664,7 +678,7 @@ cmd_advance() {
 
   local clear_cmd continue_prompt
   clear_cmd="$(b64dec "$CLEAR_B64")"
-  continue_prompt="$(b64dec "$CONTINUE_B64")"
+  continue_prompt="$(continuation_prompt)"
 
   # 제어 커맨드 접두어를 continue_prompt 에서 도출 (예: '/phase-loop continue' → '/phase-loop')
   local ctl_cmd; ctl_cmd="$(printf '%s' "$continue_prompt" | awk '{print $1}')"
@@ -672,7 +686,7 @@ cmd_advance() {
 
   echo "Phase $((CURSOR-1)) 완료 → Phase $CURSOR ($(phase_title "$CURSOR")) 준비."
   if schedule_inject; then
-    echo "⏳ ${DELAY}s 후 자동으로 '$clear_cmd' → '$continue_prompt' (pane=$PANE)."
+    echo "⏳ 입력 가능 상태 확인 후 자동 재개 예약 (비-Codex delay=${DELAY}s): '$clear_cmd' → '$continue_prompt' (pane=$PANE)."
     echo "   중단하려면 즉시 '$ctl_cmd pause' 실행."
   else
     echo "⚠ tmux 자동 전진 불가. 이 세션에서 직접 실행하세요:"
@@ -683,27 +697,43 @@ cmd_advance() {
 
 cmd_pause() {
   load_state
+  rm -f "$STATE_DIR/inject-ticket.json" "$STATE_DIR/legacy-ticket"
   STATUS="paused"; write_state
   : > "$PAUSE_SENTINEL"
   echo "⏸ phase-run 일시정지. 예약된 자동 전진은 취소됩니다. 'resume' 으로 재개."
 }
 
 cmd_resume() {
+  local manual=0 pane=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --manual) manual=1; shift ;;
+      --pane) pane="$2"; shift 2 ;;
+      *) die "resume: 알 수 없는 인자 $1" ;;
+    esac
+  done
   load_state
+  case "$STATUS" in active|paused) ;; *) die "resume 불가: $STATUS (새 init 필요)" ;; esac
+  [ -n "$pane" ] && PANE="$pane"
   rm -f "$PAUSE_SENTINEL"
   STATUS="active"; write_state
-  echo "▶ 재개. Phase $CURSOR ($(phase_title "$CURSOR")) 로 전진합니다."
+  echo "▶ 현재 Phase $CURSOR ($(phase_title "$CURSOR")) 재개. 커서는 이동하지 않습니다."
   local clear_cmd continue_prompt
-  clear_cmd="$(b64dec "$CLEAR_B64")"; continue_prompt="$(b64dec "$CONTINUE_B64")"
-  if schedule_inject; then
-    echo "⏳ ${DELAY}s 후 '$clear_cmd' → '$continue_prompt' (pane=$PANE)."
+  clear_cmd="$(b64dec "$CLEAR_B64")"; continue_prompt="$(continuation_prompt)"
+  if [ "$manual" = "1" ]; then
+    rm -f "$STATE_DIR/inject-ticket.json" "$STATE_DIR/legacy-ticket"
+    echo "수동 모드: 키 전송/예약 없음. 이미 접수된 continuation은 다시 보내지 마세요."
+  elif schedule_inject; then
+    echo "⏳ 현재 커서 재개 예약 (pane=$PANE). 접수 확인은 inject.log 참고."
   else
-    echo "⚠ 수동 실행 필요: $clear_cmd  그리고  $continue_prompt"
+    echo "⚠ 자동 재개 미예약. 진행 중 작업/초안/기존 접수를 확인한 후 수동 실행:"
+    echo "  $clear_cmd → 새 세션 확인 → $continue_prompt (한 번만). advance 금지."
   fi
 }
 
 cmd_stop() {
   load_state
+  rm -f "$STATE_DIR/inject-ticket.json" "$STATE_DIR/legacy-ticket"
   STATUS="aborted"; write_state
   rm -f "$PAUSE_SENTINEL"
   echo "⏹ phase-run 중단(aborted). 상태는 보존됩니다('status' 로 확인, 'reset' 으로 삭제)."
@@ -728,35 +758,30 @@ cmd_paths() {
 
 # detached 로 도는 실제 주입기
 cmd___inject() {
-  local immediate=0
-  [ "${1:-}" = "--immediate" ] && immediate=1
+  # Old detached jobs lacking an immutable reservation are intentionally inert.
+  [ $# -eq 4 ] || { echo "phaseflow: failed legacy reservation missing; no keys sent"; return 1; }
+  local expected_run="$1" expected_phase="$2" expected_ticket="$3" expected_identity="$4"
   load_state
-
-  if [ "$immediate" != "1" ]; then
-    sleep "$DELAY"
-  fi
-
-  # fire 직전 재확인 — pause/abort 되었거나 상태가 바뀌었으면 중단
-  load_state
-  if [ -f "$PAUSE_SENTINEL" ] || [ "$STATUS" != "active" ]; then
-    exit 0
-  fi
-  [ -n "${PANE:-}" ] || exit 0
-  [ "$CURSOR" -ge 1 ] && [ "$CURSOR" -le "$TOTAL" ] || exit 0
-
-  local clear_cmd continue_prompt
-  clear_cmd="$(b64dec "$CLEAR_B64")"
-  continue_prompt="$(b64dec "$CONTINUE_B64")"
-
-  tmux_send_line "$PANE" "$clear_cmd"
-  tmux_submit    "$PANE" "$TOOL"
-  if [ "${PHASEFLOW_DRY_RUN:-}" = "1" ]; then
-    echo "[dry-run] sleep $GAP"
-  else
-    sleep "$GAP"
-  fi
-  tmux_send_line "$PANE" "$continue_prompt"
-  tmux_submit    "$PANE" "$TOOL"
+  [ "$TOOL" != "codex" ] || { echo "phaseflow: failed unguarded Codex injection disabled"; return 1; }
+  legacy_valid() {
+    load_state
+    [ "$RUN_ID" = "$expected_run" ] && [ "$CURSOR" = "$expected_phase" ] &&
+      [ "$STATUS" = "active" ] && [ ! -f "$PAUSE_SENTINEL" ] &&
+      [ "$(cat "$STATE_DIR/legacy-ticket" 2>/dev/null)" = "$expected_ticket" ] &&
+      [ "$(tmux display-message -p -t "$PANE" '#{pid}|#{pane_id}|#{pane_pid}|#{pane_current_command}' 2>/dev/null)" = "$expected_identity" ]
+  }
+  sleep "$DELAY"
+  legacy_valid || return 1
+  tmux_send_line "$PANE" "$(b64dec "$CLEAR_B64")"
+  legacy_valid || return 1
+  tmux_submit "$PANE" "$TOOL"
+  echo "phaseflow: keys_sent clear phase=$CURSOR runtime=$TOOL (transition unverified)"
+  sleep "$GAP"
+  legacy_valid || return 1
+  tmux_send_line "$PANE" "$(b64dec "$CONTINUE_B64")"
+  legacy_valid || return 1
+  tmux_submit "$PANE" "$TOOL"
+  echo "phaseflow: keys_sent continuation phase=$CURSOR runtime=$TOOL (acceptance unverified)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -773,7 +798,7 @@ main() {
     next-stage) cmd_next_stage ;;
     advance)    cmd_advance "$@" ;;
     pause)      cmd_pause ;;
-    resume)     cmd_resume ;;
+    resume)     cmd_resume "$@" ;;
     stop|abort) cmd_stop ;;
     reset)      cmd_reset ;;
     paths)      cmd_paths ;;
@@ -791,7 +816,8 @@ phaseflow.sh <subcommand>
   run-hooks <stage> [--no-gate]   그 stage 의 prompt 훅 출력 + shell 훅 실행(게이트 기록)
   next-stage            현재 페이즈 안에서 stage 커서 전진(소진 시 PHASE_COMPLETE)
   advance [--pane id] [--tool t] [--force]   현재 페이즈 done, 게이트 확인 후 전진 + clear/continue 예약
-  pause | resume | stop | reset    제어
+  resume [--pane id] [--manual]    현재 커서 재개 (advance 아님); --manual 은 키 전송 없음
+  pause | stop | reset             예약 취소/제어
   paths                 디버그: 경로/ pane 도출 확인
 USAGE
       ;;
@@ -799,4 +825,9 @@ USAGE
   esac
 }
 
+# Serialize state mutations and scheduling across concurrent CLI invocations.
+# Worker locks each check/send separately so pause/stop can interrupt waits.
+if [ "${1:-}" != "__inject" ] && [ "${PHASEFLOW_LOCK_HELD:-0}" != "1" ]; then
+  exec python3 "$(dirname "$SELF")/inject.py" locked "$STATE_DIR" bash "$SELF" "$@"
+fi
 main "$@"

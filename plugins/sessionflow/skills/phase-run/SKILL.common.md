@@ -10,11 +10,33 @@ user-invocable: true
 
 핵심은 "자기 pane 에 `/clear` + 이어받기 명령을 자동 주입" 하는 것이다. 에이전트는 자기 컨텍스트를 turn 도중에 비울 수 없으므로(=clear 는 툴이 아니라 TUI 명령), turn 이 끝나 idle 이 된 직후 detached 프로세스가 tmux 로 키를 되쏘아 이를 달성한다. 모든 tmux/상태 로직은 `${SKILL_DIR}/scripts/phaseflow.sh` 가 담당한다 — **너(LLM)는 이 스크립트를 호출하고, 각 페이즈의 실제 "작업" 만 직접 수행한다.**
 
+
+## Codex 자동 재개와 수동 복구
+
+**Codex 0.157.1에서는 이 문서의 `/phase-loop`·`/phase-run` 스킬 호출을 각각 `$phase-loop`·`$phase-run`으로 입력한다.** `/new`는 그대로다. 엔진은 저장된 기존 continuation의 알려진 스킬 접두어만 Codex에서 변환한다. 다른 런타임의 슬래시 명령은 보존한다.
+
+Codex 자동 재개는 tmux 안에서 **입력 감시 래퍼로 시작한 세션**에서만 지원한다:
+
+```bash
+# phase-run 스킬의 scripts 디렉터리 (phase-loop에서는 ../../phase-run/scripts)
+python3 <phase-run-skill-dir>/scripts/codex-guard.py -- --no-alt-screen
+```
+
+래퍼는 기존 Codex 설정을 그대로 사용하며 `--no-daemon`으로 전용 TUI를 실행한다. 현재 세션에 붙이거나 사용자 초안을 지우지 않는다. 래퍼가 없는 기존 세션/다른 Codex 버전/다른 화면 구조에서는 자동 키 전송을 거부하고 수동 안내를 출력한다. 검증되지 않은 조건에서 raw tmux 주입으로 우회하지 않는다.
+
+Codex 순서: 응답 종료·빈 입력창 확인 → `/new` 텍스트가 화면에 안정적으로 표시됨을 확인(최소 300ms) → CSI-u Enter → 화면 초기화와 새 대화 레이아웃 확인 → continuation 텍스트 표시 확인 → Enter → 정확한 사용자 메시지와 빈 입력창으로 접수 확인. 전체 120초, 전환/접수 각각 최대 15초. 고정 DELAY/GAP은 Codex의 상태 확인을 대신하지 않는다.
+
+예약은 실행 ID·현재 페이즈·tmux 서버/pane 수명·래퍼 nonce·사용자 입력 세대에 묶인다. 각 단계 직전에 취소/유효성을 재검사한다. 사용자 키/resize, pause/stop/reset, pane/세션 교체는 취소한다. 키 전송은 단계당 한 번이고, 첫 전송 전 영속 기록을 남긴다. 같은 페이즈의 불명확한 시도나 이미 접수된 continuation은 자동 재전송하지 않는다. `resume`은 **현재 커서**를 재개하며 `advance`만 다음 페이즈로 이동한다. `resume --pane "$TMUX_PANE"`으로 새 대상을 명시할 수 있다.
+
+실패 시 `inject.log`의 `reservation_refused`, `keys_sent`, `new_session_confirmed`, `continuation_accepted`, `failed`/`timeout`과 `RECOVERY.md`를 읽는다. 접수 여부 불명확 시 먼저 대화의 사용자 메시지를 확인한다. 이미 접수됐다면 다시 보내지 않는다. 미접수임을 확인하고 작업이 끝난 뒤 초안을 별도로 보존하고 `/new`를 수동 실행한다. 새 대화 확인 후 `$phase-loop continue` 또는 `$phase-run continue`를 한 번 입력한다. 상태가 paused라면 **먼저 `pf resume --manual`(phase-run은 `resume --manual`)**로 활성화한다. 이 명령은 키 전송/예약/커서 이동을 하지 않는다. 복구에 `advance`, `init`, stock `load-hooks`를 쓰지 않는다.
+
+한계: 입력 보호는 PTY 래퍼가 담당하지만 idle/새 대화/접수는 0.157.1 ANSI 화면 판별이다. 이는 공식 세션 ACK가 아니며 모델 작업 완료를 뜻하지 않는다. 알 수 없는 popup/레이아웃, 접수 직후 출력이 화면을 밀어낸 경우에는 timeout으로 중단한다. 외부 app-server 클라이언트가 같은 세션을 조작하는 방식은 지원하지 않는다. Claude는 기존 `/clear`+일반 Enter와 DELAY/GAP을 유지하며, Grok/Devin도 기존 native 경로를 사용한다. 이들 로그는 키 전송만 확인하며 전환·접수를 검증했다고 표시하지 않는다.
+
 ## 불변 원칙 (반드시 지킬 것)
 
 1. **자동 커밋 금지.** `/clear` 는 파일을 건드리지 않으므로 워킹트리는 그대로 다음 세션이 이어받는다. 페이즈 전진을 위해 커밋할 필요가 없다. 커밋은 사용자가 명시적으로 요청할 때만. (`--commit-each` 가 켜진 경우에만, advance 직전에 사용자 확인을 받고 커밋한다.)
 2. **`/clear` 는 되돌릴 수 없다.** clear 전에 `HANDOFF.md` 가 다음 페이즈에 필요한 모든 것을 담았는지 **검증**한다. 빠지면 그 컨텍스트는 영구 소실된다. 이게 이 스킬의 생명줄이다.
-3. **advance 는 너의 마지막 행동이어야 한다.** `advance` 를 호출하면 detached injector 가 `DELAY` 초 뒤 `/clear` 를 쏜다. advance 이후에는 **추가 툴 호출을 하지 말고**, 짧은 한 줄 보고만 남기고 turn 을 끝내라(그래야 pane 이 idle 이 되어 주입이 깨끗이 안착한다).
+3. **advance 는 너의 마지막 행동이어야 한다.** `advance`를 호출하면 detached injector가 현재 커서 재개를 예약한다(Codex는 상태 확인, 다른 런타임은 DELAY/GAP). advance 이후에는 **추가 툴 호출을 하지 말고**, 짧은 한 줄 보고만 남기고 turn 을 끝내라(그래야 pane 이 idle 이 되어 주입이 깨끗이 안착한다).
 4. **페이즈 분해는 시작 시 1회만 사용자 확인.** 그 외 경계마다 차단형 확인은 하지 않는다(무인 전진이 목적). 멈추고 싶으면 사용자가 `/phase-run pause` 를 친다.
 
 ## 인자 디스패치
@@ -93,7 +115,7 @@ EOF
 bash "${SKILL_DIR}/scripts/phaseflow.sh" current
 ```
 
-출력의 `CURSOR`/`TOTAL`/`TITLE`/`HANDOFF`/`COMMIT_EACH` 를 읽는다. `STATUS` 가 `done`/`aborted` 면 더 할 일이 없으니 그대로 보고하고 끝낸다.
+출력의 `CURSOR`/`TOTAL`/`TITLE`/`HANDOFF`/`COMMIT_EACH` 를 읽는다. `STATUS`가 `paused`이면 먼저 수동 재개 여부를 확인하고 작업하지 않는다. `done`/`aborted`이면 더 할 일이 없으니 그대로 보고하고 끝낸다.
 
 ### 2. 핸드오프 읽기
 
@@ -133,7 +155,7 @@ bash "${SKILL_DIR}/scripts/phaseflow.sh" current
 bash "${SKILL_DIR}/scripts/phaseflow.sh" advance --pane "$TMUX_PANE" --tool {HARNESS_NAME}
 ```
 
-- 더 진행할 페이즈가 있으면: 스크립트가 `DELAY` 초 뒤 자동으로 `/clear` → `/phase-run continue` 를 이 pane 에 주입하도록 예약한다.
+- 더 진행할 페이즈가 있으면: 스크립트가 자동 재개를 예약한다(Codex는 위의 상태 확인 절차, 다른 런타임은 DELAY/GAP).
 - 마지막 페이즈였으면: `✅ 모든 페이즈 완료` 를 출력하고 주입하지 않는다.
 
 ### 4. 짧게 보고하고 turn 종료
@@ -234,6 +256,6 @@ bash "${SKILL_DIR}/scripts/phaseflow.sh" paths   # STATE_DIR, HANDOFF_FILE, HOOK
 ## 주의
 
 - **pane 정확도:** 스크립트는 `$TMUX_PANE`(이 프로세스가 사는 pane)을 1순위로 쓴다. `tmux display-message` 는 "사용자가 지금 보고 있는 pane" 을 주므로, 머신에 여러 세션이 떠 있으면 엉뚱한 세션을 clear 할 수 있어 쓰지 않는다. 그래서 `advance`/`init` 에 항상 `--pane "$TMUX_PANE"` 를 넘겨라.
-- **Codex:** 기본 clear 명령은 `/new`, 제출은 CSI-u Enter 다. 사용 중인 Codex 버전의 새 대화 명령이 다르면 `init --clear-cmd '<명령>'` 으로 지정하라.
+- **Codex:** 자동 재개는 위의 래퍼/0.157.1 어댑터만 지원한다. clear는 `/new`로 고정한다.
 - **무한 루프 방지:** cursor 가 total 을 넘으면 자동으로 종료하며, 안전 상한(`PHASEFLOW_MAX_PHASES`, 기본 50)이 있다.
 - **멈춤:** 자동 전진이 폭주하거나 개입이 필요하면 사용자는 `/phase-run pause` 한 줄로 멈추고, 점검 후 `/phase-run resume` 으로 재개한다.

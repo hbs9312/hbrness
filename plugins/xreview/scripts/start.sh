@@ -112,6 +112,8 @@ mkdir -p "$WORK"
 REQUEST="$WORK/REVIEW_REQUEST.md"
 RESULT="$WORK/REVIEW_RESULT.md"
 rm -f "$RESULT"   # fresh run
+printf 'pending\n' > "$WORK/PING_STATE"
+rm -f "$WORK/PING_SENT_AT"
 xr_set_watch_state "$WORK" running "리뷰어 기동"   # durable status for pollers
 SESS="$(xr_session_name "$slug")"
 BACKEND="$(xr_backend)"
@@ -197,14 +199,7 @@ chmod +x "$RUNNER"
 SESSION_REF="$(xr_be_spawn "$slug" "$WORK" "$REPO_ROOT" "bash $(xr_shq "$RUNNER")")" \
   || xr_die "could not start the reviewer session on backend '$BACKEND'"
 
-# Background watcher: pings the launcher pane when RESULT appears (or the run ends).
 watcher_pid=""
-if [ -n "$launcher_pane" ]; then
-  nohup bash "$SCRIPT_DIR/notify.sh" "$launcher_pane" "$WORK" "$current_tool" "$slug" \
-    >"$WORK/watcher.log" 2>&1 &
-  watcher_pid=$!
-  disown "$watcher_pid" 2>/dev/null || true
-fi
 
 # Persist session metadata (flat index entry).
 jq -n \
@@ -222,6 +217,23 @@ jq -n \
     backend:$backend, session_ref:$session_ref,
     launcher_pane:$launcher_pane, watcher_pid:$watcher_pid, viewport:"",
     created:$created}' > "$XRLIVE_SESSIONS/$slug.json"
+
+
+if [ -n "$launcher_pane" ]; then
+  if [ "$BACKEND" = "tmux" ]; then
+    watcher_session="xwatch-$slug"
+    printf -v watcher_command 'env XRLIVE_HOME=%q XRLIVE_BACKEND=tmux bash %q %q %q %q %q >%q 2>&1' \
+      "$XRLIVE_HOME" "$SCRIPT_DIR/notify.sh" "$launcher_pane" "$WORK" "$current_tool" "$slug" "$WORK/watcher.log"
+    tmux new-session -d -s "$watcher_session" "$watcher_command"
+  else
+    nohup bash "$SCRIPT_DIR/notify.sh" "$launcher_pane" "$WORK" "$current_tool" "$slug" \
+      >"$WORK/watcher.log" 2>&1 &
+    watcher_pid=$!
+    disown "$watcher_pid" 2>/dev/null || true
+    jq --arg pid "$watcher_pid" '.watcher_pid=$pid' "$XRLIVE_SESSIONS/$slug.json" > "$XRLIVE_SESSIONS/$slug.json.tmp"
+    mv "$XRLIVE_SESSIONS/$slug.json.tmp" "$XRLIVE_SESSIONS/$slug.json"
+  fi
+fi
 
 cat <<EOF
 xreview:live started — reviewer running in the background.

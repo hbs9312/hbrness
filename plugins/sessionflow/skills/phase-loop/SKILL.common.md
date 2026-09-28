@@ -17,6 +17,28 @@ argument-hint: "[continue|pause|resume|stop|status|reset] | <구현 계획>"
 
 `sessionflow:phase-run` 의 "페이즈 경계마다 컨텍스트를 리셋한다" 엔진을 그대로 재사용하고, 그 경계에 **리뷰·출하(commit/push/PR)** 를 끼워 넣은 상위 워크플로우다. 상태머신·tmux 주입은 phase-run 의 `phaseflow.sh` 가 담당하고(별도 네임스페이스 `phase-loop`), **너(LLM)는 `${SKILL_DIR}/scripts/loop.sh` 를 호출하면서 각 페이즈의 실제 작업(구현·리뷰 반영·커밋·PR·핸드오프)만 직접 수행한다.**
 
+
+## Codex 자동 재개와 수동 복구
+
+**Codex 0.157.1에서는 이 문서의 `/phase-loop`·`/phase-run` 스킬 호출을 각각 `$phase-loop`·`$phase-run`으로 입력한다.** `/new`는 그대로다. 엔진은 저장된 기존 continuation의 알려진 스킬 접두어만 Codex에서 변환한다. 다른 런타임의 슬래시 명령은 보존한다.
+
+Codex 자동 재개는 tmux 안에서 **입력 감시 래퍼로 시작한 세션**에서만 지원한다:
+
+```bash
+# phase-run 스킬의 scripts 디렉터리 (phase-loop에서는 ../../phase-run/scripts)
+python3 <phase-run-skill-dir>/scripts/codex-guard.py -- --no-alt-screen
+```
+
+래퍼는 기존 Codex 설정을 그대로 사용하며 `--no-daemon`으로 전용 TUI를 실행한다. 현재 세션에 붙이거나 사용자 초안을 지우지 않는다. 래퍼가 없는 기존 세션/다른 Codex 버전/다른 화면 구조에서는 자동 키 전송을 거부하고 수동 안내를 출력한다. 검증되지 않은 조건에서 raw tmux 주입으로 우회하지 않는다.
+
+Codex 순서: 응답 종료·빈 입력창 확인 → `/new` 텍스트가 화면에 안정적으로 표시됨을 확인(최소 300ms) → CSI-u Enter → 화면 초기화와 새 대화 레이아웃 확인 → continuation 텍스트 표시 확인 → Enter → 정확한 사용자 메시지와 빈 입력창으로 접수 확인. 전체 120초, 전환/접수 각각 최대 15초. 고정 DELAY/GAP은 Codex의 상태 확인을 대신하지 않는다.
+
+예약은 실행 ID·현재 페이즈·tmux 서버/pane 수명·래퍼 nonce·사용자 입력 세대에 묶인다. 각 단계 직전에 취소/유효성을 재검사한다. 사용자 키/resize, pause/stop/reset, pane/세션 교체는 취소한다. 키 전송은 단계당 한 번이고, 첫 전송 전 영속 기록을 남긴다. 같은 페이즈의 불명확한 시도나 이미 접수된 continuation은 자동 재전송하지 않는다. `resume`은 **현재 커서**를 재개하며 `advance`만 다음 페이즈로 이동한다. `resume --pane "$TMUX_PANE"`으로 새 대상을 명시할 수 있다.
+
+실패 시 `inject.log`의 `reservation_refused`, `keys_sent`, `new_session_confirmed`, `continuation_accepted`, `failed`/`timeout`과 `RECOVERY.md`를 읽는다. 접수 여부 불명확 시 먼저 대화의 사용자 메시지를 확인한다. 이미 접수됐다면 다시 보내지 않는다. 미접수임을 확인하고 작업이 끝난 뒤 초안을 별도로 보존하고 `/new`를 수동 실행한다. 새 대화 확인 후 `$phase-loop continue` 또는 `$phase-run continue`를 한 번 입력한다. 상태가 paused라면 **먼저 `pf resume --manual`(phase-run은 `resume --manual`)**로 활성화한다. 이 명령은 키 전송/예약/커서 이동을 하지 않는다. 복구에 `advance`, `init`, stock `load-hooks`를 쓰지 않는다.
+
+한계: 입력 보호는 PTY 래퍼가 담당하지만 idle/새 대화/접수는 0.157.1 ANSI 화면 판별이다. 이는 공식 세션 ACK가 아니며 모델 작업 완료를 뜻하지 않는다. 알 수 없는 popup/레이아웃, 접수 직후 출력이 화면을 밀어낸 경우에는 timeout으로 중단한다. 외부 app-server 클라이언트가 같은 세션을 조작하는 방식은 지원하지 않는다. Claude는 기존 `/clear`+일반 Enter와 DELAY/GAP을 유지하며, Grok/Devin도 기존 native 경로를 사용한다. 이들 로그는 키 전송만 확인하며 전환·접수를 검증했다고 표시하지 않는다.
+
 ## 불변 원칙 (반드시 지킬 것)
 
 1. **커밋 정책은 모드별.**
@@ -157,7 +179,7 @@ bash "${SKILL_DIR}/scripts/loop.sh" detect-mode
 bash "${SKILL_DIR}/scripts/loop.sh" pf current
 ```
 
-`STATUS`/`CURSOR`/`TOTAL`/`TITLE`/`HANDOFF` 를 읽는다. `STATUS` 가 `done`/`aborted` 면 더 할 일이 없으니 보고하고 끝낸다.
+`STATUS`/`CURSOR`/`TOTAL`/`TITLE`/`HANDOFF` 를 읽는다. `STATUS`가 `paused`이면 먼저 수동 재개 여부를 확인하고 작업하지 않는다. `done`/`aborted`이면 더 할 일이 없으니 보고하고 끝낸다.
 
 `HANDOFF=` 가 가리키는 `HANDOFF.md` 와 같은 디렉토리의 `PHASES.md` 를 **반드시 읽어** 전체 계획·모드·스택 상태·이번 페이즈의 분기 base 를 파악한다. 그 다음 "페이즈 프로토콜"을 수행한다.
 
@@ -262,7 +284,7 @@ remote 가 없으면(개인 로컬) 건너뛰고 그 사실을 보고한다.
 bash "${SKILL_DIR}/scripts/loop.sh" pf advance --pane "$TMUX_PANE" --tool {HARNESS_NAME}
 ```
 
-- 다음 페이즈가 있으면: phaseflow 가 `DELAY` 초 뒤 `/clear` → `/phase-loop continue` 를 이 pane 에 자동 주입한다.
+- 다음 페이즈가 있으면: phaseflow가 현재 커서 재개를 예약한다. Codex는 위의 상태 확인 절차를 사용하고, 다른 런타임은 기존 DELAY/GAP 경로를 사용한다.
 - 마지막 페이즈였으면: `✅ 모든 페이즈 완료` 출력, 주입 없음 → 루프 종료 보고(생성된 PR 들·미해결 followup 요약).
 
 advance 출력(자동 전진 예약됨 / 완료 / tmux 없어 수동 안내)을 **한두 줄로** 전달하고 추가 작업 없이 turn 을 끝낸다.
@@ -350,7 +372,7 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf paths      # phaseflow 상태/pane 도출
 
 - **상태 네임스페이스**: phase-loop 는 `…/phase-loop/` 상태를 쓰고 phase-run 의 `…/phases/` 와 분리된다. 같은 워크트리에서 둘을 동시에 돌리지 말 것(서로 다른 워크플로우).
 - **pane 정확도**: advance/init 에 항상 `--pane "$TMUX_PANE"` 를 넘긴다(여러 세션 환경에서 엉뚱한 세션을 clear 하지 않도록).
-- **Codex**: clear 기본 `/new` + CSI-u Enter. 다르면 `pf init … --clear-cmd '<명령>'`.
+- **Codex**: 위의 래퍼/0.157.1 어댑터만 자동 지원. clear는 `/new`로 고정한다.
 - **tmux 밖**: 자동 전진 불가 → 경계마다 사용자가 직접 `/clear` 후 `/phase-loop continue`. 팀 부트스트랩도 사용자가 워크트리에서 세션을 직접 띄운다.
 - **리뷰·머지 캐스케이드는 루프 밖**: 루프는 스택을 앞으로 쌓기만 한다. 열린 PR 의 피드백은 루프 도중이라면 **리뷰 전용 워크트리에서 append-only 로만**(위 "루프 중 PR 피드백 처리"), bottom-up 머지와 `git rebase --update-refs` 는 루프 종료 후 사람이 처리한다.
 - **다음 브랜치 pre-cut**: 완료 프로토콜(§7)이 다음 페이즈 브랜치를 미리 잘라 워킹트리를 그 위로 옮긴 뒤 clear 한다 → fresh 세션은 이미 자기 PR 브랜치 위다. 첫 페이즈만 워크트리 생성 시 잘리고, 마지막 페이즈는 cut 하지 않는다. CONTINUE §1 은 "이미 올바른 브랜치인지" 확인만 하고, 어긋났을 때만 폴백으로 만든다.
