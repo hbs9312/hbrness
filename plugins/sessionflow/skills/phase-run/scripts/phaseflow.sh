@@ -240,6 +240,9 @@ tmux_send_line() { # $1=pane  $2=text
 
 tmux_submit() { # $1=pane $2=tool; Codex must use the guarded adapter.
   [ "$2" != "codex" ] || die "Codex requires codex-guard.py; raw submit disabled"
+  # devin/grok 은 직전에 쏟아진 텍스트 버스트와 같은 배치로 들어온 Enter 를
+  # 붙여넣기 일부로 삼켜 버린다 — 텍스트와 submit 사이를 잠깐 띄운다.
+  case "$2" in devin|grok) sleep "${PHASEFLOW_SUBMIT_DELAY:-1}" ;; esac
   if [ "${PHASEFLOW_DRY_RUN:-}" = "1" ]; then
     echo "[dry-run] tmux send-keys -t $1 Enter"
   else

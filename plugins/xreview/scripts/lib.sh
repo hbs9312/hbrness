@@ -163,11 +163,13 @@ xr_be_send() {
   case "$be" in
     tmux)
       tmux send-keys -t "$ref" -l "$text" || return $?
-      # codex needs a CSI-u plain Enter (enhanced keyboard reporting) to submit;
-      # every other tool takes a plain Enter.
+      # codex needs a CSI-u plain Enter (enhanced keyboard reporting) to submit.
+      # devin/grok drop an Enter that rides in the same input burst as the typed
+      # text (it gets folded into the paste-like insert), so settle briefly first.
       case "$recipient_tool" in
-        codex) tmux send-keys -t "$ref" -l $'\e[13;1u' ;;
-        *)     tmux send-keys -t "$ref" Enter ;;
+        codex)      tmux send-keys -t "$ref" -l $'\e[13;1u' ;;
+        devin|grok) sleep "${XRLIVE_SUBMIT_DELAY:-1}" && tmux send-keys -t "$ref" Enter ;;
+        *)          tmux send-keys -t "$ref" Enter ;;
       esac ;;
     orca)
       # Orca submits the prompt itself and reports whether it landed, so the
