@@ -2,6 +2,7 @@
 name: phase-run
 description: "페이즈로 나눈 작업을 각 페이즈 경계에서 컨텍스트를 비우고(자기 pane 에 /clear 주입) 새 세션이 HANDOFF.md 를 읽고 다음 페이즈를 이어받도록 자동 전진시키는 스킬. 긴 작업에서 컨텍스트 누적으로 품질이 떨어지는 걸, '페이즈마다 fresh 세션'으로 막는다. 자동 전진은 detached 프로세스가 turn 종료 후 clear+continue 키를 tmux 로 쏴서 무인으로 진행하며, /phase-run pause 한 줄로 멈출 수 있다. 자동 커밋은 절대 하지 않는다. 사용자가 '페이즈 작업', '페이즈로 나눠서', '단계별로 세션 끊어서', '컨텍스트 비우면서 진행', 'phase run', 'phase-run', '페이즈 러너', '단계별 자동 진행', '/phase-run' 등을 말하면 트리거. Usage: /phase-run [continue | pause | resume | stop | status | reset] | <자연어 페이즈 계획>"
 user-invocable: true
+model: inherit
 ---
 
 # Phase Run Skill

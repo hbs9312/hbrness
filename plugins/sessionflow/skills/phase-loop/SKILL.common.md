@@ -3,6 +3,7 @@ name: phase-loop
 description: "구현 → 다른 에이전트 코드리뷰(xreview) → 커밋 → push → PR → 핸드오프 → 컨텍스트 비우고 새 세션 으로 다음 페이즈를 이어받는 흐름을, 모든 페이즈(=PR 단위)가 끝날 때까지 자동 반복하는 루프 스킬. phase-run 의 페이즈 경계 컨텍스트 리셋 엔진 위에, 각 경계마다 리뷰·출하(commit/push/PR)를 끼워 넣은 상위 워크플로우. 개인 레포는 브랜치에 직접, 팀 레포는 워크트리+스택 PR 로 진행한다. 자동화 수준은 모드별(팀=무인, 개인=커밋 전 확인)이고 /phase-loop pause 로 멈춘다. 사용자가 '루프 스킬', '구현 루프', '자동 루프', '페이즈 루프', '구현부터 PR까지 자동', '리뷰하고 커밋하고 PR까지 반복', 'phase loop', 'phase-loop', '/phase-loop' 등을 말하면 트리거. Usage: /phase-loop [continue | pause | resume | stop | status | reset] | <자연어 구현 계획>"
 user-invocable: true
 argument-hint: "[continue|pause|resume|stop|status|reset] | <구현 계획>"
+model: inherit
 ---
 
 # Phase Loop Skill
