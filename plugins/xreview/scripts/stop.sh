@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tear down a background review session: kill the reviewer session + watcher +
-# any docked viewport, and drop the index entry. Work dir (incl. RESULT) is kept by
+# any open split, and drop the index entry. Work dir (incl. RESULT) is kept by
 # default so you can still read the review; pass --purge to remove it too.
 #
 # Usage:
@@ -28,18 +28,20 @@ done
 
 _stop_one() {
   local slug="$1" f="$XRLIVE_SESSIONS/$1.json"
-  local sess viewport watcher_pid work be ref stranded=0
+  local sess viewport vbe watcher_pid work be lbe ref stranded=0
   sess="$(xr_session_name "$slug")"
-  be="tmux"; ref="$sess"
+  be="tmux"; lbe="tmux"; vbe=""; ref="$sess"
   if [ -f "$f" ]; then
     viewport="$(jq -r '.viewport // empty' "$f")"
+    vbe="$(xr_slug_viewport_backend "$slug")"
     watcher_pid="$(jq -r '.watcher_pid // empty' "$f")"
     work="$(jq -r '.work // empty' "$f")"
     be="$(jq -r '.backend // "tmux"' "$f")"
+    lbe="$(xr_slug_launcher_backend "$slug")"
     ref="$(jq -r '.session_ref // .session' "$f")"
   fi
-  # Close a docked viewport first, so killing the session doesn't orphan a pane.
-  xr_be_close_viewport "${viewport:-}" "$be" || true
+  # Close an open split first, so killing the session doesn't orphan a pane.
+  xr_be_close_viewport "${viewport:-}" "$vbe" || true
   if xr_be_usable "$be"; then
     xr_be_kill "$ref" "$be"
   else
@@ -48,7 +50,8 @@ _stop_one() {
     stranded=1
   fi
   [ -n "${watcher_pid:-}" ] && kill "$watcher_pid" 2>/dev/null || true
-  if [ "$be" = "tmux" ]; then
+  # A tmux launcher's watcher runs in its own tmux session (an Orca one's is the pid above).
+  if [ "$lbe" = "tmux" ]; then
     tmux kill-session -t "xwatch-$slug" 2>/dev/null || true
   fi
   rm -f "$f"

@@ -2,10 +2,11 @@
 # View controls for a background review session. Non-destructive — showing the
 # reviewer never kills it.
 #
-# tmux: peek opens a popup and dock opens a split pane, both nested
-#   `tmux attach` viewports onto the detached session; undock closes the split.
-# orca: the reviewer already lives in its own terminal tab, so peek and dock
-#   both switch to it and undock switches back to the launcher tab.
+# A tmux reviewer session (the default, under tmux and Orca alike) is shown in a
+# split on the right of this pane or terminal that attaches to it; peek and dock
+# both open it, and undock closes it. Closing the split only detaches.
+# A reviewer in an Orca tab (where tmux is missing) is its own view: peek and
+# dock switch to that tab and undock switches back.
 #
 # Usage:
 #   view.sh peek   [slug]
@@ -33,50 +34,34 @@ ref="$(xr_slug_ref "$slug")"
 xr_be_usable "$be" || xr_die "session '$slug' runs on backend '$be', which is not reachable from here. Open it from a $be session, or read the result file directly (/xreview:status)."
 
 set_viewport() {
-  local v="$1" tmp
-  tmp="$(mktemp)"; jq --arg v "$v" '.viewport=$v' "$meta" > "$tmp" && mv "$tmp" "$meta"
+  local v="$1" vbe="${2:-}" tmp
+  tmp="$(mktemp)"
+  jq --arg v "$v" --arg b "$vbe" '.viewport=$v | .viewport_backend=$b' "$meta" > "$tmp" && mv "$tmp" "$meta"
 }
 
 case "$action" in
-  peek)
+  peek|dock)
     xr_be_alive "$ref" "$be" || xr_die "session $sess is not running (see /xreview:status)"
     case "$be" in
       tmux)
-        # env -u TMUX → attach as a fresh client (avoids tmux's nested-session refusal).
-        tmux display-popup -w 90% -h 90% -E "env -u TMUX tmux attach-session -t $(xr_shq "=$sess")"
-        printf 'closed popup for %s (reviewer still running in background)\n' "$slug"
-        ;;
-      orca)
-        orca terminal switch --terminal "$ref" --json >/dev/null 2>&1 \
-          || xr_die "could not switch to the reviewer tab for $slug"
-        printf 'switched to the reviewer tab for %s (come back with /xreview:live undock)\n' "$slug"
-        ;;
-    esac
-    ;;
-  dock)
-    xr_be_alive "$ref" "$be" || xr_die "session $sess is not running (see /xreview:status)"
-    case "$be" in
-      tmux)
-        local_pane="$(xr_launcher_id)"
-        # If a viewport already exists and is alive, just select it.
         existing="$(xr_meta "$slug" viewport || true)"
-        if [ -n "${existing:-}" ] && tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$existing"; then
-          tmux select-pane -t "$existing"
-          printf 'already docked for %s (pane %s)\n' "$slug" "$existing"
+        if xr_be_viewport_alive "${existing:-}" "$(xr_slug_viewport_backend "$slug")"; then
+          printf '%s is already open in a split on the right (close it with /xreview:live undock)\n' "$slug"
           exit 0
         fi
-        viewport="$(tmux split-window -h -P -F '#{pane_id}' -t "$local_pane" \
-          "env -u TMUX tmux attach-session -t $(xr_shq "=$sess")")"
-        set_viewport "$viewport"
-        printf 'docked %s as pane %s (undock with /xreview:live undock)\n' "$slug" "$viewport"
+        viewer="$(xr_backend)"
+        viewport="$(xr_be_open_viewport "$ref" "$viewer" "$(xr_launcher_id)")" \
+          || xr_die "could not open a split for $slug"
+        set_viewport "$viewport" "$viewer"
+        printf 'opened %s in a split on the right (reviewer still running in background; close it with /xreview:live undock)\n' "$slug"
         ;;
       orca)
-        # Orca has no second view onto one terminal — the reviewer tab is the
-        # view. Remember where we came from so undock can switch back.
+        # The reviewer's tab is the view. Remember where we came from so undock
+        # can switch back.
         set_viewport "${ORCA_TERMINAL_HANDLE:-}"
         orca terminal switch --terminal "$ref" --json >/dev/null 2>&1 \
           || xr_die "could not switch to the reviewer tab for $slug"
-        printf 'switched to the reviewer tab for %s — Orca shows it as its own tab rather than a split, so dock and peek do the same thing here. Back with /xreview:live undock.\n' "$slug"
+        printf 'switched to the reviewer tab for %s — it runs in an Orca tab because tmux is not installed, so there is no split to open. Back with /xreview:live undock.\n' "$slug"
         ;;
     esac
     ;;
@@ -84,11 +69,11 @@ case "$action" in
     viewport="$(xr_meta "$slug" viewport || true)"
     case "$be" in
       tmux)
-        if xr_be_close_viewport "${viewport:-}" tmux; then
+        if xr_be_close_viewport "${viewport:-}" "$(xr_slug_viewport_backend "$slug")"; then
           set_viewport ""
-          printf 'undocked %s (reviewer still running in background)\n' "$slug"
+          printf 'closed the split for %s (reviewer still running in background)\n' "$slug"
         else
-          printf 'no docked viewport for %s\n' "$slug"
+          printf 'no split open for %s\n' "$slug"
         fi
         ;;
       orca)
