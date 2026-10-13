@@ -88,7 +88,9 @@ Runtime differences:
 - Devin's `PostToolUse` hook reminds the agent to run `ghflow:chronicle` after a
   successful `exec` commit. Grok ignores passive hook stdout, so invoke
   `/ghflow:chronicle` explicitly there. Template-fetch hooks remain disabled.
-- Shared handoff/followup files stay in `~/.hbrness`; the existing skills also
+- Shared handoff/followup files live in `~/.hbrness/state`, keyed by the
+  repository's origin remote and synced across machines through a private state
+  repo (`sessionflow/scripts/sfstate.py init --remote <url>`). The skills also
   maintain the Claude/Codex memory indexes. This does not create a native
   Grok/Devin automatic-memory integration.
 
