@@ -1,6 +1,6 @@
 ---
 name: live
-description: "xreview 의 기본 코드리뷰 스킬. 반대편 코딩 에이전트(claude↔codex)를 백그라운드 세션(tmux 또는 Orca 터미널 탭)으로 띄워 현재 브랜치/작업트리/PR 의 diff 를 읽기 전용으로 리뷰시키고, 완료되면 이 세션에 핑을 보낸다. 리뷰어는 detached 세션에서 독립 실행되며, 진행 상황은 popup(peek) 또는 split pane(dock) 으로 들여다보고 서로 전환할 수 있다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '리뷰해줘', '코드 리뷰', '코드 리뷰해줘', '다른 모델로 리뷰', '다른 에이전트로 리뷰', '백그라운드 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 팝업', '/xreview:live' 등을 말하면 트리거. 리뷰 세션 목록 확인은 /xreview:status, 종료는 /xreview:stop. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] | peek|dock|undock [slug]"
+description: "xreview 의 기본 코드리뷰 스킬. 반대편 코딩 에이전트(claude↔codex)를 백그라운드 tmux 세션(tmux 가 없으면 Orca 터미널 탭)으로 띄워 현재 브랜치/작업트리/PR 의 diff 를 읽기 전용으로 리뷰시키고, 완료되면 이 세션에 핑을 보낸다. 리뷰어는 detached 세션에서 독립 실행되며, 진행 상황은 peek 으로 현재 터미널 오른쪽에 split 을 열어 들여다보고, undock 으로 닫는다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '리뷰해줘', '코드 리뷰', '코드 리뷰해줘', '다른 모델로 리뷰', '다른 에이전트로 리뷰', '백그라운드 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 들여다보기', '/xreview:live' 등을 말하면 트리거. 리뷰 세션 목록 확인은 /xreview:status, 종료는 /xreview:stop. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] | peek|dock|undock [slug]"
 argument-hint: "[start|peek|dock|undock] [--reviewer ..] [--scope ..] [slug]"
 tools: [shell]
 effort: low
@@ -11,7 +11,7 @@ model: sonnet
 
 지금 돌고 있는 코딩 에이전트가 **반대편 에이전트**(claude면 codex, codex면 claude)를 별도 백그라운드 세션으로 띄워, 현재 브랜치의 변경분을 읽기 전용으로 리뷰하게 한다. 리뷰어는 독립 실행되고, 이 세션(launcher)은 완료 시 한 줄 핑만 받는다.
 
-세션을 뭐가 들고 있는지는 **backend** 가 정한다. tmux 안이면 detached tmux 세션, Orca 안이면 Orca 터미널 탭이다. 실행 환경을 보고 자동으로 고르며, `XRLIVE_BACKEND=tmux|orca` 로 강제할 수 있다. 진행 상황은 **peek**/**dock** 으로 들여다본다 — tmux 는 popup 과 split pane, Orca 는 리뷰어 탭으로 전환하는 방식이다.
+리뷰어는 tmux 가 설치돼 있으면 Orca 안에서 실행해도 detached tmux 세션에서 돈다. tmux 가 없을 때만 Orca 터미널 탭을 쓴다(`XRLIVE_SESSION_BACKEND=tmux|orca` 로 강제). 완료 핑과 peek 의 split 은 **launcher** 쪽 — 지금 이 세션이 도는 tmux pane 또는 Orca 터미널 — 에서 일어난다(`XRLIVE_BACKEND=tmux|orca` 로 강제). 진행 상황은 **peek** 으로 들여다본다: 현재 pane/터미널 오른쪽에 split 을 열어 리뷰어 tmux 세션에 attach 하고, **undock** 으로 그 split 을 닫는다(리뷰어는 계속 돈다).
 
 이것이 xreview 의 **기본 리뷰 동작**이다. 사용자가 그냥 "리뷰해줘" / "코드 리뷰" 라고만 해도 이 스킬로 처리한다 (별도의 동기·블로킹 리뷰 모드는 없다).
 
@@ -62,27 +62,28 @@ model: sonnet
    > 핑은 "빠른 신호"일 뿐 유일한 신호가 아니다. 리뷰를 기다리다 핑이 안 오거나(유실 의심) resume 됐는데 in-flight 리뷰가 있으면, 결론 내리기 전에 `/xreview:status <slug>` 로 durable 상태를 먼저 확인한다.
 
 ### peek / dock / undock (들여다보기)
-- `peek` → 팝업으로 리뷰어 세션을 본다(닫아도 백그라운드 유지).
-- `dock` → 현재 창에 split pane 으로 붙인다.
-- `undock` → 붙인 pane 을 닫는다(리뷰어는 계속 백그라운드).
+- `peek` → 현재 pane/터미널 오른쪽에 split 을 열어 리뷰어 세션을 보여준다. 키보드는 이 세션에 남는다 — 리뷰어에 입력하려면 split 을 클릭한다. 이미 열려 있으면 그대로 둔다.
+- `dock` → `peek` 과 같다(예전 이름).
+- `undock` → split 을 닫는다. detach 만 하므로 리뷰어는 계속 백그라운드에서 돈다.
+- tmux 가 없어 리뷰어가 Orca 탭에서 도는 세션은 split 을 열 수 없어서, peek/dock 은 그 탭으로 전환하고 undock 은 원래 탭으로 돌아온다.
 - slug 를 생략하면 활성 세션이 1개일 때 자동 선택, 여러 개면 목록을 보여주고 slug 를 요청한다.
 
 ### 세션 관리 (별도 스킬)
 - 리뷰 세션 **목록/상태**(running/done/ended/gone) 조회 → `/xreview:status`.
-- 리뷰 세션 **종료** → `/xreview:stop`. 세션·watcher·docked pane 만 정리하고 리뷰 내역(REVIEW_RESULT 등)은 기본 보존한다.
+- 리뷰 세션 **종료** → `/xreview:stop`. 세션·watcher·열린 split 만 정리하고 리뷰 내역(REVIEW_RESULT 등)은 기본 보존한다.
 
 ## 가이드라인 (너 = LLM)
 
 - 완료 핑을 받으면 **결과를 읽어 요약**까지 한다. 단, **리뷰 findings 에 따른 코드 자동 수정은 하지 않는다** — 사용자가 명시적으로 "고쳐줘" 라고 할 때만. (xreview 플러그인 공통 규칙)
 - 리뷰어 출력을 재해석·왜곡하지 말고, severity(critical/warning/info)와 file:line, VERDICT 를 보존해 정리한다.
 - tmux 도 Orca 도 아닌 곳에서 호출되면 `start.sh` 가 죽고 안내를 출력한다 → 사용자에게 tmux 세션을 띄우거나 Orca 안에서 실행하라고 알린다.
-- 다른 backend 에서 시작한 세션은 `/xreview:status` 에 `unknown — backend '<be>' not reachable` 로 뜬다. peek·stop 이 안 되니 결과 파일을 직접 읽어 요약하거나, 그쪽 환경에서 다시 열라고 안내한다.
+- 리뷰어 backend 의 CLI 가 없는 곳(예: tmux 가 없어 Orca 탭에서 도는 세션을 orca CLI 가 없는 셸에서 볼 때)에서는 `/xreview:status` 에 `unknown — backend '<be>' not reachable` 로 뜬다. peek·stop 이 안 되니 결과 파일을 직접 읽어 요약하거나, 그쪽 환경에서 다시 열라고 안내한다.
 - 리뷰어 CLI(claude/codex)가 PATH 에 없으면 스크립트가 거절한다 → 설치/PATH 안내.
-- 이 스킬은 "백그라운드로 띄워 지켜보는" 흐름이다. 리뷰 결과를 받으려면 완료 핑을 기다리거나 `peek`/`dock` 으로 들여다본다.
+- 이 스킬은 "백그라운드로 띄워 지켜보는" 흐름이다. 리뷰 결과를 받으려면 완료 핑을 기다리거나 `peek` 으로 들여다본다.
 
 ## 동작 방식 메모
 
-- 리뷰어는 `xrev-<slug>` 세션에 산다. 보는 행위는 어느 backend 든 **비파괴적**이라 닫아도 리뷰어는 죽지 않는다. tmux 는 `env -u TMUX tmux attach` 로 붙는 viewport 를 열고(peek=팝업, dock=split), Orca 는 리뷰어 탭이 곧 뷰라서 peek 과 dock 이 똑같이 그 탭으로 전환하고 undock 이 원래 탭으로 돌아온다.
+- 리뷰어는 `xrev-<slug>` 세션에 산다. 보는 행위는 어느 backend 든 **비파괴적**이라 닫아도 리뷰어는 죽지 않는다. peek 은 launcher 오른쪽 split(tmux `split-window -h`, Orca `terminal split --direction vertical`)에서 `exec env -u TMUX tmux attach` 를 실행하므로 split 을 닫으면 detach 만 된다. 리뷰어 tmux 세션은 `window-size latest` 라 split 폭에 맞춰 다시 그려지고, status bar 는 꺼 둔다(split 이 이미 launcher 터미널 안에 있으므로). Orca 탭 리뷰어는 탭이 곧 뷰라서 peek 이 그 탭으로 전환하고 undock 이 원래 탭으로 돌아온다.
 - 리뷰어는 `run.sh` 를 거쳐 실행되고, 끝나면 종료 코드를 `$WORK/RUN_EXIT` 에 남긴다. backend 와 무관하게 "리뷰어가 끝났는가"를 이 파일 하나로 판단한다 — Orca 는 명령이 끝나도 터미널이 살아 있어서 세션 생존 여부로는 알 수 없기 때문이다. 끝난 뒤에도 화면을 볼 수 있도록 tmux 는 `remain-on-exit`, Orca 는 runner 끝에 셸을 남겨 탭을 유지한다.
 - 읽기 전용 보장: codex 리뷰어는 `-s workspace-write` + cwd=작업디렉토리라 레포 쓰기를 샌드박스가 차단한다. claude 리뷰어는 레포를 `--add-dir` 로 읽기만 추가하고 결과는 작업디렉토리에 쓴다(읽기 전용은 프롬프트로 강제).
 - 저장 위치(Tier 1): `~/.hbrness/xreview/live/<repo>/<slug>/` (REVIEW_REQUEST.md, REVIEW_RESULT.md, meta.json, **WATCH_STATE**), 인덱스 `~/.hbrness/xreview/live/.sessions/<slug>.json`.
@@ -92,7 +93,8 @@ model: sonnet
 ## 환경 변수
 
 - `XRLIVE_HOME` — 기본 `~/.hbrness/xreview/live`. 테스트 격리용.
-- `XRLIVE_BACKEND` — `tmux` 또는 `orca`. 자동 감지를 덮어쓴다. 기본은 tmux 안이면 tmux, 아니면 Orca(`$ORCA_TERMINAL_HANDLE` 존재 시).
+- `XRLIVE_BACKEND` — launcher(핑·split 을 받는 쪽) backend. `tmux` 또는 `orca`. 기본은 tmux 안이면 tmux, 아니면 Orca(`$ORCA_TERMINAL_HANDLE` 존재 시).
+- `XRLIVE_SESSION_BACKEND` — 리뷰어가 도는 backend. `tmux` 또는 `orca`. 기본은 tmux 가 설치돼 있으면 tmux, 아니면 launcher 와 같다.
 - `XRLIVE_WATCH_TIMEOUT` — watcher 최대 대기 초. 기본 7200(2h).
 - `XRLIVE_WATCH_INTERVAL` — 폴링 간격 초. 기본 3.
 - `XRLIVE_STUCK_AFTER` — stuck 핑 전 연속 프롬프트 감지 횟수. 기본 2(오탐 방지).

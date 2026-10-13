@@ -16,9 +16,10 @@ slug="${4:-}"
 
 result="$work/REVIEW_RESULT.md"
 sess="$(xr_session_name "$slug")"
-# The session's backend is recorded in the index; fall back to this shell's own
-# (the watcher is nohup'd from the launcher, so it inherits the right env).
+# The index records where the reviewer runs (be) and where the launcher lives
+# (lbe): an Orca launcher's reviewer runs in tmux, so the two can differ.
 be="$(xr_slug_backend "$slug")"
+lbe="$(xr_slug_launcher_backend "$slug")"
 ref="$(xr_slug_ref "$slug")"
 timeout="${XRLIVE_WATCH_TIMEOUT:-7200}"   # seconds (default 2h)
 interval="${XRLIVE_WATCH_INTERVAL:-3}"
@@ -30,7 +31,7 @@ stuck_pinged=0
 ping() {
   local attempt
   for attempt in 1 2 3; do
-    if xr_be_send "$launcher_pane" "$1" "$launcher_tool" "$be"; then
+    if xr_be_send "$launcher_pane" "$1" "$launcher_tool" "$lbe"; then
       printf 'sent\n' > "$work/PING_STATE"
       date -u '+%Y-%m-%dT%H:%M:%SZ' > "$work/PING_SENT_AT"
       return 0

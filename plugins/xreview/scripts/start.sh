@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start a background peer-review: launch the *other* coding agent in its own
-# background session (detached tmux session, or Orca terminal tab) to review the
-# current branch's diff, write its review to a file, and ping this pane when done.
+# background session (a detached tmux session, or an Orca terminal tab where tmux
+# is missing) to review the current branch's diff, write its review to a file,
+# and ping this pane when done.
 #
 # Usage:
 #   start.sh --current-tool <claude|codex> [--reviewer <claude|codex>]
@@ -116,7 +117,9 @@ printf 'pending\n' > "$WORK/PING_STATE"
 rm -f "$WORK/PING_SENT_AT"
 xr_set_watch_state "$WORK" running "리뷰어 기동"   # durable status for pollers
 SESS="$(xr_session_name "$slug")"
-BACKEND="$(xr_backend)"
+LAUNCHER_BACKEND="$(xr_backend)"          # where the ping goes and peek splits
+SESSION_BACKEND="$(xr_session_backend)"    # where the reviewer runs
+xr_be_usable "$SESSION_BACKEND" || xr_die "reviewer session backend '$SESSION_BACKEND' is not usable from this shell"
 launcher_pane="$(xr_launcher_id || echo '')"
 created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -192,12 +195,12 @@ rm -f "$WORK/RUN_EXIT"
   # tmux keeps a finished pane around via remain-on-exit; Orca ends the terminal
   # with its command, which would take the reviewer's scrollback with it. Hold
   # the tab open with a shell so peek still shows how the run ended.
-  [ "$BACKEND" = orca ] && printf 'exec "${SHELL:-/bin/bash}" -i\n'
+  [ "$SESSION_BACKEND" = orca ] && printf 'exec "${SHELL:-/bin/bash}" -i\n'
 } > "$RUNNER"
 chmod +x "$RUNNER"
 
-SESSION_REF="$(xr_be_spawn "$slug" "$WORK" "$REPO_ROOT" "bash $(xr_shq "$RUNNER")")" \
-  || xr_die "could not start the reviewer session on backend '$BACKEND'"
+SESSION_REF="$(xr_be_spawn "$slug" "$WORK" "$REPO_ROOT" "bash $(xr_shq "$RUNNER")" "$SESSION_BACKEND")" \
+  || xr_die "could not start the reviewer session on backend '$SESSION_BACKEND'"
 
 watcher_pid=""
 
@@ -209,18 +212,20 @@ jq -n \
   --arg repo_key "$repo_key" --arg repo_root "$REPO_ROOT" \
   --arg branch "$branch" --arg base "$base" --arg scope "$scope" \
   --arg launcher_pane "$launcher_pane" --arg watcher_pid "$watcher_pid" \
-  --arg backend "$BACKEND" --arg session_ref "$SESSION_REF" \
+  --arg backend "$SESSION_BACKEND" --arg session_ref "$SESSION_REF" \
+  --arg launcher_backend "$LAUNCHER_BACKEND" \
   --arg created "$created" \
   '{slug:$slug, session:$session, work:$work, request:$request, result:$result,
     reviewer:$reviewer, current_tool:$current_tool, repo_key:$repo_key,
     repo_root:$repo_root, branch:$branch, base:$base, scope:$scope,
     backend:$backend, session_ref:$session_ref,
-    launcher_pane:$launcher_pane, watcher_pid:$watcher_pid, viewport:"",
+    launcher_backend:$launcher_backend, launcher_pane:$launcher_pane,
+    watcher_pid:$watcher_pid, viewport:"",
     created:$created}' > "$XRLIVE_SESSIONS/$slug.json"
 
 
 if [ -n "$launcher_pane" ]; then
-  if [ "$BACKEND" = "tmux" ]; then
+  if [ "$LAUNCHER_BACKEND" = "tmux" ]; then
     watcher_session="xwatch-$slug"
     printf -v watcher_command 'env XRLIVE_HOME=%q XRLIVE_BACKEND=tmux bash %q %q %q %q %q >%q 2>&1' \
       "$XRLIVE_HOME" "$SCRIPT_DIR/notify.sh" "$launcher_pane" "$WORK" "$current_tool" "$slug" "$WORK/watcher.log"
@@ -237,12 +242,11 @@ fi
 
 cat <<EOF
 xreview:live started — reviewer running in the background.
-  session : $SESS  (slug: $slug, backend: $BACKEND)
+  session : $SESS  (slug: $slug, backend: $SESSION_BACKEND, launcher: $LAUNCHER_BACKEND)
   reviewer: $reviewer   scope: $scope_desc
   request : $REQUEST
   result  : $RESULT  (pending — you'll be pinged here when ready)
-  peek    : /xreview:live peek        (popup)
-  dock    : /xreview:live dock        (split pane)
+  peek    : /xreview:live peek        (split on the right; /xreview:live undock closes it)
   status  : /xreview:status
   stop    : /xreview:stop
 EOF

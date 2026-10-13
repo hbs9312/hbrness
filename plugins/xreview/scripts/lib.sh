@@ -8,8 +8,9 @@
 #   $XRLIVE_HOME/.sessions/<slug>.json     (flat index for status/stop)
 #
 # A "reviewer" agent runs in its own background session named `xrev-<slug>` —
-# a detached tmux session, or an Orca terminal tab. The launcher pane only sees
-# a completion ping; peek/dock show that session without disturbing it.
+# a detached tmux session (an Orca terminal tab where tmux is missing). The
+# launcher pane only sees a completion ping; peek/dock show that session in a
+# split on the launcher's right without disturbing it.
 #
 # Source-only: scripts should `source` this then call functions.
 
@@ -39,7 +40,14 @@ xr_init_home() {
 #   session ref : tmux → session name `xrev-<slug>`, orca → terminal handle
 #   launcher id : tmux → $TMUX_PANE,                 orca → $ORCA_TERMINAL_HANDLE
 #
-# Every session records its backend in the index, so a review started under tmux
+# Two backends meet in one review. The launcher's (xr_backend) is where the
+# completion ping goes and where peek opens its split. The session's
+# (xr_session_backend) is where the reviewer runs: tmux whenever it is
+# installed, Orca launchers included, because a split can attach to a detached
+# tmux session and detach from it again without ending the review. An Orca tab
+# runs the reviewer only where tmux is missing, and peek then switches to it.
+#
+# Every session records both in the index, so a review started under tmux
 # stays listable from an Orca session (status/stop fall back to the durable
 # files instead of dying).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,14 +65,24 @@ xr_backend() {
   printf '%s' "$XR_BACKEND"
 }
 
-# Can <backend> be driven from here? A session started under the other one is
-# still listed, just not controllable.
+# Can <backend> be driven from here? tmux sessions answer from any shell that
+# has tmux (an Orca launcher drives its reviewer's tmux session); a session on
+# a backend whose CLI is missing is still listed, just not controllable.
 xr_be_usable() {
   case "${1:-}" in
-    tmux) command -v tmux >/dev/null 2>&1 && { [ -n "${TMUX_PANE:-}" ] || [ -n "${TMUX:-}" ]; } ;;
+    tmux) command -v tmux >/dev/null 2>&1 ;;
     orca) command -v orca >/dev/null 2>&1 ;;
     *) return 1 ;;
   esac
+}
+
+# Where a new reviewer session runs: tmux whenever it is installed, else this
+# shell's own backend (an Orca tab). XRLIVE_SESSION_BACKEND=tmux|orca forces one.
+xr_session_backend() {
+  if [ -n "${XRLIVE_SESSION_BACKEND:-}" ]; then printf '%s' "$XRLIVE_SESSION_BACKEND"
+  elif command -v tmux >/dev/null 2>&1; then printf 'tmux'
+  else xr_backend
+  fi
 }
 
 xr_backend_require() {
@@ -97,17 +115,18 @@ xr_orca_json() {
 }
 
 # Spawn the reviewer detached. Echoes the session ref the other helpers take.
-#   xr_be_spawn <slug> <work-dir> <repo-root> <command>
+#   xr_be_spawn <slug> <work-dir> <repo-root> <command> [session-backend]
 xr_be_spawn() {
-  local slug="$1" work="$2" root="$3" cmd="$4" sess ref
+  local slug="$1" work="$2" root="$3" cmd="$4" be="${5:-}" sess ref
   sess="$(xr_session_name "$slug")"
-  case "$(xr_backend)" in
+  [ -n "$be" ] || be="$(xr_session_backend)"
+  case "$be" in
     tmux)
       tmux new-session -d -s "$sess" -x 220 -y 50 -c "$work" "$cmd" || return 1
       # remain-on-exit keeps the pane and its scrollback after the agent exits so
       # peek/dock still show the final state; stop.sh tears it down.
       tmux set-option -t "$sess" remain-on-exit on 2>/dev/null || true
-      tmux set-option -t "$sess" window-size manual 2>/dev/null || true
+      xr_tmux_fit_view "$sess"
       printf '%s' "$sess" ;;
     orca)
       # Orca terminals belong to a workspace rather than an arbitrary cwd, so the
@@ -149,7 +168,7 @@ xr_be_ended() {
   case "$be" in
     tmux)
       xr_be_usable tmux || return 1
-      [ "$(tmux list-panes -t "=$ref" -F '#{pane_dead}' 2>/dev/null | head -1)" = "1" ] ;;
+      [ "$(tmux list-panes -t "=$ref:" -F '#{pane_dead}' 2>/dev/null | head -1)" = "1" ] ;;
     *) return 1 ;;
   esac
 }
@@ -184,7 +203,11 @@ xr_be_capture() {
   local ref="$1" lines="${2:-40}" be="${3:-}"
   [ -n "$be" ] || be="$(xr_backend)"
   case "$be" in
-    tmux) tmux capture-pane -p -t "=$ref" 2>/dev/null | tail -n "$lines" ;;
+    # capture-pane prints every row, the blank ones under the output too: drop
+    # those first so a tall window's last lines are the reviewer's.
+    tmux) tmux capture-pane -p -t "=$ref:" 2>/dev/null \
+            | awk '{ row[NR] = $0 } NF { last = NR } END { for (i = 1; i <= last; i++) print row[i] }' \
+            | tail -n "$lines" ;;
     orca) xr_orca_json '.terminal.tail | join("\n")' \
             orca terminal read --terminal "$ref" --screen --limit "$lines" ;;
   esac
@@ -201,18 +224,68 @@ xr_be_kill() {
   esac
 }
 
-# Close a docked viewport pane. Only tmux has one — under Orca the reviewer tab
-# IS the view, so there is nothing separate to close.
-xr_be_close_viewport() {
+# tmux target forms: commands that take a session (has-session, kill-session,
+# attach-session) match `=name` exactly; commands that take a window or pane
+# (capture-pane, list-panes, display-message, set-option) do not resolve a bare
+# `=name` and need `=name:`, the session's current window.
+
+# Make a tmux reviewer session fit whatever split attaches to it: its window
+# follows the attached client's size instead of staying 220 columns and being
+# cropped, and its status bar and pane border line are off — the split already
+# sits inside the launcher's terminal, which draws its own. Sessions started
+# before this get it on their first peek.
+xr_tmux_fit_view() {
+  tmux set-option -t "=$1:" window-size latest >/dev/null 2>&1 || true
+  tmux set-option -t "=$1:" status off >/dev/null 2>&1 || true
+  tmux set-option -w -t "=$1:" pane-border-status off >/dev/null 2>&1 || true
+}
+
+# Open a split on the right of <launcher> (a tmux pane, or an Orca terminal)
+# that attaches to the reviewer's tmux session <sess>. The attach is exec'd, so
+# detaching or the session ending closes the split; the reviewer keeps running.
+# The launcher keeps the keyboard. Echoes the split's id for the index.
+#   xr_be_open_viewport <sess> <launcher-backend> <launcher-id>
+xr_be_open_viewport() {
+  local sess="$1" be="$2" launcher="$3" sock attach vp
+  [ -n "$launcher" ] || return 1
+  xr_tmux_fit_view "$sess"
+  # Name the reviewer's server: the split's shell may not reach it by default
+  # (TMUX unset there, or the launcher's tmux on its own socket).
+  sock="$(tmux display-message -p -t "=$sess:" '#{socket_path}' 2>/dev/null)" && [ -n "$sock" ] || return 1
+  attach="exec env -u TMUX tmux -S $(xr_shq "$sock") attach-session -t $(xr_shq "=$sess")"
+  case "$be" in
+    tmux) tmux split-window -h -d -P -F '#{pane_id}' -t "$launcher" "$attach" ;;
+    orca)
+      # `vertical` puts the new terminal on the right. Orca focuses it, so hand
+      # the keyboard back: typing meant for the launcher must not reach the reviewer.
+      vp="$(xr_orca_json '.split.handle' orca terminal split --terminal "$launcher" \
+              --direction vertical --command "$attach")" || return 1
+      [ -n "$vp" ] || return 1
+      orca terminal switch --terminal "$launcher" --json >/dev/null 2>&1 || true
+      printf '%s' "$vp" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Is the split <vp> opened on <backend> still there?
+xr_be_viewport_alive() {
   local vp="${1:-}" be="${2:-}"
   [ -n "$vp" ] || return 1
-  [ -n "$be" ] || be="$(xr_backend)"
   case "$be" in
-    tmux)
-      xr_be_usable tmux || return 1
-      tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$vp" || return 1
-      tmux kill-pane -t "$vp" 2>/dev/null || true ;;
+    tmux) xr_be_usable tmux && tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$vp" ;;
+    orca) xr_be_usable orca && [ "$(xr_orca_json '.terminal.connected' orca terminal show --terminal "$vp")" = "true" ] ;;
     *) return 1 ;;
+  esac
+}
+
+# Close the split <vp> opened on <backend>: only the split, never the launcher
+# or the reviewer. Fails when there is no such split.
+xr_be_close_viewport() {
+  local vp="${1:-}" be="${2:-}"
+  xr_be_viewport_alive "$vp" "$be" || return 1
+  case "$be" in
+    tmux) tmux kill-pane -t "$vp" 2>/dev/null || true ;;
+    orca) orca terminal close --terminal "$vp" --json >/dev/null 2>&1 || true ;;
   esac
 }
 
@@ -221,6 +294,24 @@ xr_be_close_viewport() {
 xr_slug_backend() {
   local b; b="$(xr_meta "$1" backend 2>/dev/null || true)"
   printf '%s' "${b:-tmux}"
+}
+
+# The launcher's backend: where the completion ping goes. Sessions written before
+# the two were told apart ran the reviewer and the launcher on one backend.
+xr_slug_launcher_backend() {
+  local b; b="$(xr_meta "$1" launcher_backend 2>/dev/null || true)"
+  [ -n "$b" ] || b="$(xr_slug_backend "$1")"
+  printf '%s' "$b"
+}
+
+# The backend a slug's split was opened on, which is how it is closed. Entries
+# written before splits carry none: their viewport is a tmux pane under a tmux
+# session, while an Orca session's viewport was the tab to switch back to —
+# nothing to close.
+xr_slug_viewport_backend() {
+  local b; b="$(xr_meta "$1" viewport_backend 2>/dev/null || true)"
+  if [ -z "$b" ] && [ "$(xr_slug_backend "$1")" = tmux ]; then b=tmux; fi
+  printf '%s' "$b"
 }
 xr_slug_ref() {
   local r
