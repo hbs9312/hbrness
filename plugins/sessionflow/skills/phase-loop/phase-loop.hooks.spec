@@ -21,10 +21,12 @@ git branch --show-current 가 PHASES.md/HANDOFF.md 의 이번 페이즈 브랜�
 
 # ── xreview (비동기) ─────────────────────────────────────────
 [xreview].prompt
-xreview:live 를 start 로 호출: --scope working --approve auto --context "<이번 페이즈 의도·설계결정 3~6줄>" (reviewer 생략=반대편 도구). 출력의 slug 기억.
+xreview:live 를 start 로 호출: --scope working --approve auto --context "<이번 페이즈 의도·설계결정 3~6줄>" --on-done "<아래 문장 그대로>" (reviewer 생략=반대편 도구). 출력의 slug 기억.
+--on-done 문장: phase-loop xreview 단계의 완료 알림이다(질문 아님). 이 턴에 결과를 읽고 바로 이어서 해: approve 거나 blocking 이 없으면 다음 stage 로 가고, blocking(critical/major) 이나 request-changes 면 지적을 코드에서 확인해 반영한 뒤 max-rounds 안이면 재리뷰를 start 해(한도면 미해결을 followup 에 남기고 다음 stage 로). 요약만 하고 멈추지 마.
 그리고 이 turn 을 끝내고 핑을 기다린다(추가 작업 금지). 핑은 완료뿐 아니라 stuck/gone/timeout 으로도 온다.
+완료 핑은 알림이지 질문이 아니다 — 끝에 위 --on-done 문장이 붙어 온다. 핑을 받은 그 턴에 반영·재리뷰 start(또는 다음 stage)까지 하고, 요약만 하고 turn 을 끝내지 않는다.
 핑/폴링으로 분기:
- - 완료 → REVIEW_RESULT.md 를 severity 순으로. blocking 없거나 approve 면 stage 종료. blocking 있으면 반영 후 라운드 +1(최대 N=PHASES.md xreview max-rounds, 기본 2). N 도달 시 미해결을 sessionflow:followup 에 남기고 다음 stage 로.
+ - 완료 → REVIEW_RESULT.md 를 severity 순으로. blocking 없거나 approve 면 stage 종료. blocking 있거나 request-changes 면 반영 후 라운드 +1 로 재리뷰를 start(반영만 하고 stage 를 끝내지 않는다. 최대 N=PHASES.md xreview max-rounds, 기본 2). N 도달 시 미해결을 sessionflow:followup 에 남기고 다음 stage 로.
  - stuck → /xreview:live peek <slug> 또는 /xreview:stop 후 재시작. 조용히 기다리지 말 것.
  - gone/timeout → /xreview:status <slug> 확인 후 1회 재시작, 또 실패면 followup 남기고 진행.
 주의: 이 stage 는 turn 경계를 넘는다. 핑으로 돌아오면 /clear 없이 같은 페이즈이며 STAGE_IDX 가 xreview 를 가리킨다 — 'stage' 로 확인하고 이어간다.
