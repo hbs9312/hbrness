@@ -1,17 +1,17 @@
 # sessionflow
 
-세션 간 컨텍스트를 보존·재개하기 위한 스킬 모음. Claude Code 와 Codex CLI 가 **동일한 저장소(`HANDOFF.md` / `followups/`)를 공유**하므로, 한 도구에서 작성한 내용을 다른 도구에서 그대로 이어 작업할 수 있습니다. `phase-run` 은 여기서 한 발 더 나아가, 페이즈 경계마다 컨텍스트를 비우고 새 세션이 핸드오프를 읽어 자동으로 이어받게 합니다.
+세션 간 컨텍스트를 보존·재개하기 위한 스킬 모음. followup 과 handoff 는 **경로가 아니라 저장소(origin remote)를 기준**으로 private state repo 에 저장·동기화하므로, 다른 도구(Claude / Codex / Grok / Devin)는 물론 **다른 PC** 에서도 같은 내용을 이어 작업할 수 있습니다. `phase-run` 은 여기서 한 발 더 나아가, 페이즈 경계마다 컨텍스트를 비우고 새 세션이 핸드오프를 읽어 자동으로 이어받게 합니다.
 
 ## 스킬
 
 | 스킬 | 트리거 | 역할 | 범위 |
 |---|---|---|---|
-| `followup` | `/followup [-m\|-o] [메시지]` | 현재 세션에서 발견한 **후속 조치** 항목을 `followups/` 디렉토리(`INDEX.md` + 항목별 상세 파일)에 누적 기록. TODO·결정 보류·아이디어·발견된 이슈. 기본 동작은 merge. | 프로젝트 단위 (워크트리·세션 무관) |
-| `followup-clear` | `/followup-clear [-y]` | 누적된 followup 을 한 번에 비움. `followups/` 디렉토리 삭제 + 양쪽 `MEMORY.md` 의 `## Followups` 섹션 제거. | 프로젝트 단위 |
-| `handoff` | `/handoff [-m\|-o] [메시지]` | 현재 워크트리/세션의 **in-flight 컨텍스트** (편집중 파일·마지막 명령·실패한 에러·다음 한 줄) 를 `HANDOFF.md` 로 직렬화. 다음 세션이 즉시 이어받을 수 있게. | 워크트리 단위 (메인 = 워크트리의 베이스) |
-| `handoff-clear` | `/handoff-clear [-y] [--all]` | 현재 위치(워크트리/메인)의 `HANDOFF.md` 삭제 + `MEMORY.md` 의 해당 라인 정리. `--all` 로 프로젝트 전체 핸드오프 일괄 정리. | 워크트리 단위 (또는 `--all` 시 프로젝트 전체) |
-| `phase-run` | `/phase-run [continue\|pause\|resume\|stop\|status\|reset] \| <계획>` | 작업을 페이즈로 분해해, 각 페이즈가 끝나면 자기 pane 에 `/clear` + `/phase-run continue` 를 자동 주입 → 새 세션이 `HANDOFF.md` 를 읽고 다음 페이즈를 이어받게 한다. 컨텍스트 누적을 경계마다 리셋. 자동 커밋은 하지 않음. | 워크트리 단위 (handoff 와 동일 경로 공유) |
-| `phase-loop` | `/phase-loop [continue\|pause\|resume\|stop\|status\|reset] \| <구현 계획>` | `phase-run` 엔진 위에 각 페이즈 경계마다 **구현 → xreview 리뷰 N라운드 → 커밋 → push → PR → 핸드오프** 를 끼워 넣어, 모든 페이즈(=PR 단위)가 끝날 때까지 자동 반복하는 루프. 개인=브랜치 직접, 팀=워크트리+스택 PR. 커밋은 모드별(팀=무인 / 개인=확인). | 워크트리 단위 (phase-run 과 분리된 `phase-loop` 상태 네임스페이스, HANDOFF 는 공유) |
+| `followup` | `/followup [list\|-m\|-o] [메시지]` | 현재 세션에서 발견한 **후속 조치** 항목을 `followups/` 디렉토리(항목별 상세 파일 + 생성되는 `INDEX.md`)에 누적 기록. TODO·결정 보류·아이디어·발견된 이슈. 기본 동작은 merge. `list` 는 현황만. | 저장소 단위 (워크트리·세션·PC 무관) |
+| `followup-clear` | `/followup-clear [-y]` | 누적된 followup 을 한 번에 비움. `followups/` 디렉토리 삭제(다른 PC 에도 반영) + 양쪽 `MEMORY.md` 의 `## Followups` 섹션 제거. | 저장소 단위 |
+| `handoff` | `/handoff [load\|-m\|-o] [메시지]` | 현재 세션의 **in-flight 컨텍스트** (편집중 파일·마지막 명령·실패한 에러·다음 한 줄) 를 `handoffs/<branch>.md` 로 직렬화. 다음 세션이 즉시 이어받을 수 있게. `load` 는 다른 PC 에서 남긴 핸드오프를 불러온다. | 저장소 + 브랜치 단위 |
+| `handoff-clear` | `/handoff-clear [-y] [--all]` | 현재 브랜치의 핸드오프 삭제(다른 PC 에도 반영) + `MEMORY.md` 의 해당 라인 정리. `--all` 로 저장소 전체 핸드오프 일괄 정리. | 저장소 + 브랜치 단위 (또는 `--all` 시 저장소 전체) |
+| `phase-run` | `/phase-run [continue\|pause\|resume\|stop\|status\|reset] \| <계획>` | 작업을 페이즈로 분해해, 각 페이즈가 끝나면 자기 pane 에 `/clear` + `/phase-run continue` 를 자동 주입 → 새 세션이 `HANDOFF.md` 를 읽고 다음 페이즈를 이어받게 한다. 컨텍스트 누적을 경계마다 리셋. 자동 커밋은 하지 않음. | 워크트리 단위 (PC 로컬, 동기화 안 함) |
+| `phase-loop` | `/phase-loop [continue\|pause\|resume\|stop\|status\|reset] \| <구현 계획>` | `phase-run` 엔진 위에 각 페이즈 경계마다 **구현 → xreview 리뷰 N라운드 → 커밋 → push → PR → 핸드오프** 를 끼워 넣어, 모든 페이즈(=PR 단위)가 끝날 때까지 자동 반복하는 루프. 개인=브랜치 직접, 팀=워크트리+스택 PR. 커밋은 모드별(팀=무인 / 개인=확인). | 워크트리 단위 (PC 로컬, phase-run 과 분리된 `phase-loop` 상태 네임스페이스, HANDOFF 는 공유) |
 
 ### phase-run 동작 개요
 
@@ -84,34 +84,74 @@ echo deploy-staging
 | 시나리오 | "이 버그 발견했는데 이번엔 못 고치겠다 — 나중에 처리해야 됨" | "지금 빌드 에러 잡는 중인데 컨텍스트 길어져서 끊김 — 새 세션에서 그대로 이어가야 함" |
 | 누가 읽나 | 다음 세션 시작 시점, 또는 백로그 정리 시점 | 바로 다음 세션 — 그 자리에서 작업 재개 |
 | 수명 | 항목별로 Resolved 처리하며 영속 누적 | 작업 재개 후 보통 삭제 |
-| 저장 | `followups/` 디렉토리 (1 per project) | `HANDOFF.md` (1 per worktree) |
+| 저장 | `followups/<slug>.md` (1 디렉토리 per 저장소) | `handoffs/<branch>.md` (1 per 브랜치) |
 
-## 저장 경로 (Tier 1 — 도구 무관 공유)
+## 저장 경로 — 저장소 기준 + PC 간 동기화
+
+followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고 동기화합니다.
+
+```
+~/.hbrness/state/                         # private state repo 의 clone (PC 마다 하나)
+├── <host>/<owner>/<repo>/                # 저장소 키 = origin remote URL 정규화 (예: github.com/hbs9312/hbrness)
+│   ├── followups/
+│   │   ├── <slug>.md                     # 항목 하나 = 파일 하나 (frontmatter 가 진실원, summary = INDEX 한 줄 설명)
+│   │   ├── _config.json                  # 선택: {"resolved_keep": 10}
+│   │   └── INDEX.md                      # 생성물 — git 추적 안 함, 각 PC 에서 다시 만든다
+│   └── handoffs/
+│       ├── main.md
+│       └── feat/login.md                 # 브랜치 feat/login
+└── _local/<경로키>/                       # remote 없는 프로젝트 — 이 PC 에만 (git 추적 안 함)
+```
+
+- **저장소 키**: `git@github.com:o/r.git`, `https://github.com/o/r`, `ssh://git@github.com:22/o/r.git` 모두 `github.com/o/r` 로 같다. clone 경로가 PC 마다 달라도 같은 저장소면 같은 디렉토리를 쓴다.
+- **브랜치 기준 핸드오프**: 워크트리 폴더 이름은 PC 마다 다르지만 브랜치는 push 하면 같다. git 은 한 브랜치를 두 워크트리에 동시에 체크아웃하지 못하게 막으니 한 PC 안에서도 겹치지 않는다.
+- **동기화**: 스킬이 읽기 전에 `sfstate.py prepare`(pull), 쓰고 나서 `sfstate.py sync`(commit + push). push 가 거절되면 rebase 후 한 번 더 시도하고, 그래도 안 되면 로컬 커밋으로 남겨 다음 sync 때 올린다. 항목마다 파일이 따로라 두 PC 가 다른 항목을 고치면 충돌하지 않는다.
+- **INDEX.md 는 생성물**: 두 PC 가 같은 목록 파일을 고치면 충돌하므로, 항목 frontmatter(`title`·`summary`·`status`·`discovered`·`resolved`)로 매번 다시 만든다. 상한(`resolved_keep`, 기본 10)을 넘는 오래된 resolved 는 sync 때 지운다.
+
+### 새 PC 설정
+
+```bash
+# state repo 를 ~/.hbrness/state 로 clone (이미 이 PC 에 로컬 기록이 있으면 옆으로 옮긴 뒤 합친다)
+python3 <sessionflow>/scripts/sfstate.py init --remote https://github.com/<you>/hbrness-state.git
+# (선택) 예전 경로 기준 데이터를 한 번에 옮기기 — 각 스킬도 처음 실행될 때 그 프로젝트 몫을 옮긴다
+python3 <sessionflow>/scripts/sfstate.py migrate-all --dry-run
+python3 <sessionflow>/scripts/sfstate.py migrate-all
+# 현황 보기
+python3 <sessionflow>/scripts/sfstate.py status
+```
+
+state repo 가 없으면 스킬은 `~/.hbrness/state/` 에 로컬로만 기록하고 그 사실을 알린다. 나중에 `init` 하면 그대로 합쳐진다.
+
+### 예전 경로 기준 데이터 (≤0.15)
+
+이전 버전은 `~/.hbrness/sessionflow/<project-key>/`(`<project-key>` = 절대경로의 `/` 를 `-` 로) 아래에 `followups/` 와 워크트리별 `HANDOFF.md` 를 뒀습니다. `sfstate.py` 는 처음 실행될 때 그 프로젝트의 데이터를 저장소 기준으로 옮깁니다.
+
+- followup 항목은 그대로 복사하고, 예전 INDEX.md 의 '한 줄 설명'을 각 항목의 `summary` 로, Ideas 줄을 `status: idea` 파일로 바꿉니다. 예전 INDEX 의 resolved 상한(`최근 N`)은 `_config.json` 으로 옮깁니다.
+- 핸드오프는 메인 레포 것과 **아직 살아 있는 워크트리** 것만 옮기고(브랜치는 헤더의 `Branch:` 나 워크트리 HEAD 로), 지워진 워크트리의 핸드오프는 남겨 둡니다.
+- 원본은 지우지 않고 `.sfstate-migrated.json` 표시만 남깁니다.
+
+### phase-run / phase-loop / relay 상태 (PC 로컬)
 
 ```
 ~/.hbrness/sessionflow/<project-key>/
-├── followups/                            # 프로젝트 단위 후속 조치
-│   ├── INDEX.md                          # 항목 목록 + 한 줄 설명 + 상세 링크 (진입점)
-│   └── <slug>.md                         # 항목별 상세 파일
-├── HANDOFF.md                            # 메인 레포에서 호출한 핸드오프
+├── HANDOFF.md                            # phase-run/phase-loop/relay 가 페이즈 경계에서 쓰는 핸드오프
 ├── PHASES.md                             # phase-run/phase-loop 계획 (있을 때)
 ├── hooks.spec                            # phase-run/phase-loop 훅 선언 (load-hooks 대상, 있을 때)
 ├── phases/                               # phase-run 상태 (state.env + phases.tsv + hooks/ + gates.tsv)
 ├── phase-loop/                           # phase-loop 상태 (phase-run 과 분리된 네임스페이스)
+├── relay/                                # relay 상태
 └── worktrees/
     └── <wt-name>/                        # 각 워크트리별 (HANDOFF.md, PHASES.md, hooks.spec, phases/, phase-loop/)
 ```
 
-> 이전 버전(≤0.2.x)은 프로젝트당 단일 `FOLLOWUPS.md` 를 썼습니다. 그 파일이 남아 있으면 `followup` 스킬이 다음 실행 때 위 `followups/` 구조로 자동 마이그레이션하고 레거시 파일을 제거합니다.
+이 상태는 tmux pane·워크트리에 묶인 오케스트레이션 상태라 동기화하지 않습니다. 여기의 `HANDOFF.md` 는 `/handoff` 가 쓰는 `handoffs/<branch>.md` 와 별개이고, 형식만 같은 규약을 따릅니다. phase-loop 는 팀 모드에서 페이즈마다 브랜치를 새로 따기 때문에 브랜치 기준 저장과 맞지 않습니다.
 
 - `<project-key>` = 프로젝트 절대경로의 `/` 를 `-` 로 치환 (leading dash 유지).
-  예: `/Users/seok/development/my-app` → `-Users-seok-development-my-app`
 - `<wt-name>` = `basename "$(git rev-parse --git-dir)"` — git 워크트리 디렉토리명
-- 양쪽 하네스(Claude / Codex)에서 동일 파일을 읽고 씀.
 
 ## MEMORY.md 갱신 (Tier 2 — 하네스별 자동로드 위치)
 
-스킬은 동시에 양쪽 하네스의 MEMORY.md 의 `## Followups` 또는 `## Handoff` 섹션을 갱신해 위 공유 경로를 가리키게 합니다.
+스킬은 동시에 양쪽 하네스의 MEMORY.md 의 `## Followups` 또는 `## Handoff` 섹션을 갱신해 위 state 경로(`~/.hbrness/state/...`)를 가리키게 합니다. MEMORY.md 는 PC 마다 따로라, 다른 PC 에서 처음 이어받을 때는 `/handoff load` 나 `/followup list` 가 그 PC 의 MEMORY.md 를 채웁니다.
 
 | 하네스 | MEMORY.md 위치 |
 |---|---|
@@ -122,7 +162,8 @@ echo deploy-staging
 
 ## 동작 보장
 
-- **install** 은 SKILL.md 만 배치합니다. MEMORY.md 는 스킬이 실제로 실행될 때만 갱신됩니다.
+- **install** 은 SKILL.md 만 배치합니다. MEMORY.md 와 state repo 는 스킬이 실제로 실행될 때만 갱신됩니다.
 - `followup` 과 `handoff` 는 서로의 파일을 절대 건드리지 않습니다. clear 스킬도 마찬가지입니다.
-- `handoff` 는 워크트리 격리 — 같은 프로젝트의 메인/워크트리A/워크트리B 가 서로 덮어쓰지 않습니다.
-- `followup` 은 프로젝트 단위 — 어느 워크트리에서 호출해도 동일한 `followups/` 디렉토리에 누적됩니다.
+- `handoff` 는 브랜치 격리 — 같은 저장소의 다른 브랜치 핸드오프를 덮어쓰지 않습니다.
+- `followup` 은 저장소 단위 — 어느 워크트리·PC 에서 호출해도 같은 `followups/` 디렉토리에 누적됩니다.
+- state repo 에는 핸드오프의 diff·에러 원문이 들어가므로 **private repo** 로만 둡니다.
