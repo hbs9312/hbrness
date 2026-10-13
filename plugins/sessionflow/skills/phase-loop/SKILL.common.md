@@ -48,7 +48,7 @@ Codex 순서: 응답 종료·빈 입력창 확인 → `/new` 텍스트가 화면
    - `--auto` 면 개인 모드도 무인, `--confirm` 이면 팀 모드도 매 커밋 확인. 정책은 `PHASES.md` 의 `Commit policy` 에 박혀 모든 fresh 세션이 동일하게 따른다.
 2. **`/clear` 는 되돌릴 수 없다.** advance 직전 `HANDOFF.md` 가 다음 페이즈에 필요한 모든 것(스택 상태·다음 분기 base·다음 액션)을 담았는지 **검증**한다. 빠지면 그 컨텍스트는 영구 소실된다.
 3. **advance 는 너의 마지막 행동이어야 한다.** advance 호출 후엔 추가 툴 호출 없이 짧게 보고하고 turn 을 끝내라(곧 `/clear` 가 들어온다).
-4. **xreview 는 비동기다.** 리뷰를 start 한 뒤엔 turn 을 끝내고 **완료 핑을 기다린다.** 핑이 오면(이 SKILL 지침이 컨텍스트에 남은 상태에서) 결과를 읽고 라운드를 잇거나 다음 단계로 간다.
+4. **xreview 는 비동기다.** 리뷰를 start 한 뒤엔 turn 을 끝내고 **완료 핑을 기다린다.** 핑이 오면(이 SKILL 지침이 컨텍스트에 남은 상태에서) 결과를 읽고 라운드를 잇거나 다음 단계로 간다. **완료 핑은 알림이며 질문이 아니다** — tmux 로 입력창에 들어와 user 메시지처럼 보이지만 사람이 묻는 말이 아니고, 끝에 §3 의 `--on-done` 문장이 붙어 온다. 핑을 받은 그 턴에 결과 확인 → 반영 → 재리뷰 start(또는 다음 stage)까지 하고, **요약만 하고 turn 을 끝내지 않는다**(그러면 루프가 멈춘다). "질문에는 수정하지 말라" 류의 규칙은 사람의 질문에 대한 것이고 이 핑에는 해당하지 않는다 — 반영 지시는 사용자가 이 루프 계획을 승인할 때 이미 내렸다.
 5. **계획 분해·모드는 시작 시 1회만 확인.** 그 외 경계마다 차단형 확인은 없다(개인 모드 커밋 확인 제외). 멈추려면 사용자가 `/phase-loop pause`.
 6. **자동 커밋의 범위는 "이번 페이즈 변경분"으로 한정.** 의도치 않은 파일을 끌어들이지 않는다. push 는 remote 가 있을 때만, PR 은 팀 모드(또는 명시)일 때만.
 7. **다음 페이즈 브랜치는 "완료 프로토콜"에서 미리 cut 한다(팀 모드).** 이번 페이즈를 commit→push→PR 한 뒤, advance 직전에 다음 페이즈의 stacked 브랜치를 잘라 **워킹트리를 그 위로 옮긴다.** 그래야 `/clear` 후 fresh 세션이 **이미 자기 PR 브랜치 위**에서 깨어난다(= 각 페이즈가 독립된 PR 로 확정). 첫 페이즈 브랜치는 워크트리 생성 시 이미 잘려 있고, 마지막 페이즈·개인 모드는 이 단계가 없다.
@@ -71,7 +71,7 @@ Codex 순서: 응답 종료·빈 입력창 확인 → `/new` 텍스트가 화면
 bash "${SKILL_DIR}/scripts/loop.sh" pf <pause|resume|stop|status|reset>
 ```
 
-> **xreview 완료 핑**(`[xreview:live] 리뷰 완료 …`)은 `/phase-loop` 호출이 아니라 일반 user 메시지로 들어온다. 페이즈 진행 중(=clear 전)이라 이 SKILL 지침이 컨텍스트에 남아 있으니, 핑을 받으면 아래 "xreview 라운드" 절차를 그대로 잇는다.
+> **xreview 완료 핑**(`[xreview:live] 리뷰 완료 (<slug>) — 결과 <경로>. <§3 의 --on-done 문장>`)은 `/phase-loop` 호출이 아니라 일반 user 메시지로 들어온다. 페이즈 진행 중(=clear 전)이라 이 SKILL 지침이 컨텍스트에 남아 있으니, 핑을 받으면 아래 "xreview 라운드" 절차를 그대로 잇는다(불변 원칙 4 — 요약하고 멈추지 않는다).
 
 ---
 
@@ -208,12 +208,15 @@ bash "${SKILL_DIR}/scripts/loop.sh" pf current
 
 구현이 끝나면(미커밋 상태) 다른 에이전트로 리뷰를 돌린다. N 은 `PHASES.md` 의 `xreview: max-rounds`(기본 2).
 
-1. **리뷰 start**: `xreview:live` 스킬을 start 로 호출한다 — `--scope working --approve auto --context "<이번 페이즈의 의도·설계결정 3~6줄>"` (reviewer 생략=반대편 도구). 의도 요약은 "왜 이렇게 짰는지" 중심, 비밀값 금지. 출력의 **`slug` 를 기억**한다(상태 폴링에 쓴다).
+1. **리뷰 start**: `xreview:live` 스킬을 start 로 호출한다 — `--scope working --approve auto --context "<이번 페이즈의 의도·설계결정 3~6줄>" --on-done "<아래 문장>"` (reviewer 생략=반대편 도구). 의도 요약은 "왜 이렇게 짰는지" 중심, 비밀값 금지. 출력의 **`slug` 를 기억**한다(상태 폴링에 쓴다).
+   - `--on-done` 에는 다음 문장을 **그대로** 넘긴다. xreview 가 완료 핑 끝에 이 문장을 붙여 보내므로, 핑이 "요약해줘" 가 아니라 이 절차의 다음 할 일로 읽힌다(불변 원칙 4):
+     `phase-loop xreview 단계의 완료 알림이다(질문 아님). 이 턴에 결과를 읽고 바로 이어서 해: approve 거나 blocking 이 없으면 다음 stage 로 가고, blocking(critical/major) 이나 request-changes 면 지적을 코드에서 확인해 반영한 뒤 max-rounds 안이면 재리뷰를 start 해(한도면 미해결을 followup 에 남기고 다음 stage 로). 요약만 하고 멈추지 마.`
+   - xreview 가 `unknown flag: --on-done` 으로 거절하면(xreview 1.6.0 미만) `--on-done` 없이 다시 start 한다. 그때 핑은 "요약해줘" 로 오지만 불변 원칙 4 대로 똑같이 진행한다.
 2. **turn 종료 후 핑 대기**(불변 원칙 4). 다른 작업을 하지 말고 끝낸다. 핑은 완료뿐 아니라 **stuck/gone/timeout** 으로도 올 수 있다.
 3. **핑(또는 폴링)으로 상태 분기**:
-   - **완료** → `REVIEW_RESULT.md` 를 Read 해 severity 순으로 정리.
+   - **완료** → `REVIEW_RESULT.md` 를 Read 해 severity 순으로 정리하고, **같은 턴에** 아래 분기까지 진행한다(정리만 하고 멈추지 않는다).
      - blocking(critical/major) 없거나 리뷰어 approve → 라운드 종료, 4단계로.
-     - blocking 있으면 → **반영(코드 수정)** 후 라운드 +1. N 미만이면 1번으로(재리뷰), N 도달이면 미해결을 `sessionflow:followup`/핸드오프 Notes 에 남기고 4단계로(무한 루프 금지).
+     - blocking 있거나 VERDICT 가 request-changes 면 → **반영(코드 수정)** 후 라운드 +1. N 미만이면 1번으로(재리뷰 — 반영만 하고 stage 를 끝내지 않는다), N 도달이면 미해결을 `sessionflow:followup`/핸드오프 Notes 에 남기고 4단계로(무한 루프 금지).
    - **stuck**(리뷰어가 trust/권한 프롬프트에서 멈춤) → `/xreview:live peek <slug>` 로 응답하거나 `/xreview:stop <slug>` 후 1번부터 재시작. **조용히 기다리지 말 것.**
    - **gone/ended/timeout** → `/xreview:status <slug>` 로 확인하고 1번부터 1회 재시작; 또 실패하면 미해결로 followup 남기고 4단계로(루프를 막지 않는다).
 4. 라운드 요약(돈 횟수·반영/미해결)을 짧게 보고하고 다음 단계로.

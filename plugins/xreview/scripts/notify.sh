@@ -21,6 +21,16 @@ sess="$(xr_session_name "$slug")"
 be="$(xr_slug_backend "$slug")"
 lbe="$(xr_slug_launcher_backend "$slug")"
 ref="$(xr_slug_ref "$slug")"
+# A caller that starts the review as one step of a running procedure (e.g.
+# phase-loop) passes --on-done, and the ping carries that instruction instead of
+# asking for a summary: the ping lands as a user message, and "요약해줘" alone
+# reads as "summarize and stop" to the agent running the procedure.
+on_done="$(xr_meta "$slug" on_done 2>/dev/null || true)"
+if [ -n "$on_done" ]; then
+  done_msg="[xreview:live] 리뷰 완료 (${slug}) — 결과 ${result}. ${on_done}"
+else
+  done_msg="[xreview:live] 리뷰 완료 (${slug}) — Read ${result} 로 결과 열어서 요약해줘."
+fi
 timeout="${XRLIVE_WATCH_TIMEOUT:-7200}"   # seconds (default 2h)
 interval="${XRLIVE_WATCH_INTERVAL:-3}"
 stuck_after="${XRLIVE_STUCK_AFTER:-2}"    # consecutive detections before stuck ping
@@ -46,7 +56,7 @@ ping() {
 while :; do
   if [ -s "$result" ]; then
     xr_set_watch_state "$work" done "결과 파일 작성됨"
-    ping "[xreview:live] 리뷰 완료 (${slug}) — Read ${result} 로 결과 열어서 요약해줘."
+    ping "$done_msg"
     exit 0
   fi
   # Run ended without a result? (session gone, or the reviewer process returned)
@@ -60,7 +70,7 @@ while :; do
     sleep "$interval"
     if [ -s "$result" ]; then
       xr_set_watch_state "$work" done "결과 파일 작성됨"
-      ping "[xreview:live] 리뷰 완료 (${slug}) — Read ${result} 로 결과 열어서 요약해줘."
+      ping "$done_msg"
     else
       xr_set_watch_state "$work" ended-no-result "리뷰어가 결과 파일 없이 종료"
       ping "[xreview:live] 리뷰어(${slug})가 결과 파일 없이 종료됨. /xreview:live peek 로 확인."

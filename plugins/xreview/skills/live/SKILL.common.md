@@ -1,6 +1,6 @@
 ---
 name: live
-description: "xreview 의 기본 코드리뷰 스킬. 반대편 코딩 에이전트(claude↔codex)를 백그라운드 tmux 세션(tmux 가 없으면 Orca 터미널 탭)으로 띄워 현재 브랜치/작업트리/PR 의 diff 를 읽기 전용으로 리뷰시키고, 완료되면 이 세션에 핑을 보낸다. 리뷰어는 detached 세션에서 독립 실행되며, 진행 상황은 peek 으로 현재 터미널 오른쪽에 split 을 열어 들여다보고, undock 으로 닫는다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '리뷰해줘', '코드 리뷰', '코드 리뷰해줘', '다른 모델로 리뷰', '다른 에이전트로 리뷰', '백그라운드 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 들여다보기', '/xreview:live' 등을 말하면 트리거. 리뷰 세션 목록 확인은 /xreview:status, 종료는 /xreview:stop. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] | peek|dock|undock [slug]"
+description: "xreview 의 기본 코드리뷰 스킬. 반대편 코딩 에이전트(claude↔codex)를 백그라운드 tmux 세션(tmux 가 없으면 Orca 터미널 탭)으로 띄워 현재 브랜치/작업트리/PR 의 diff 를 읽기 전용으로 리뷰시키고, 완료되면 이 세션에 핑을 보낸다. 리뷰어는 detached 세션에서 독립 실행되며, 진행 상황은 peek 으로 현재 터미널 오른쪽에 split 을 열어 들여다보고, undock 으로 닫는다. 무료 PR 봇 대신 로컬에서 다른 모델로 리뷰받고 싶을 때 사용. 사용자가 '리뷰해줘', '코드 리뷰', '코드 리뷰해줘', '다른 모델로 리뷰', '다른 에이전트로 리뷰', '백그라운드 리뷰', '라이브 리뷰', 'codex 한테 리뷰 시켜줘', 'claude 로 리뷰', '리뷰 들여다보기', '/xreview:live' 등을 말하면 트리거. 리뷰 세션 목록 확인은 /xreview:status, 종료는 /xreview:stop. Usage: /xreview:live [start] [--reviewer claude|codex] [--scope branch|working|pr] [--base <ref>] [--approve auto|manual] [--context <text>] [--on-done <text>] | peek|dock|undock [slug]"
 argument-hint: "[start|peek|dock|undock] [--reviewer ..] [--scope ..] [slug]"
 tools: [shell]
 effort: low
@@ -41,6 +41,7 @@ model: sonnet
 - `--approve auto|manual` — 기본 `auto`(hands-off, 리뷰어가 승인 없이 진행). `manual`이면 리뷰어가 승인을 물어봄(peek 으로 직접 승인).
 - `--context <text>` — 리뷰어에게 전달할 추가 상황 설명(REVIEW_REQUEST 의 `## Caller Context` 로 프리셋 위에 주입됨). **start 시 런처가 이번 세션의 작업 의도를 자동 요약해 채운다**(아래 start 흐름 1번 참고). 사용자가 직접 줄 수도 있다.
 - `--title <text>` — 리뷰 제목.
+- `--on-done <text>` — 완료 핑 끝에 붙일 다음 할 일 한 줄. 주면 완료 핑이 `[xreview:live] 리뷰 완료 (<slug>) — 결과 <REVIEW_RESULT 경로>. <text>` 가 되고, 안 주면 지금처럼 `… Read <경로> 로 결과 열어서 요약해줘.` 로 온다. 루프 같은 진행 중인 절차(예: sessionflow phase-loop)가 리뷰를 한 단계로 돌릴 때 "결과를 읽고 반영·재리뷰까지 하라"를 핑에 실어 보내는 용도다 — 핑은 user 메시지로 들어오므로 "요약해줘" 만 있으면 받는 쪽이 요약하고 멈추기 쉽다. 사람이 직접 리뷰를 부를 때는 생략한다. 줄바꿈은 공백으로 바뀌고 세션 인덱스(`on_done`)에 저장된다. stuck/gone/timeout 핑에는 붙지 않는다.
 - `--launch-cmd '<cmd>'` — (고급) claude/codex 대신 임의의 에이전트 명령으로 실행. seed 프롬프트가 뒤에 붙는다. 다른 CLI(예: 래퍼·사내 도구)로 확장할 때.
 
 ## 실행 흐름
@@ -55,7 +56,7 @@ model: sonnet
 2. 위 표대로 `start.sh` 를 실행한다(위에서 만든 `--context` 포함). 스크립트가 base 감지 → diff 수집 → `code` 프리셋 주입 → `REVIEW_REQUEST.md` 작성 → detached 세션 `xrev-<slug>` 로 리뷰어 실행 → 완료 watcher 기동까지 전부 처리한다.
 3. 스크립트 출력(세션명/slug/요청·결과 경로/peek·dock·status·stop 안내)을 사용자에게 그대로 보여준다.
 4. **리뷰가 끝나거나 멈추면** launcher 세션(=지금 너)에 한 줄 핑이 user input 으로 들어온다. watcher 는 아래 경우에 핑하고, 동시에 durable 상태 파일(`$WORK/WATCH_STATE`)도 갱신한다 — 핑이 유실돼도 상태는 남는다:
-   - **완료**: `[xreview:live] 리뷰 완료 (<slug>) …` → `REVIEW_RESULT.md` 를 Read 해 severity 순으로 요약.
+   - **완료**: `[xreview:live] 리뷰 완료 (<slug>) …` → `REVIEW_RESULT.md` 를 Read 해 severity 순으로 요약. 핑 끝에 `--on-done` 문장이 붙어 왔으면 요약에서 멈추지 말고 그 문장대로 이어서 한다(아래 가이드라인 첫 항목).
    - **멈춤(stuck)**: 리뷰어가 trust/권한 프롬프트에서 막힘 → `/xreview:live peek` 로 직접 응답하거나 `/xreview:stop` 후 재시작. (예전엔 조용히 timeout 까지 대기했지만 이제 즉시 알린다. 사용자가 응답해 풀리면 이어서 완료 핑이 온다.)
    - **결과 없이 종료(gone/ended)**: `/xreview:status`·`peek` 로 원인 확인 후 필요 시 재시작.
    - **시간 초과(timeout)**: `peek` 로 진행 상황 확인.
@@ -75,6 +76,7 @@ model: sonnet
 ## 가이드라인 (너 = LLM)
 
 - 완료 핑을 받으면 **결과를 읽어 요약**까지 한다. 단, **리뷰 findings 에 따른 코드 자동 수정은 하지 않는다** — 사용자가 명시적으로 "고쳐줘" 라고 할 때만. (xreview 플러그인 공통 규칙)
+  - 예외: 완료 핑이 `… — 결과 <경로>. <문장>` 꼴로 `--on-done` 문장을 달고 왔으면, 그 문장이 이번 리뷰를 start 한 절차가 미리 정해 둔 지시다. 핑은 알림이지 질문이 아니므로, 같은 턴에 그 문장대로(예: 반영 → 재리뷰 start) 진행하고 요약만 하고 턴을 끝내지 않는다.
 - 리뷰어 출력을 재해석·왜곡하지 말고, severity(critical/warning/info)와 file:line, VERDICT 를 보존해 정리한다.
 - tmux 도 Orca 도 아닌 곳에서 호출되면 `start.sh` 가 죽고 안내를 출력한다 → 사용자에게 tmux 세션을 띄우거나 Orca 안에서 실행하라고 알린다.
 - 리뷰어 backend 의 CLI 가 없는 곳(예: tmux 가 없어 Orca 탭에서 도는 세션을 orca CLI 가 없는 셸에서 볼 때)에서는 `/xreview:status` 에 `unknown — backend '<be>' not reachable` 로 뜬다. peek·stop 이 안 되니 결과 파일을 직접 읽어 요약하거나, 그쪽 환경에서 다시 열라고 안내한다.

@@ -8,6 +8,7 @@
 #   start.sh --current-tool <claude|codex> [--reviewer <claude|codex>]
 #            [--base <ref>] [--scope branch|working|pr]
 #            [--approve auto|manual] [--context <text>] [--title <text>]
+#            [--on-done <text>]   (appended to the completion ping)
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
@@ -20,6 +21,7 @@ scope="branch"
 approve="auto"
 context=""
 title=""
+on_done=""
 launch_override="${XRLIVE_LAUNCH_OVERRIDE:-}"
 
 while [ $# -gt 0 ]; do
@@ -31,9 +33,10 @@ while [ $# -gt 0 ]; do
     --approve)      approve="$2"; shift 2 ;;
     --context)      context="$2"; shift 2 ;;
     --title)        title="$2"; shift 2 ;;
+    --on-done)      on_done="$2"; shift 2 ;;
     --launch-cmd)   launch_override="$2"; shift 2 ;;
     --help|-h)
-      sed -n '2,12p' "$SCRIPT_DIR/start.sh"; exit 0 ;;
+      sed -n '2,11p' "$SCRIPT_DIR/start.sh"; exit 0 ;;
     -*) xr_die "unknown flag: $1" ;;
     *)  xr_die "unexpected argument: $1" ;;
   esac
@@ -95,6 +98,10 @@ case "$scope" in
 esac
 
 [ -n "$diff_text" ] || xr_die "no diff to review for scope '$scope'. Nothing changed?"
+
+# The completion ping is typed into the launcher as one input line, so keep the
+# caller's follow-up instruction on one line too.
+on_done="$(printf '%s' "$on_done" | tr '\r\n' '  ')"
 
 # Load the code-review preset (plugin-root: presets/code.md)
 preset_file="$SCRIPT_DIR/../presets/code.md"
@@ -214,13 +221,14 @@ jq -n \
   --arg launcher_pane "$launcher_pane" --arg watcher_pid "$watcher_pid" \
   --arg backend "$SESSION_BACKEND" --arg session_ref "$SESSION_REF" \
   --arg launcher_backend "$LAUNCHER_BACKEND" \
+  --arg on_done "$on_done" \
   --arg created "$created" \
   '{slug:$slug, session:$session, work:$work, request:$request, result:$result,
     reviewer:$reviewer, current_tool:$current_tool, repo_key:$repo_key,
     repo_root:$repo_root, branch:$branch, base:$base, scope:$scope,
     backend:$backend, session_ref:$session_ref,
     launcher_backend:$launcher_backend, launcher_pane:$launcher_pane,
-    watcher_pid:$watcher_pid, viewport:"",
+    watcher_pid:$watcher_pid, viewport:"", on_done:$on_done,
     created:$created}' > "$XRLIVE_SESSIONS/$slug.json"
 
 
@@ -250,3 +258,6 @@ xreview:live started — reviewer running in the background.
   status  : /xreview:status
   stop    : /xreview:stop
 EOF
+if [ -n "$on_done" ]; then
+  printf '  on-done : %s\n' "$on_done"
+fi

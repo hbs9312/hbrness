@@ -75,6 +75,38 @@ class RuntimeTests(unittest.TestCase):
                                               'test', str(lib), tool], text=True)
             self.assertEqual(result, 'codex')
 
+    def run_xreview_done_ping(self, on_done):
+        notify = ROOT / 'plugins/xreview/scripts/notify.sh'
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            home, work, fakebin = temp / 'home', temp / 'work', temp / 'bin'
+            (home / '.sessions').mkdir(parents=True)
+            work.mkdir()
+            fakebin.mkdir()
+            (work / 'REVIEW_RESULT.md').write_text('VERDICT: request-changes\n')
+            entry = {'slug': 's1', 'backend': 'tmux', 'launcher_backend': 'tmux', 'session_ref': 'xrev-s1'}
+            if on_done is not None:
+                entry['on_done'] = on_done
+            (home / '.sessions/s1.json').write_text(json.dumps(entry))
+            log = temp / 'tmux.log'
+            tmux = fakebin / 'tmux'
+            tmux.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FAKE_TMUX_LOG"\n')
+            tmux.chmod(0o755)
+            env = dict(os.environ, XRLIVE_HOME=str(home), FAKE_TMUX_LOG=str(log),
+                       PATH=f'{fakebin}{os.pathsep}{os.environ["PATH"]}')
+            subprocess.run(['bash', str(notify), '%1', str(work), 'claude', 's1'],
+                           check=True, env=env, timeout=30)
+            return log.read_text(), work / 'REVIEW_RESULT.md'
+
+    def test_xreview_done_ping_keeps_summary_request_by_default(self):
+        log, result = self.run_xreview_done_ping(None)
+        self.assertIn(f'send-keys -t %1 -l [xreview:live] 리뷰 완료 (s1) — Read {result} 로 결과 열어서 요약해줘.', log)
+
+    def test_xreview_done_ping_carries_on_done_instruction(self):
+        log, result = self.run_xreview_done_ping('반영하고 재리뷰를 start 해.')
+        self.assertIn(f'send-keys -t %1 -l [xreview:live] 리뷰 완료 (s1) — 결과 {result}. 반영하고 재리뷰를 start 해.', log)
+        self.assertNotIn('요약해줘', log)
+
 
 if __name__ == '__main__':
     unittest.main()
