@@ -106,6 +106,7 @@ followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고 동기화합
 - **저장소 키**: `git@github.com:o/r.git`, `https://github.com/o/r`, `ssh://git@github.com:22/o/r.git` 모두 `github.com/o/r` 로 같다. clone 경로가 PC 마다 달라도 같은 저장소면 같은 디렉토리를 쓴다.
 - **브랜치 기준 핸드오프**: 워크트리 폴더 이름은 PC 마다 다르지만 브랜치는 push 하면 같다. git 은 한 브랜치를 두 워크트리에 동시에 체크아웃하지 못하게 막으니 한 PC 안에서도 겹치지 않는다.
 - **동기화**: 스킬이 읽기 전에 `sfstate.py prepare`(pull), 쓰고 나서 `sfstate.py sync`(commit + push). push 가 거절되면 rebase 후 한 번 더 시도하고, 그래도 안 되면 로컬 커밋으로 남겨 다음 sync 때 올린다. 항목마다 파일이 따로라 두 PC 가 다른 항목을 고치면 충돌하지 않는다.
+- **turn 끝에 받아오기**: 각 도구의 Stop hook 에 `python3 <sessionflow>/scripts/sfstate.py pull --background` 를 걸면 turn 이 끝날 때마다 다른 PC 의 변경을 받아 온다. 바로 돌아오고 뒤에서 pull 하므로 turn 종료를 붙잡지 않으며, 이미 pull 이 돌고 있으면 건너뛴다. 끝나면 `paths` 의 `PULL_STAMP` 파일을 갱신해, 표시 쪽(statusline 등)이 mtime 으로 다시 그릴 때를 안다. hook 의 cwd 를 `--dir` 로 넘기면 그 저장소의 INDEX.md 도 다시 만든다. 받기만 하고 push 는 하지 않는다.
 - **INDEX.md 는 생성물**: 두 PC 가 같은 목록 파일을 고치면 충돌하므로, 항목 frontmatter(`title`·`summary`·`status`·`discovered`·`resolved`)로 매번 다시 만든다. 상한(`resolved_keep`, 기본 10)을 넘는 오래된 resolved 는 sync 때 지운다.
 
 ### 새 PC 설정

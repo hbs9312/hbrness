@@ -119,6 +119,11 @@ class IndexTests(Env):
         self.assertIn('- 2026-01-03 C ([c.md](./c.md))', index)
         self.assertIn('## Resolved (최근 2)', index)
 
+        data = json.loads(self.run_sf('index', '--json'))
+        self.assertEqual(data['counts'], {'open': 1, 'pending': 1, 'idea': 1, 'resolved': 2})
+        self.assertEqual([i['slug'] for i in data['items']], ['a', 'b', 'c', 'r2', 'r1'])
+        self.assertEqual(data['items'][0]['summary'], '요약 A')
+
 
 class SyncTests(Env):
     def test_two_pcs_share_handoff_and_followups(self):
@@ -158,6 +163,37 @@ class SyncTests(Env):
         self.run_sf('pull', pc='a')
         d = Path(self.paths('a')['FOLLOWUPS_DIR'])
         self.assertTrue((d / 'from-b.md').exists())
+
+    def test_background_pull_returns_at_once_and_brings_other_pc_changes(self):
+        import time
+        self.run_sf('init', '--remote', str(self.remote), pc='a')
+        self.run_sf('init', '--remote', str(self.remote), pc='b')
+        d = Path(self.paths('a')['FOLLOWUPS_DIR'])
+        d.mkdir(parents=True, exist_ok=True)
+        (d / 'late.md').write_text('---\ntitle: late\nstatus: open\n---\n')
+        self.run_sf('sync', pc='a')
+
+        pb = self.paths('b')
+        stamp = Path(pb['PULL_STAMP'])
+        started = time.monotonic()
+        self.assertEqual(self.run_sf('pull', '--background', pc='b'), '')
+        self.assertLess(time.monotonic() - started, 2)
+        index = Path(pb['INDEX_FILE'])
+        for _ in range(100):
+            if stamp.exists() and index.exists():
+                break
+            time.sleep(0.1)
+        self.assertTrue((Path(pb['FOLLOWUPS_DIR']) / 'late.md').exists())
+        self.assertIn('late', index.read_text())  # --dir 로 그 프로젝트 INDEX 도 다시 만든다
+
+    def test_pull_skips_while_another_pull_runs(self):
+        import fcntl
+        self.run_sf('init', '--remote', str(self.remote), pc='a')
+        lock = self.base / 'pc-a' / '.sfstate-pull.lock'
+        with open(lock, 'w') as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            self.assertIn('PULL=skipped', self.run_sf('pull', pc='a'))
+        self.assertIn('PULL=ok', self.run_sf('pull', pc='a'))
 
     def test_without_state_repo_sync_is_local_only(self):
         p = self.paths()

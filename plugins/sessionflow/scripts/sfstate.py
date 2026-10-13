@@ -19,8 +19,13 @@ PC 로컬 상태라 여기서 다루지 않는다 — 계속 ~/.hbrness/sessionf
 서브커맨드:
   paths       [--dir D]               경로를 KEY=VALUE 로 출력
   prepare     [--dir D]               pull → 레거시 마이그레이션 → INDEX 생성 → paths
-  pull                                state repo 를 원격과 맞춘다 (실패해도 exit 0)
-  index       [--dir D] [--prune]     INDEX.md 를 다시 만든다 (--prune: 오래된 resolved 삭제)
+  pull        [--dir D] [--background] state repo 를 원격과 맞춘다 (받기만, 실패해도 exit 0).
+                                      --dir: 그 프로젝트의 INDEX 도 다시 만든다.
+                                      --background: 바로 돌아오고 뒤에서 돈다 (turn 종료 hook 용).
+                                      이미 pull 이 돌고 있으면 건너뛴다. 끝나면 PULL_STAMP 를 갱신한다.
+  index       [--dir D] [--prune] [--json]
+                                      INDEX.md 를 다시 만든다 (--prune: 오래된 resolved 삭제,
+                                      --json: 개수와 INDEX 순서의 항목 목록을 JSON 으로 출력)
   sync        [--dir D] [-m MSG]      INDEX 생성·정리 → 이 프로젝트 변경 commit → push
   status      [--dir D] [--no-pull]   이 저장소의 핸드오프·followup 현황
   migrate     [--dir D] [--dry-run]   이 프로젝트의 경로 기준 레거시 데이터를 옮긴다
@@ -117,6 +122,28 @@ def today() -> str:
 def tilde(p) -> str:
     s, home = str(p), str(Path.home())
     return "~" + s[len(home):] if s == home or s.startswith(home + os.sep) else s
+
+
+@contextlib.contextmanager
+def pull_guard():
+    """pull 이 이미 돌고 있으면 False 를 준다 — turn 마다 부르는 pull 이 줄지어 쌓이지 않게."""
+    home = hbrness_home()
+    home.mkdir(parents=True, exist_ok=True)
+    with open(home / ".sfstate-pull.lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def pull_stamp() -> Path:
+    """pull 이 끝날 때마다 갱신하는 파일. 표시 쪽(statusline mod 등)이 mtime 으로 갱신 시점을 안다."""
+    return state_root() / ".git" / "sfstate-pulled"
 
 
 @contextlib.contextmanager
@@ -256,6 +283,7 @@ def print_paths(ctx: Ctx):
         ("MEMORY_KEY", ctx.legacy_key),
         ("LEGACY_DIR", ctx.legacy_dir),
         ("LEGACY_SINGLE", legacy_single if legacy_single.exists() else ""),
+        ("PULL_STAMP", pull_stamp()),
     ]
     for k, v in rows:
         print(f"{k}={v}")
@@ -369,6 +397,15 @@ def _cell(s: str) -> str:
     return s.replace("\n", " ").replace("|", "\\|").strip()
 
 
+def group_items(items, keep: int):
+    """INDEX 에 보이는 순서로 묶는다: open·pending·idea 는 discovered 최신순, resolved 는 최근 keep 개."""
+    by = {k: [i for i in items if i["status"] == k] for k in ("open", "pending", "idea", "resolved")}
+    for k in ("open", "pending", "idea"):
+        by[k].sort(key=lambda i: (i["discovered"], i["title"]), reverse=True)
+    by["resolved"].sort(key=lambda i: (i["resolved"] or i["discovered"], i["title"]), reverse=True)
+    return by
+
+
 def build_index(ctx: Ctx, prune=False):
     """INDEX.md 를 다시 만든다. prune=True 면 상한을 넘는 오래된 resolved 파일을 지운다.
     반환: (counts dict, 지운 파일 목록)"""
@@ -379,12 +416,8 @@ def build_index(ctx: Ctx, prune=False):
             ctx.index_file.unlink()
         return {"open": 0, "pending": 0, "idea": 0, "resolved": 0}, []
 
-    by = {k: [i for i in items if i["status"] == k] for k in ("open", "pending", "idea", "resolved")}
-    for k in ("open", "pending", "idea"):
-        by[k].sort(key=lambda i: (i["discovered"], i["title"]), reverse=True)
-    by["resolved"].sort(key=lambda i: (i["resolved"] or i["discovered"], i["title"]), reverse=True)
-
     keep = resolved_keep(fdir)
+    by = group_items(items, keep)
     pruned = []
     if prune and len(by["resolved"]) > keep:
         for i in by["resolved"][keep:]:
@@ -735,14 +768,45 @@ def cmd_prepare(a):
 
 
 def cmd_pull(a):
-    with state_lock():
-        st, detail = _pull()
+    if a.background:
+        if state_repo_status() != "ok":
+            return
+        target = str(Path(a.dir or os.getcwd()).expanduser().resolve())
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "pull", "--dir", target],
+                         cwd=target if os.path.isdir(target) else None,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return
+    with pull_guard() as acquired:
+        if not acquired:
+            print("PULL=skipped (이미 진행 중)")
+            return
+        with state_lock():
+            st, detail = _pull()
+            if a.dir:
+                build_index(Ctx(a.dir))
+            if st != "off":
+                pull_stamp().touch()
     print(f"PULL={st}" + (f" ({detail})" if detail else ""))
 
 
 def cmd_index(a):
     ctx = Ctx(a.dir)
     counts, pruned = build_index(ctx, prune=a.prune)
+    if a.json:
+        keep = resolved_keep(ctx.followups_dir)
+        by = group_items(load_items(ctx.followups_dir), keep)
+        fields = ("slug", "title", "summary", "status", "discovered", "resolved")
+        print(json.dumps({
+            "index": str(ctx.index_file) if any(counts.values()) else "",
+            "counts": counts,
+            "resolved_keep": keep,
+            "items": [{f: i[f] for f in fields}
+                      for k in ("open", "pending", "idea", "resolved")
+                      for i in (by[k][:keep] if k == "resolved" else by[k])],
+            "pruned": pruned,
+        }, ensure_ascii=False))
+        return
     print(f"INDEX={ctx.index_file if any(counts.values()) else '(항목 없음)'}")
     print("COUNTS=" + " ".join(f"{k}:{v}" for k, v in counts.items()))
     if pruned:
@@ -923,9 +987,12 @@ def main(argv=None):
 
     with_dir(sub.add_parser("paths")).set_defaults(fn=cmd_paths)
     with_dir(sub.add_parser("prepare")).set_defaults(fn=cmd_prepare)
-    sub.add_parser("pull").set_defaults(fn=cmd_pull)
+    sp = with_dir(sub.add_parser("pull"))
+    sp.add_argument("--background", action="store_true")
+    sp.set_defaults(fn=cmd_pull)
     sp = with_dir(sub.add_parser("index"))
     sp.add_argument("--prune", action="store_true")
+    sp.add_argument("--json", action="store_true")
     sp.set_defaults(fn=cmd_index)
     sp = with_dir(sub.add_parser("sync"))
     sp.add_argument("-m", "--message", default="")
