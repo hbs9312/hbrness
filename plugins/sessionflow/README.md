@@ -123,6 +123,21 @@ python3 <sessionflow>/scripts/sfstate.py status
 
 state repo 가 없으면 스킬은 `~/.hbrness/state/` 에 로컬로만 기록하고 그 사실을 알린다. 나중에 `init` 하면 그대로 합쳐진다.
 
+### backend (Terraform 방식)
+
+`~/.hbrness/backend.json` 이 있으면 state repo 대신 backend 를 쓴다. Terraform backend 처럼 원격은 key → 내용 저장소이고 `~/.hbrness/state/` 는 그 캐시다. 로직은 `scripts/sfbackend.py`.
+
+```bash
+# 디렉토리 하나를 원격처럼 쓴다 (지금은 local 만 있다)
+python3 <sessionflow>/scripts/sfstate.py init --backend local --path <dir>
+```
+
+- **원격 key**: `repos/<repo-key>/followups/<slug>.md`, `repos/<repo-key>/handoffs/<branch>.md`. `INDEX.md`, `_local/`, 최상위 파일(예전 state repo 의 README 등)은 올리지 않는다.
+- **manifest**: `~/.hbrness/state/.sfstate/manifest.json` 에 파일마다 마지막으로 맞춘 원격 etag 와 내용 해시를 적는다. pull 은 etag 가 바뀐 것만 받고, sync 는 로컬에서 바뀐 것만 올린다. 로컬 디렉토리를 읽다 에러가 나면 빠진 파일을 삭제로 읽지 않고 sync 를 멈춘다.
+- **conditional write**: 이미 있던 파일은 `If-Match`(manifest 의 etag), 새 파일은 `If-None-Match` 로 올린다. 그사이 다른 PC 가 같은 파일을 바꿨으면 원격이 거절한다. 그러면 원격본을 원래 자리에 받고 이 PC 의 버전은 `~/.hbrness/state/_conflicts/` 에 남긴 뒤 `CONFLICT=` 로 알린다. 다른 PC 가 고친 파일을 이 PC 가 지우려 하면 지우지 않고 그 버전을 받는다.
+- **원격에 닿지 못하면**: local backend 는 init 때 원격 디렉토리에 `.sfbackend` 표시 파일을 남기고 저장소 ID 를 적는다. manifest 는 이 ID 에 묶여 있어서, 같은 경로에 저장소를 새로 만들면 예전 manifest 를 버리고 로컬 파일을 다시 올린다. 이 파일이 없으면(디렉토리를 옮겼거나 외장 디스크가 빠짐) 빈 저장소로 읽지 않고 실패한다 — 빈 목록으로 읽으면 pull 이 로컬 사본을 전부 지우기 때문이다. 원격 삭제도 `If-Match` 로 해서 그사이 다른 PC 가 올린 버전은 지우지 않는다.
+- **init**: `backend.json` 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다. 예전 state repo clone 이 그 자리에 있으면 그 내용이 그대로 올라간다. backend 가 있으면 state repo 보다 먼저 쓴다.
+
 ### 예전 경로 기준 데이터 (≤0.15)
 
 이전 버전은 `~/.hbrness/sessionflow/<project-key>/`(`<project-key>` = 절대경로의 `/` 를 `-` 로) 아래에 `followups/` 와 워크트리별 `HANDOFF.md` 를 뒀습니다. `sfstate.py` 는 처음 실행될 때 그 프로젝트의 데이터를 저장소 기준으로 옮깁니다.

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """sfstate — sessionflow 의 followup / handoff 를 '경로'가 아닌 '저장소' 기준으로 저장하고,
-별도 private state repo 로 여러 PC 사이에 동기화한다.
+여러 PC 사이에 동기화한다.
 
-저장 위치 ($HBRNESS_STATE_DIR, 기본 ~/.hbrness/state — private state repo 의 clone):
+동기화 방식은 둘 중 하나다. $HBRNESS_HOME/backend.json 이 있으면 backend 를 쓴다.
+  backend     Terraform backend 처럼 원격 key-value 저장소에 두고 로컬은 캐시로 맞춘다 (sfbackend.py).
+  state repo  (예전 방식) private git repo 를 clone 해 두고 commit + push 한다.
+
+저장 위치 ($HBRNESS_STATE_DIR, 기본 ~/.hbrness/state):
 
   <repo-key>/followups/<slug>.md      항목 파일. frontmatter 가 진실원이다.
   <repo-key>/followups/INDEX.md       항목 frontmatter 에서 생성한다 (git 추적 안 함).
@@ -31,6 +35,8 @@ PC 로컬 상태라 여기서 다루지 않는다 — 계속 ~/.hbrness/sessionf
   migrate     [--dir D] [--dry-run]   이 프로젝트의 경로 기준 레거시 데이터를 옮긴다
   migrate-all [--dry-run]             ~/.hbrness/sessionflow/* 전체를 옮긴다
   init        [--remote URL]          state repo 를 clone 하거나 초기화한다
+              --backend local --path D
+                                      backend.json 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다
 
 환경변수:
   HBRNESS_HOME          기본 ~/.hbrness
@@ -53,6 +59,9 @@ import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sfbackend  # noqa: E402
 
 RESOLVED_KEEP_DEFAULT = 10
 NET_TIMEOUT = 30
@@ -143,6 +152,8 @@ def pull_guard():
 
 def pull_stamp() -> Path:
     """pull 이 끝날 때마다 갱신하는 파일. 표시 쪽(statusline mod 등)이 mtime 으로 갱신 시점을 안다."""
+    if backend_config_file().exists():
+        return state_root() / sfbackend.META_DIR / "pulled"
     return state_root() / ".git" / "sfstate-pulled"
 
 
@@ -201,6 +212,28 @@ def state_repo_status() -> str:
     return "ok" if code == 0 and url else "no-remote"
 
 
+def backend_config_file() -> Path:
+    return hbrness_home() / "backend.json"
+
+
+def load_backend():
+    """backend.json 이 없으면 None. 설정이 잘못됐으면 sfbackend.BackendError."""
+    return sfbackend.load_backend(backend_config_file())
+
+
+def backend_status() -> str:
+    """none | error | <backend 설명>"""
+    try:
+        be = load_backend()
+    except sfbackend.BackendError:
+        return "error"
+    return be.describe() if be else "none"
+
+
+def sync_available() -> bool:
+    return backend_config_file().exists() or state_repo_status() == "ok"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 프로젝트 컨텍스트
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,14 +286,17 @@ class Ctx:
 
     @property
     def sync(self) -> str:
-        return "on" if self.repo_key and state_repo_status() == "ok" else "off"
+        return "on" if self.repo_key and sync_available() else "off"
 
     def sync_reason(self) -> str:
         if not self.repo_key:
             return "remote 가 없는 프로젝트라 이 PC 에만 저장한다"
+        if backend_config_file().exists():
+            return ""
         st = state_repo_status()
         if st == "absent":
-            return f"state repo 가 없다 — `sfstate.py init --remote <url>` 로 {tilde(state_root())} 를 만든다"
+            return ("동기화 설정이 없다 — `sfstate.py init --backend local --path <dir>` 로 backend 를 정하거나 "
+                    f"`sfstate.py init --remote <url>` 로 {tilde(state_root())} 에 state repo 를 만든다")
         if st == "no-remote":
             return f"{tilde(state_root())} 에 origin remote 가 없다"
         return ""
@@ -271,6 +307,7 @@ def print_paths(ctx: Ctx):
     rows = [
         ("STATE_ROOT", state_root()),
         ("STATE_REPO", state_repo_status()),
+        ("BACKEND", backend_status()),
         ("REPO_KEY", ctx.repo_key or ""),
         ("SYNC", ctx.sync),
         ("PROJECT_ROOT", ctx.project_root),
@@ -463,19 +500,31 @@ def _abort_rebase(root: Path):
 
 
 def _pull():
-    """반환: (ok|off|failed, 설명)"""
+    """반환: (ok|off|failed, 설명, conflicts[(상대경로, 비켜 둔 경로)])"""
+    try:
+        be = load_backend()
+    except sfbackend.BackendError as e:
+        return "failed", str(e), []
+    if be:
+        try:
+            rep = sfbackend.Cache(state_root(), be).pull()
+        except sfbackend.PartialSync as e:
+            return "failed", str(e), e.report["conflicts"]
+        except (sfbackend.BackendError, OSError) as e:
+            return "failed", str(e), []
+        return "ok", "", rep["conflicts"]
     st = state_repo_status()
     if st != "ok":
-        return "off", f"state repo {st}"
+        return "off", f"state repo {st}", []
     root = state_root()
     c, _, _ = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
     if c != 0:
-        return "ok", "upstream 없음 (아직 push 한 적 없음)"
+        return "ok", "upstream 없음 (아직 push 한 적 없음)", []
     c, _, err = git(["pull", "--rebase", "--autostash", "-q"], root, timeout=NET_TIMEOUT)
     if c != 0:
         _abort_rebase(root)
-        return "failed", last_line(err) or f"exit {c}"
-    return "ok", ""
+        return "failed", last_line(err) or f"exit {c}", []
+    return "ok", "", []
 
 
 def _push(root: Path):
@@ -500,26 +549,60 @@ def _push(root: Path):
     return ("pushed", "") if c == 0 else ("committed-local", last_line(err))
 
 
+def _sync_backend(ctx: Ctx, be):
+    """반환: (pushed|nochange|failed, 설명, conflicts)"""
+    rel = ctx.project_dir.relative_to(state_root()).as_posix()
+    try:
+        rep = sfbackend.Cache(state_root(), be).push(rel)
+    except sfbackend.PartialSync as e:
+        if e.report["conflicts"] or e.report["got"]:
+            build_index(ctx)
+        done = len(e.report["put"]) + len(e.report["deleted"])
+        return "failed", (f"{e} — {done}개는 반영했고, 못 올린 변경은 로컬에 남아 다음 sync 때 다시 올린다"), \
+            e.report["conflicts"]
+    except (sfbackend.BackendError, OSError) as e:
+        return "failed", f"{e} — 못 올린 변경은 로컬에 남아 다음 sync 때 다시 올린다", []
+    if rep["conflicts"] or rep["got"]:
+        build_index(ctx)  # 원격본을 받아 왔으면 INDEX 도 다시 만든다
+    st = "pushed" if rep["put"] or rep["deleted"] else "nochange"
+    detail = ""
+    if rep["got"]:
+        detail = "지우려던 파일을 다른 PC 가 고쳐서 지우지 않고 받아 왔다: " + ", ".join(rep["got"])
+    return st, detail, rep["conflicts"]
+
+
 def _sync(ctx: Ctx, message: str):
-    """반환: (pushed|nochange|committed-local|local-only|failed, 설명, pruned)"""
+    """반환: (pushed|nochange|committed-local|local-only|failed, 설명, pruned, conflicts)"""
     _, pruned = build_index(ctx, prune=True)
     if ctx.sync != "on":
-        return "local-only", ctx.sync_reason(), pruned
+        return "local-only", ctx.sync_reason(), pruned, []
+    try:
+        be = load_backend()
+    except sfbackend.BackendError as e:
+        return "failed", str(e), pruned, []
+    if be:
+        st, detail, conflicts = _sync_backend(ctx, be)
+        return st, detail, pruned, conflicts
     root = state_root()
     rel = str(ctx.project_dir.relative_to(root))
     tracked = git(["ls-files", "--", rel], root)[1]
     if ctx.project_dir.exists() or tracked:
         c, _, err = git(["add", "-A", "--", rel], root)
         if c != 0:
-            return "failed", last_line(err), pruned
+            return "failed", last_line(err), pruned, []
     c, _, _ = git(["diff", "--cached", "--quiet", "--", rel], root)
     if c == 1:
         msg = f"{ctx.repo_key}: {message or 'update'} ({socket.gethostname()})"
         c, _, err = git(["commit", "-q", "-m", msg, "--", rel], root)
         if c != 0:
-            return "failed", last_line(err), pruned
+            return "failed", last_line(err), pruned, []
     status, detail = _push(root)
-    return status, detail, pruned
+    return status, detail, pruned, []
+
+
+def print_conflicts(conflicts):
+    for rel, aside in conflicts:
+        print(f"CONFLICT={rel} → {tilde(aside)}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -753,13 +836,15 @@ def cmd_paths(a):
 def cmd_prepare(a):
     ctx = Ctx(a.dir)
     with state_lock():
-        st, detail = _pull()
+        st, detail, conflicts = _pull()
         print(f"PULL={st}" + (f" ({detail})" if detail else ""))
+        print_conflicts(conflicts)
         rep = migrate_ctx(ctx)
         print_migrate_report(rep, "")
         if rep["status"] == "migrated":
-            st, detail, _ = _sync(ctx, "migrate path-keyed state")
+            st, detail, _, conflicts = _sync(ctx, "migrate path-keyed state")
             print(f"MIGRATE_SYNC={st}" + (f" ({detail})" if detail else ""))
+            print_conflicts(conflicts)
         else:
             build_index(ctx)
     if ctx.sync != "on":
@@ -769,7 +854,7 @@ def cmd_prepare(a):
 
 def cmd_pull(a):
     if a.background:
-        if state_repo_status() != "ok":
+        if not sync_available():
             return
         target = str(Path(a.dir or os.getcwd()).expanduser().resolve())
         subprocess.Popen([sys.executable, os.path.abspath(__file__), "pull", "--dir", target],
@@ -782,12 +867,15 @@ def cmd_pull(a):
             print("PULL=skipped (이미 진행 중)")
             return
         with state_lock():
-            st, detail = _pull()
+            st, detail, conflicts = _pull()
             if a.dir:
                 build_index(Ctx(a.dir))
             if st != "off":
-                pull_stamp().touch()
+                stamp = pull_stamp()
+                stamp.parent.mkdir(parents=True, exist_ok=True)
+                stamp.touch()
     print(f"PULL={st}" + (f" ({detail})" if detail else ""))
+    print_conflicts(conflicts)
 
 
 def cmd_index(a):
@@ -816,13 +904,14 @@ def cmd_index(a):
 def cmd_sync(a):
     ctx = Ctx(a.dir)
     with state_lock():
-        st, detail, pruned = _sync(ctx, a.message)
+        st, detail, pruned, conflicts = _sync(ctx, a.message)
     print(f"SYNC={st}" + (f" ({detail})" if detail else ""))
+    print_conflicts(conflicts)
     if pruned:
         print("PRUNED=" + ",".join(pruned))
 
 
-def _when(path: Path) -> str:
+def _when(path: Path, cache=None) -> str:
     """핸드오프 헤더의 Generated 를 먼저 쓴다 — 커밋 시각은 옮기거나 다시 올린 시각일 수 있다."""
     try:
         m = re.search(r"^>\s*Generated:\s*(.+)$", path.read_text(encoding="utf-8", errors="replace"), re.M)
@@ -831,6 +920,9 @@ def _when(path: Path) -> str:
     except OSError:
         pass
     root = state_root()
+    if cache is not None:
+        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        return mtime if cache.synced(path.relative_to(root).as_posix()) else mtime + " (미동기화)"
     try:
         rel = str(path.relative_to(root))
         c, out, _ = git(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", "--", rel], root)
@@ -845,21 +937,31 @@ def cmd_status(a):
     ctx = Ctx(a.dir)
     if not a.no_pull:
         with state_lock():
-            st, detail = _pull()
+            st, detail, conflicts = _pull()
             build_index(ctx)
         print(f"pull: {st}" + (f" ({detail})" if detail else ""))
+        for rel, aside in conflicts:
+            print(f"  충돌: {rel} — 이 PC 의 버전은 {tilde(aside)} 에 남겼다")
     print(f"repo: {ctx.repo_key or tilde(ctx.project_root) + ' (remote 없음)'} · sync {ctx.sync}")
     if ctx.sync != "on":
         print(f"  {ctx.sync_reason()}")
+    try:
+        be = load_backend()
+    except sfbackend.BackendError:
+        be = None
+    try:
+        cache = sfbackend.Cache(state_root(), be) if be and ctx.repo_key else None
+    except (sfbackend.BackendError, OSError):
+        cache = None
     if ctx.handoff_file.exists():
-        print(f"handoff [{ctx.branch}]: {tilde(ctx.handoff_file)} ({_when(ctx.handoff_file)})")
+        print(f"handoff [{ctx.branch}]: {tilde(ctx.handoff_file)} ({_when(ctx.handoff_file, cache)})")
     else:
         print(f"handoff [{ctx.branch or '-'}]: 없음")
     others = []
     if ctx.handoffs_dir.is_dir():
         for f in sorted(ctx.handoffs_dir.rglob("*.md")):
             if f != ctx.handoff_file:
-                others.append(f"{f.relative_to(ctx.handoffs_dir).with_suffix('')} ({_when(f)})")
+                others.append(f"{f.relative_to(ctx.handoffs_dir).with_suffix('')} ({_when(f, cache)})")
     if others:
         print("다른 브랜치 핸드오프: " + ", ".join(others))
     items = load_items(ctx.followups_dir)
@@ -877,11 +979,12 @@ def cmd_migrate(a):
         rep = migrate_ctx(ctx, dry_run=a.dry_run)
         if rep["status"] == "migrated":
             build_index(ctx)
-            st, detail, _ = _sync(ctx, "migrate path-keyed state")
+            st, detail, _, conflicts = _sync(ctx, "migrate path-keyed state")
             rep["sync"] = st + (f" ({detail})" if detail else "")
     print_migrate_report(rep, "")
     if rep.get("sync"):
         print(f"SYNC={rep['sync']}")
+        print_conflicts(conflicts)
 
 
 def cmd_migrate_all(a):
@@ -891,7 +994,9 @@ def cmd_migrate_all(a):
         return
     with state_lock():
         if not a.dry_run:
-            _pull()
+            st, detail, conflicts = _pull()
+            print(f"PULL={st}" + (f" ({detail})" if detail else ""))
+            print_conflicts(conflicts)
         touched = []
         for d in sorted(root.iterdir()):
             if not d.is_dir():
@@ -915,6 +1020,7 @@ def cmd_migrate_all(a):
             for r in results:
                 if r[1]:
                     print(f"    {r[0]}: {r[1]}")
+                print_conflicts(r[3])
 
 
 def _ensure_scaffold(root: Path):
@@ -930,7 +1036,46 @@ def _ensure_scaffold(root: Path):
     return changed
 
 
+def cmd_init_backend(a):
+    """backend.json 을 쓰고 원격과 맞춘 뒤 로컬 전체를 올린다. 이미 쓰던 state 디렉토리(예전 state repo
+    clone 포함)가 있으면 그 내용이 그대로 올라간다 — 최상위 .git·README 같은 것은 동기화 대상이 아니다."""
+    cfg = {"type": a.backend}
+    if a.backend == "local":
+        if not a.path:
+            print("init: --backend local 에는 --path <dir> 가 필요하다", file=sys.stderr)
+            sys.exit(1)
+        cfg["path"] = str(Path(a.path).expanduser().resolve())
+    try:
+        be = sfbackend.make_backend(cfg)
+        be.ensure()
+    except (sfbackend.BackendError, OSError) as e:
+        print(f"init: {e}", file=sys.stderr)
+        sys.exit(1)
+    root = state_root()
+    with state_lock():
+        sfbackend.save_config(backend_config_file(), cfg)
+        root.mkdir(parents=True, exist_ok=True)
+        cache = sfbackend.Cache(root, be)
+        pulled = None
+        try:
+            pulled = cache.pull()
+            pushed = cache.push("")
+        except (sfbackend.BackendError, OSError) as e:
+            print(f"BACKEND={be.describe()}")
+            print(f"INIT=failed ({e})")
+            print_conflicts((pulled["conflicts"] if pulled else [])
+                            + (e.report["conflicts"] if isinstance(e, sfbackend.PartialSync) else []))
+            sys.exit(1)
+    print(f"STATE_ROOT={root}")
+    print(f"BACKEND={be.describe()}")
+    print(f"PULL=ok (받음 {len(pulled['got'])} · 지움 {len(pulled['removed'])})")
+    print(f"PUSH=ok (올림 {len(pushed['put'])} · 지움 {len(pushed['deleted'])})")
+    print_conflicts(pulled["conflicts"] + pushed["conflicts"])
+
+
 def cmd_init(a):
+    if a.backend:
+        return cmd_init_backend(a)
     root = state_root()
     remote = a.remote or os.environ.get("HBRNESS_STATE_REMOTE", "")
     with state_lock():
@@ -1008,6 +1153,8 @@ def main(argv=None):
     sp.set_defaults(fn=cmd_migrate_all)
     sp = sub.add_parser("init")
     sp.add_argument("--remote", default="")
+    sp.add_argument("--backend", choices=["local"], default=None)
+    sp.add_argument("--path", default="", help="--backend local 이 원격으로 쓸 디렉토리")
     sp.set_defaults(fn=cmd_init)
 
     a = p.parse_args(argv)

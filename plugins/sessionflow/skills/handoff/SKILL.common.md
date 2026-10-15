@@ -30,8 +30,8 @@ model: sonnet
 python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 ```
 
-- `SF prepare` — state repo 를 원격과 맞추고(pull), 예전 경로 기준 데이터가 있으면 옮긴 뒤 경로를 `KEY=VALUE` 로 출력한다.
-- `SF sync -m "<메시지>"` — 이 저장소의 변경만 commit 해서 push 한다.
+- `SF prepare` — 로컬 state 를 원격과 맞추고(pull), 예전 경로 기준 데이터가 있으면 옮긴 뒤 경로를 `KEY=VALUE` 로 출력한다.
+- `SF sync -m "<메시지>"` — 이 저장소의 변경만 원격에 올린다. 원격은 `backend.json` 이 있으면 backend, 없으면 state repo(commit + push)다.
 - `SF status` — 이 저장소의 핸드오프(현재 브랜치 + 다른 브랜치)·followup 현황을 짧게 보여준다.
 
 `prepare` 출력에서 쓰는 값:
@@ -46,6 +46,8 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 | `MEMORY_KEY` | MEMORY.md 경로에 쓰는 키 |
 
 `SYNC=off` 여도 기록은 된다. 사용자에게 `SYNC_NOTE` 를 한 줄로 알리기만 하고 계속한다.
+
+`prepare`·`sync` 출력에 `CONFLICT=<상대경로> → <경로>` 줄이 있으면, 다른 PC 가 같은 파일을 먼저 바꾼 것이다. 원격본을 원래 자리에 받았고 이 PC 의 버전은 화살표 오른쪽 경로(`_conflicts/` 아래)에 남겼다. 사용자에게 두 파일을 알리고, 합칠지 원격본을 그대로 둘지 묻는다. 합치면 원래 자리의 파일을 고치고 다시 sync 한 뒤 `_conflicts/` 의 파일을 지운다.
 
 ## 인자
 
@@ -175,7 +177,10 @@ SF sync -m "handoff: <BRANCH>"
 
 - `SYNC=pushed` — 원격까지 올라갔다.
 - `SYNC=committed-local` — 커밋은 됐지만 push 를 못 했다 (오프라인·충돌). 괄호 안 사유를 보고한다. 다음 sync 때 다시 push 한다.
+- `SYNC=nochange` — 올릴 변경이 없었다.
+- `SYNC=failed` — 원격에 닿지 못했다. 괄호 안 사유를 보고한다. 로컬 파일은 그대로 있고 다음 sync 때 다시 올린다.
 - `SYNC=local-only` — 동기화가 꺼진 프로젝트다.
+- `CONFLICT=` 가 있으면 「스크립트」 절에 적은 대로 사용자에게 알린다.
 
 ### 5. 양쪽 MEMORY.md 갱신
 

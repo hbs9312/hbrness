@@ -202,6 +202,256 @@ class SyncTests(Env):
         self.assertIn('SYNC=local-only', self.run_sf('sync'))
 
 
+class LocalBackendTests(unittest.TestCase):
+    def test_conditional_put(self):
+        sfbackend = sfstate.sfbackend
+        with tempfile.TemporaryDirectory() as d:
+            be = sfbackend.LocalBackend(d)
+            be.ensure()
+            etag = be.put('repos/a/b.md', b'one', if_none_match=True)
+            with self.assertRaises(sfbackend.PreconditionFailed):
+                be.put('repos/a/b.md', b'two', if_none_match=True)
+            with self.assertRaises(sfbackend.PreconditionFailed):
+                be.put('repos/a/b.md', b'two', if_match='stale')
+            etag2 = be.put('repos/a/b.md', b'two', if_match=etag)
+            self.assertEqual(be.get('repos/a/b.md'), (b'two', etag2))
+            self.assertEqual(be.list('repos/'), {'repos/a/b.md': etag2})
+            with self.assertRaises(sfbackend.PreconditionFailed):
+                be.delete('repos/a/b.md', if_match=etag)  # 그사이 바뀐 버전은 지우지 않는다
+            self.assertTrue(be.delete('repos/a/b.md', if_match=etag2))
+            self.assertFalse(be.delete('repos/a/b.md'))
+            self.assertIsNone(be.get('repos/a/b.md'))
+            self.assertFalse((Path(d) / 'repos').exists())  # 빈 디렉토리도 지운다
+            with self.assertRaises(sfbackend.BackendError):
+                be.put('repos/../escape.md', b'x')
+
+    def test_missing_remote_dir_is_an_error_not_an_empty_store(self):
+        sfbackend = sfstate.sfbackend
+        with tempfile.TemporaryDirectory() as d:
+            be = sfbackend.LocalBackend(Path(d) / 'never-initialised')
+            with self.assertRaises(sfbackend.BackendError):
+                be.list('repos/')
+            with self.assertRaises(sfbackend.BackendError):
+                be.put('repos/a.md', b'x')
+
+    def test_conflict_copies_never_overwrite_each_other(self):
+        sfbackend = sfstate.sfbackend
+        with tempfile.TemporaryDirectory() as d:
+            be = sfbackend.LocalBackend(Path(d) / 'store')
+            be.ensure()
+            cache = sfbackend.Cache(Path(d) / 'state', be)
+            f = Path(d) / 'state' / 'h' / 'o' / 'r' / 'x.md'
+            f.parent.mkdir(parents=True)
+            asides = []
+            for text in ('first', 'second'):
+                f.write_text(text)
+                asides.append(cache._set_aside('h/o/r/x.md'))
+            self.assertNotEqual(asides[0], asides[1])
+            self.assertEqual([a.read_text() for a in asides], ['first', 'second'])
+
+    def test_partial_pull_still_reports_conflicts(self):
+        sfbackend = sfstate.sfbackend
+
+        class Flaky(sfbackend.LocalBackend):
+            calls = 0
+
+            def get(self, key):
+                if key.endswith('b.md'):
+                    raise OSError('disk went away')
+                return super().get(key)
+
+        with tempfile.TemporaryDirectory() as d:
+            store, state = Path(d) / 'store', Path(d) / 'state'
+            be = sfbackend.LocalBackend(store)
+            be.ensure()
+            cache = sfbackend.Cache(state, be)
+            for name in ('a.md', 'b.md'):
+                (state / 'h' / 'o').mkdir(parents=True, exist_ok=True)
+                (state / 'h' / 'o' / name).write_text('v1')
+            cache.push('')
+            for name in ('a.md', 'b.md'):
+                be.put(f'repos/h/o/{name}', b'remote v2', if_match=cache.entries[f'h/o/{name}']['etag'])
+            (state / 'h' / 'o' / 'a.md').write_text('local v2')
+            flaky = sfbackend.Cache(state, Flaky(store))
+            with self.assertRaises(sfbackend.PartialSync) as cm:
+                flaky.pull()
+            self.assertEqual([c[0] for c in cm.exception.report['conflicts']], ['h/o/a.md'])
+            self.assertEqual(cm.exception.report['conflicts'][0][1].read_text(), 'local v2')
+
+
+class BackendSyncTests(Env):
+    """backend.json(local) 으로 두 PC 가 같은 디렉토리를 원격처럼 쓴다."""
+
+    KEY = 'github.com/acme/my-app'
+
+    def setUp(self):
+        super().setUp()
+        self.store = self.base / 'store'
+
+    def init(self, pc='a', cwd=None):
+        return self.run_sf('init', '--backend', 'local', '--path', str(self.store), pc=pc, cwd=cwd)
+
+    def item(self, pc, slug, text):
+        d = Path(self.paths(pc)['FOLLOWUPS_DIR'])
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f'{slug}.md').write_text(text)
+        return d / f'{slug}.md'
+
+    def stored(self, rel):
+        return self.store / 'repos' / self.KEY / rel
+
+    def test_two_pcs_share_handoff_and_followups(self):
+        self.init('a')
+        p = self.paths('a')
+        self.assertEqual((p['SYNC'], p['BACKEND']), ('on', f'local:{self.store}'))
+        Path(p['HANDOFF_FILE']).parent.mkdir(parents=True, exist_ok=True)
+        Path(p['HANDOFF_FILE']).write_text('# Session Handoff\n\n## Next Action\n\nrun tests\n')
+        self.item('a', 'x', '---\ntitle: X\nstatus: open\ndiscovered: 2026-10-01\n---\n\n# X\n')
+        self.assertIn('SYNC=pushed', self.run_sf('sync', '-m', 'handoff', pc='a'))
+        self.assertTrue(self.stored('followups/x.md').exists())
+        self.assertTrue(self.stored('handoffs/main.md').exists())
+        self.assertFalse(self.stored('followups/INDEX.md').exists())  # 생성물은 올리지 않는다
+        self.assertIn('SYNC=nochange', self.run_sf('sync', pc='a'))
+
+        other_clone = self.base / 'home-pc' / 'code' / 'my-app'
+        sh('git', 'clone', '-q', str(self.project), str(other_clone), env=self.env('b'))
+        sh('git', 'remote', 'set-url', 'origin', 'https://github.com/acme/my-app', cwd=other_clone, env=self.env('b'))
+        self.init('b', cwd=other_clone)
+        status = self.run_sf('status', pc='b', cwd=other_clone)
+        self.assertNotIn('handoff [main]: 없음', status)
+        self.assertNotIn('미동기화', status)
+        self.assertIn('followups: open 1', status)
+
+    def test_same_item_edited_on_two_pcs_keeps_both(self):
+        self.init('a')
+        self.init('b')
+        self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        self.item('a', 'x', 'from a\n')
+        xb = self.item('b', 'x', 'from b\n')
+        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='a'))
+        out = self.run_sf('sync', pc='b')
+        self.assertIn(f'CONFLICT={self.KEY}/followups/x.md', out)
+        self.assertEqual(xb.read_text(), 'from a\n')  # 원격본이 원래 자리에
+        aside = list((self.base / 'pc-b' / 'state' / '_conflicts').rglob('x.*.md'))
+        self.assertEqual([f.read_text() for f in aside], ['from b\n'])  # 이 PC 의 버전은 비켜 둔다
+        self.assertEqual(self.stored('followups/x.md').read_text(), 'from a\n')
+        self.assertIn('SYNC=nochange', self.run_sf('sync', pc='b'))  # _conflicts 는 올리지 않는다
+
+    def test_pull_keeps_local_edit_when_remote_also_changed(self):
+        self.init('a')
+        self.init('b')
+        self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        self.item('a', 'x', 'from a\n')
+        self.run_sf('sync', pc='a')
+        xb = self.item('b', 'x', 'from b (not synced)\n')
+        self.assertIn(f'CONFLICT={self.KEY}/followups/x.md', self.run_sf('pull', pc='b'))
+        self.assertEqual(xb.read_text(), 'from a\n')
+
+    def test_delete_reaches_other_pc(self):
+        self.init('a')
+        self.init('b')
+        xa = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        xb = Path(self.paths('b')['FOLLOWUPS_DIR']) / 'x.md'
+        self.assertTrue(xb.exists())
+        xa.unlink()
+        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='a'))
+        self.assertFalse(self.stored('followups/x.md').exists())
+        self.run_sf('pull', pc='b')
+        self.assertFalse(xb.exists())
+
+    def test_delete_does_not_drop_newer_edit_from_other_pc(self):
+        self.init('a')
+        self.init('b')
+        xa = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        self.item('b', 'x', 'edited on b\n')
+        self.run_sf('sync', pc='b')
+        xa.unlink()
+        out = self.run_sf('sync', pc='a')
+        self.assertIn('받아 왔다', out)
+        self.assertEqual(xa.read_text(), 'edited on b\n')
+        self.assertEqual(self.stored('followups/x.md').read_text(), 'edited on b\n')
+
+    def test_moved_remote_dir_fails_pull_and_keeps_local_copies(self):
+        self.init('a')
+        x = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.store.rename(self.base / 'store-moved')
+        self.assertIn('PULL=failed', self.run_sf('pull', pc='a'))
+        self.assertTrue(x.exists())
+        x.write_text('v2\n')
+        self.assertIn('SYNC=failed', self.run_sf('sync', pc='a'))
+
+    @unittest.skipIf(os.geteuid() == 0, 'root 는 권한 000 디렉토리도 읽는다')
+    def test_unreadable_dir_is_not_read_as_deletions(self):
+        self.init('a')
+        x = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.item('a', 'y', 'new\n')
+        x.parent.chmod(0)
+        try:
+            self.assertIn('SYNC=failed', self.run_sf('sync', pc='a'))
+        finally:
+            x.parent.chmod(0o755)
+        self.assertTrue(self.stored('followups/x.md').exists())
+
+    def test_reinit_on_fresh_store_at_same_path_reuploads_local_copies(self):
+        self.init('a')
+        x = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.store.rename(self.base / 'store-lost')
+        out = self.init('a')  # 같은 경로에 빈 저장소를 새로 만든다
+        self.assertIn('PULL=ok (받음 0 · 지움 0)', out)
+        self.assertIn('PUSH=ok (올림 1', out)
+        self.assertTrue(x.exists())
+        self.assertEqual(self.stored('followups/x.md').read_text(), 'v1\n')
+
+    def test_migrate_all_reports_conflicts_from_its_pull(self):
+        self.init('a')
+        self.init('b')
+        self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        self.item('a', 'x', 'from a\n')
+        self.run_sf('sync', pc='a')
+        self.item('b', 'x', 'from b\n')
+        (self.base / 'pc-b' / 'sessionflow').mkdir()
+        self.assertIn(f'CONFLICT={self.KEY}/followups/x.md', self.run_sf('migrate-all', pc='b'))
+
+    def test_init_uploads_existing_state_repo_clone(self):
+        self.run_sf('init', '--remote', str(self.remote), pc='a')
+        self.item('a', 'old', 'from git days\n')
+        self.run_sf('sync', pc='a')
+        out = self.init('a')
+        self.assertIn('PUSH=ok (올림 1', out)
+        self.assertEqual(self.stored('followups/old.md').read_text(), 'from git days\n')
+        self.assertFalse((self.store / 'repos' / 'README.md').exists())
+        self.assertFalse((self.store / 'repos' / '.git').exists())
+        self.assertIn('SYNC=nochange', self.run_sf('sync', pc='a'))  # backend 가 state repo 보다 먼저다
+
+    def test_background_pull_stamps_inside_state(self):
+        import time
+        self.init('a')
+        self.init('b')
+        self.item('a', 'late', '---\ntitle: late\nstatus: open\n---\n')
+        self.run_sf('sync', pc='a')
+        pb = self.paths('b')
+        self.assertTrue(pb['PULL_STAMP'].endswith('/state/.sfstate/pulled'))
+        self.assertEqual(self.run_sf('pull', '--background', pc='b'), '')
+        for _ in range(100):
+            if Path(pb['PULL_STAMP']).exists() and Path(pb['INDEX_FILE']).exists():
+                break
+            time.sleep(0.1)
+        self.assertIn('late', Path(pb['INDEX_FILE']).read_text())
+
+
 class MigrateTests(Env):
     def legacy(self, pc='a'):
         d = self.base / f'pc-{pc}' / 'sessionflow' / str(self.project).replace('/', '-')
