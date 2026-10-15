@@ -152,6 +152,32 @@ python3 <sessionflow>/scripts/sfstate.py status
 - bucket versioning 을 켜 두면 지운 항목·덮어쓴 버전을 되살릴 수 있다.
 - backend 가 없으면 스킬은 `~/.hbrness/state/` 에 로컬로만 기록하고 그 사실을 알린다. 나중에 `init` 하면 그대로 올라간다.
 
+### 처음 설정 — Cloudflare R2 예
+
+R2 는 PutObject 의 `If-Match`·`If-None-Match` 를 지원하고, 개인 사용은 무료 한도(저장 10GB, Class A 100만·Class B 1000만 요청/월, egress 무료) 안에 든다. 다른 S3 API 저장소도 순서는 같다 — 마지막에 doctor 로 conditional write 가 되는지 본다.
+
+1. **버킷**: R2 Object Storage → Create bucket. 이름은 예를 들어 `hbrness-state`, Location 은 Automatic, Default Storage Class 는 **Standard**(무료 한도는 Standard 만 적용, Infrequent Access 는 읽을 때마다 과금), 공개 접근은 끈 채로.
+2. **API 토큰**: R2 → Manage API tokens → **Create Account API token**(계정에 묶여 사람·권한이 바뀌어도 계속 동작). Permissions 는 **Object Read & Write**, Specify bucket(s) 는 그 버킷만, TTL 은 Forever, Client IP 필터는 비운다(PC 마다 IP 가 다르다). Access Key ID(32자)와 Secret Access Key(64자)는 이 화면에서만 보인다. endpoint 는 `https://<계정 ID>.r2.cloudflarestorage.com` — 계정 ID 는 대시보드 주소 `dash.cloudflare.com/<계정 ID>/…` 에 있다.
+3. **보관 기간**: 버킷 → Settings → Object lifecycle rules → Add rule. prefix 는 `<prefix>/logs/`(아래 예면 `hbrness/logs/`, 끝의 `/` 까지), Delete uploaded objects after 에 일수(예: 180). 나머지 두 항목은 체크하지 않는다. **prefix 를 비우거나 `<prefix>/` 로 하면 followup·핸드오프(`<prefix>/repos/`)까지 지워진다.**
+4. **PC 준비** (PC 마다): `brew install age`(선택: `brew install gitleaks`). python.org 에서 받은 Python 이면 `"/Applications/Python 3.x/Install Certificates.command"` 를 한 번 돌린다 — 안 하면 init 이 `CERTIFICATE_VERIFY_FAILED` 로 멈추고, 훅도 같은 이유로 못 올린다.
+5. **첫 PC 에서 init**:
+
+   ```bash
+   read -rs "AK?Access Key ID: "; echo        # zsh. bash 는 read -rsp "Access Key ID: " AK; echo
+   read -rs "SK?Secret Access Key: "; echo
+   echo "${#AK} ${#SK}"                       # R2 면 32 64
+   printf '%s\n%s\n' "$AK" "$SK" | python3 <sessionflow>/scripts/sfstate.py init \
+     --backend s3 --endpoint https://<계정 ID>.r2.cloudflarestorage.com --region auto \
+     --bucket hbrness-state --prefix hbrness --credentials-stdin
+   unset AK SK
+   ```
+
+   복사한 키 끝에 줄바꿈이 붙어 있으면 붙여넣는 순간 다음 프롬프트로 넘어간다 — 그때 엔터를 더 치지 않는다. 결과에 `ENCRYPTION=age (…)`, `CREDENTIALS=keychain`, `AGE_KEY_CREATED=~/.hbrness/age.key`, `PUSH=ok` 가 나오면 된다. 처음 init 은 이 PC 에 있던 followup·핸드오프를 하나씩 암호화해 올려서, 수백 개면 몇 분 걸린다.
+6. **키 백업**: `pbcopy < ~/.hbrness/age.key` 로 화면에 띄우지 않고 복사해 비밀번호 관리자의 보안 메모에 붙여넣고, `pbcopy < /dev/null` 로 클립보드를 비운다. 이 키를 잃으면 올린 기록을 아무도 풀 수 없다.
+7. **확인**: `python3 <sessionflow>/scripts/sfstate.py doctor`. `IF_NONE_MATCH=ok`·`IF_MATCH=ok`·`ENCRYPTION=age`·`SEALED=ok` 면 된다. R2 에서는 `DELETE_IF_MATCH=unsupported`(삭제는 tombstone 이라 상관없다)와, 객체 권한 토큰이면 `VERSIONING=unknown`·`LOGS_LIFECYCLE=unknown`(버킷 설정을 읽을 권한이 없다 — 3번 규칙은 대시보드에서 본다)이 정상이다.
+8. **다른 PC**: 코드를 받고(1.7 이상) → 4번 준비 → 백업한 키를 `~/.hbrness/age.key` 로 저장하고 `chmod 600`, `age-keygen -y ~/.hbrness/age.key` 가 doctor 의 공개키와 같은지 본다 → 5번 init(같은 토큰을 써도 되고 PC 마다 새로 만들어도 된다. `AGE_KEY_CREATED` 가 안 나와야 정상) → doctor. 키를 넣기 전에 init 하면 키를 복사하라고 하고 멈춘다.
+9. **도구에 붙이기**: Claude Code 는 sessionflow 플러그인을 1.7 이상으로 업데이트하고 새 세션을 연다. Codex 는 `hbrness install codex sessionflow` 로 `~/.codex/hooks.json` 에 훅을 넣는다. 수집이 되는지는 `/log status` 로 본다.
+
 ### 예전 git state repo 에서 옮기기 (≤0.18)
 
 0.18 까지는 `~/.hbrness/state` 가 private git repo 의 clone 이었고 commit + push 로 동기화했다. 1.0 부터는 git 으로 동기화하지 않는다. 그 자리에서 `init --backend …` 를 하면 `.git`·`.gitignore`·`README.md` 를 `~/.hbrness/state.git-archive-<시각>/` 로 치우고 항목 파일은 그대로 backend 에 올린다. 다른 PC 는 먼저 `git pull` 로 최신을 받은 뒤 같은 `init` 을 하면 된다. GitHub 의 state repo 는 건드리지 않으니 옮긴 걸 확인한 뒤 archive 한다.
