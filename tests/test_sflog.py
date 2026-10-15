@@ -238,10 +238,13 @@ class CollectEnv(unittest.TestCase):
     def remote(self, tool, session):
         return self.store / 'logs' / 'github.com/acme/app' / tool / session
 
+    def meta_file(self, tool, session, store=None):
+        return (store or self.store) / 'logs' / '_meta' / 'github.com/acme/app' / tool / f'{session}.json'
+
     def segments(self, tool, session):
         """읽는 쪽과 같이 meta.json 의 세대만."""
         d = self.remote(tool, session)
-        gen = json.loads((d / 'meta.json').read_text()).get('generation')
+        gen = json.loads(self.meta_file(tool, session).read_text()).get('generation')
         names = sflog.latest_segments([f.name for f in d.glob('*.jsonl.gz')], gen)
         return b''.join(gzip.decompress((d / n).read_bytes()) for n in names)
 
@@ -258,11 +261,11 @@ class CollectTests(CollectEnv):
             fh.write('}\n{"n":4}\n')
         self.assertIn('COLLECT=uploaded 1', self.collect('claude', 's1', t))
         self.assertTrue(self.segments('claude', 's1').endswith(b'{"n":3}\n{"n":4}\n'))
-        meta = json.loads((self.remote('claude', 's1') / 'meta.json').read_text())
+        meta = json.loads((self.meta_file('claude', 's1')).read_text())
         self.assertEqual((meta['tool'], meta['repo_key'], meta['branch'], meta['segments'], meta['ended']),
                          ('claude', 'github.com/acme/app', 'main', 2, None))
         self.collect('claude', 's1', t, final=True)
-        self.assertIsNotNone(json.loads((self.remote('claude', 's1') / 'meta.json').read_text())['ended'])
+        self.assertIsNotNone(json.loads((self.meta_file('claude', 's1')).read_text())['ended'])
 
     def test_final_uploads_an_unterminated_last_line(self):
         t = self.base / 'codex.jsonl'
@@ -280,7 +283,7 @@ class CollectTests(CollectEnv):
         d = self.remote('claude', 's3')
         self.assertEqual(sorted(f.name for f in d.glob('*.jsonl.gz')), ['000001.jsonl.gz', 'g2-000001.jsonl.gz'])
         self.assertEqual(self.segments('claude', 's3'), b'{"new":1}\n{"new":2}\n{"new":3}\n')  # 예전 세대는 안 읽는다
-        meta = json.loads((d / 'meta.json').read_text())
+        meta = json.loads(self.meta_file('claude', 's3').read_text())
         self.assertEqual((meta['rewrites'], meta['generation'], meta['segments']), (1, 2, 1))
         shown = sh(sys.executable, str(SFLOG), 'show', 's3', '--raw', cwd=self.project, env=self.env())
         self.assertNotIn('old', shown)
@@ -295,7 +298,7 @@ class CollectTests(CollectEnv):
         t.write_text('{"x":1}\n')  # 줄었다
         self.collect('claude', 's3', t)
         self.assertEqual(self.segments('claude', 's3'), b'{"x":1}\n')
-        self.assertEqual(json.loads((d / 'meta.json').read_text())['generation'], 3)
+        self.assertEqual(json.loads(self.meta_file('claude', 's3').read_text())['generation'], 3)
 
     def test_rewritten_to_empty_reads_empty(self):
         t = self.base / 'c.jsonl'
@@ -333,7 +336,7 @@ class CollectTests(CollectEnv):
         self.assertIn('nochange', self.collect('claude', 'half', t))
         t.write_text('{"new":1}\n{"new":2}\n')
         self.collect('claude', 'half', t)
-        meta = json.loads((self.remote('claude', 'half') / 'meta.json').read_text())
+        meta = json.loads((self.meta_file('claude', 'half')).read_text())
         self.assertEqual((meta['rewrites'], meta['generation']), (1, 2))
         self.assertEqual(self.segments('claude', 'half'), b'{"new":1}\n{"new":2}\n')
 
@@ -362,7 +365,7 @@ class CollectTests(CollectEnv):
 
         write([step(1, 'edited'), step(2), step(3), step(4)])  # 이미 올린 step 이 바뀌었다 — 새 세대
         self.collect('devin', 'd-1', t, final=True)
-        meta = json.loads((self.remote('devin', 'd-1') / 'meta.json').read_text())
+        meta = json.loads((self.meta_file('devin', 'd-1')).read_text())
         self.assertEqual((meta['format'], meta['generation']), ('jsonl-segments', 2))
         self.assertEqual([json.loads(l)['message'] for l in self.segments('devin', 'd-1').splitlines()],
                          ['edited', 'm2', 'm3', 'm4'])
@@ -377,7 +380,7 @@ class CollectTests(CollectEnv):
         self.assertFalse((self.remote('devin', 'half') / 'transcript.json.gz').exists())
         t.write_text(doc)
         self.assertIn('uploaded 1', self.collect('devin', 'half', t, final=True))
-        meta = json.loads((self.remote('devin', 'half') / 'meta.json').read_text())
+        meta = json.loads((self.meta_file('devin', 'half')).read_text())
         self.assertEqual(meta['format'], 'jsonl-segments')
         self.assertIn('세션 질문', sh(sys.executable, str(SFLOG), 'show', 'half', cwd=self.project, env=self.env()))
 
@@ -393,7 +396,7 @@ class CollectTests(CollectEnv):
         t = self.base / 'surrogate.jsonl'
         t.write_text('{"type":"user","message":{"content":"hello \\ud800 world"}}\n')
         self.assertIn('uploaded 1', self.collect('claude', 'sur', t))
-        self.assertIn('hello', json.loads((self.remote('claude', 'sur') / 'meta.json').read_text())['title'])
+        self.assertIn('hello', json.loads((self.meta_file('claude', 'sur')).read_text())['title'])
 
     def test_custom_patterns_from_redact_txt(self):
         self.home.mkdir(exist_ok=True)
@@ -451,7 +454,7 @@ class InProcessCollectTests(CollectEnv):
             put = be.put
 
             def put_(key, data, **kw):
-                if key.endswith('meta.json') and fail['meta']:
+                if key.startswith('logs/_meta/') and fail['meta']:
                     raise sflog.sfbackend.BackendError('meta down')
                 return put(key, data, **kw)
             be.put = put_
@@ -470,7 +473,7 @@ class InProcessCollectTests(CollectEnv):
             sflog.collect('claude', 'm', str(t), str(self.project))  # 새 줄이 없어도 meta 를 다시 쓴다
         finally:
             sfstate_mod.load_backend = real
-        meta = json.loads((self.remote('claude', 'm') / 'meta.json').read_text())
+        meta = json.loads((self.meta_file('claude', 'm')).read_text())
         self.assertEqual(meta['segments'], 2)
 
 
@@ -496,7 +499,7 @@ class InProcessCollectTests(CollectEnv):
         return lambda: setattr(sfstate_mod, 'load_backend', real)
 
     def meta(self, tool, session):
-        return json.loads((self.remote(tool, session) / 'meta.json').read_text())
+        return json.loads((self.meta_file(tool, session)).read_text())
 
     def test_half_uploaded_generation_is_never_published(self):
         t = self.base / 'd.json'
@@ -543,7 +546,7 @@ class InProcessCollectTests(CollectEnv):
         d = self.remote('claude', 'up')
         meta = self.meta('claude', 'up')
         del meta['generation']  # 1.3 이 쓴 meta
-        (d / 'meta.json').write_text(json.dumps(meta))
+        self.meta_file('claude', 'up').write_text(json.dumps(meta))
         t.write_text('{"b":1}\n{"b":2}\n')
         old = sflog.SEGMENT_MAX
         sflog.SEGMENT_MAX = 8
@@ -570,8 +573,8 @@ class StoreSwitchTests(CollectEnv):
            cwd=self.project, env=self.env())
         self.assertIn('uploaded 1', self.collect('claude', 'sw', t))
         d = other / 'logs' / 'github.com/acme/app' / 'claude' / 'sw'
-        self.assertEqual(sorted(f.name for f in d.iterdir()), ['000001.jsonl.gz', 'meta.json'])
-        self.assertEqual(json.loads((d / 'meta.json').read_text())['segments'], 1)
+        self.assertEqual(sorted(f.name for f in d.iterdir()), ['000001.jsonl.gz'])
+        self.assertEqual(json.loads(self.meta_file('claude', 'sw', other).read_text())['segments'], 1)
 
     def test_session_end_is_published_even_without_the_transcript(self):
         t = self.base / 'c.jsonl'
@@ -579,7 +582,7 @@ class StoreSwitchTests(CollectEnv):
         self.collect('claude', 'gone', t)
         t.unlink()
         self.assertIn('no-transcript', self.collect('claude', 'gone', t, final=True))
-        self.assertIsNotNone(json.loads((self.remote('claude', 'gone') / 'meta.json').read_text())['ended'])
+        self.assertIsNotNone(json.loads((self.meta_file('claude', 'gone')).read_text())['ended'])
 
 
 CLAUDE_LINES = [
@@ -776,9 +779,9 @@ class ReadCommandTests(CollectEnv):
                  input=f'body {secret}\n')
         sid = out.split('SAVED=')[1].split()[0]
         d = self.store / 'logs' / 'github.com/acme/app' / 'manual' / sid
-        for f in ('meta.json', 'transcript.md'):
-            self.assertNotIn(secret, (d / f).read_text(), f)
-        self.assertIn('[REDACTED:gitleaks]', json.loads((d / 'meta.json').read_text())['title'])
+        for f in (self.meta_file('manual', sid), d / 'transcript.md'):
+            self.assertNotIn(secret, f.read_text(), f)
+        self.assertIn('[REDACTED:gitleaks]', json.loads(self.meta_file('manual', sid).read_text())['title'])
 
     def test_other_repos_need_all_repos(self):
         other = self.base / 'elsewhere'
@@ -825,7 +828,7 @@ class EncryptedCollectTests(CollectEnv):
         t.write_bytes(jl(CLAUDE_LINES) + jl([{'type': 'user', 'message': {'content': 'key sk_live_51HxYzAbCdEfGhIjKlMn'}}]))
         self.assertIn('uploaded 1', self.collect('claude', 'enc-1', t, final=True))
         d = self.remote('claude', 'enc-1')
-        for f in (d / '000001.jsonl.gz', d / 'meta.json'):
+        for f in (d / '000001.jsonl.gz', self.meta_file('claude', 'enc-1')):
             self.assertTrue(f.read_bytes().startswith(b'age-encryption.org/'), f.name)
         run = lambda *a: sh(sys.executable, str(SFLOG), *a, cwd=self.project, env=self.env())
         self.assertIn('로그인 버그 고쳐줘', run('list'))
@@ -841,6 +844,285 @@ class EncryptedCollectTests(CollectEnv):
         with self.assertRaises(subprocess.CalledProcessError) as cm:
             sh(sys.executable, str(SFLOG), 'show', 'enc-2', cwd=self.project, env=self.env())
         self.assertIn('age.key', cm.exception.stderr + cm.exception.stdout)
+
+
+class IndexedSearchTests(CollectEnv):
+    """list 는 logs/_meta/ 만 LIST 하고, search 는 로컬 색인에 바뀐 세션만 넣는다."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved = os.environ.get('HBRNESS_HOME')
+        os.environ['HBRNESS_HOME'] = str(self.home)
+        for tool, name, data in (('claude', 'c.jsonl', jl(CLAUDE_LINES)), ('codex', 'x.jsonl', jl(CODEX_LINES)),
+                                 ('devin', 'd.json', json.dumps(DEVIN_DOC).encode())):
+            f = self.base / name
+            f.write_bytes(data)
+            self.collect(tool, f'{tool}-session-1', f, final=True)
+
+    def tearDown(self):
+        os.environ.pop('HBRNESS_HOME', None)
+        if self.saved is not None:
+            os.environ['HBRNESS_HOME'] = self.saved
+        super().tearDown()
+
+    def counting(self):
+        be = sflog.sfbackend.LocalBackend(self.store)
+        calls = {'list': [], 'get': []}
+        real_list, real_get = be.list, be.get_raw
+        be.list = lambda prefix: calls['list'].append(prefix) or real_list(prefix)
+        be.get_raw = lambda key: calls['get'].append(key) or real_get(key)
+        return be, calls
+
+    def search(self, query, *extra):
+        return sh(sys.executable, str(SFLOG), 'search', query, *extra, cwd=self.project, env=self.env())
+
+    def test_list_reads_only_the_meta_prefix(self):
+        be, calls = self.counting()
+        sflog.Remote(be).sessions('github.com/acme/app')
+        self.assertEqual(calls['list'], ['logs/', 'logs/_meta/github.com/acme/app/'])  # 처음 한 번은 예전 meta 옮기기
+        be, calls = self.counting()
+        metas = sflog.Remote(be).sessions('github.com/acme/app')
+        self.assertEqual(len(metas), 3)
+        self.assertEqual(calls['list'], ['logs/_meta/github.com/acme/app/'])
+        self.assertTrue(all(k.startswith('logs/_meta/') for k in calls['get']))
+        self.assertEqual(metas[0]['_dir'].count('/'), 5)  # logs/<host>/<owner>/<repo>/<tool>/<id>
+
+    def sigs(self):
+        r = sflog.Remote(sflog.sfbackend.LocalBackend(self.store))
+        idx = sflog.Index(r.dir / 'index.sqlite')
+        try:
+            return idx.sigs()
+        finally:
+            idx.close()
+
+    def search_in_process(self, query):
+        """같은 프로세스에서 search 를 돌려 backend 호출을 센다."""
+        import contextlib
+        import io
+        be, calls = self.counting()
+        real = sflog.sfstate.load_backend
+        sflog.sfstate.load_backend = lambda: be
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                sflog.main(['search', query, '--dir', str(self.project)])
+        finally:
+            sflog.sfstate.load_backend = real
+        return out.getvalue(), calls
+
+    def test_search_indexes_only_changed_sessions(self):
+        self.assertIn('SEARCH=1개 세션', self.search('npm test'))
+        metas = sflog.Remote(sflog.sfbackend.LocalBackend(self.store)).sessions('github.com/acme/app')
+        self.assertEqual(self.sigs(), {m['_dir']: m['_etag'] for m in metas})
+        out, calls = self.search_in_process('npm test')  # 그대로면 색인만 본다
+        self.assertIn('SEARCH=1개 세션', out)
+        self.assertEqual(calls['list'], ['logs/_meta/github.com/acme/app/'])
+        self.assertEqual(calls['get'], [])  # meta 는 캐시, transcript 는 색인
+
+        before = self.sigs()
+        t = self.base / 'c.jsonl'
+        with open(t, 'ab') as fh:
+            fh.write(jl([{'type': 'user', 'timestamp': 't9', 'message': {'role': 'user', 'content': '새로 추가한 질문'}}]))
+        self.collect('claude', 'claude-session-1', t, final=True)
+        out, calls = self.search_in_process('추가한 질문')
+        self.assertIn('SEARCH=1개 세션', out)
+        self.assertEqual([p for p in calls['list'] if not p.startswith('logs/_meta/')],
+                         ['logs/github.com/acme/app/claude/claude-session-1/'])  # 바뀐 세션만 다시 읽는다
+        after = self.sigs()
+        self.assertEqual({d for d in after if after[d] != before.get(d)},
+                         {d for d in after if d.endswith('/claude/claude-session-1')})
+
+    def test_short_regex_tool_filters_and_bad_regex(self):
+        self.assertIn('SEARCH=2개 세션', self.search('--regex', '버그|리뷰'))
+        self.assertIn('SEARCH=1개 세션', self.search('버그'))  # 2글자 — trigram 대신 훑는다
+        self.assertIn('SEARCH=0개 세션', self.search('버그', '--tool', 'codex'))
+        self.assertIn('SEARCH=1개 세션', self.search('NPM TEST'))  # 대소문자 무시
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.search('--regex', '(')
+        self.assertIn('SEARCH=failed', cm.exception.stdout)
+
+    def test_same_results_without_fts(self):
+        r = sflog.Remote(sflog.sfbackend.LocalBackend(self.store))
+        metas = r.sessions('github.com/acme/app')
+        dirs = [m['_dir'] for m in metas]
+        results = []
+        for fts in (True, False):
+            idx = sflog.Index(self.base / f'idx-{fts}.sqlite')
+            try:
+                idx.fts = idx.fts and fts
+                for m in metas:
+                    idx.update(m['_dir'], m['_etag'], r.events(m))
+                results.append({d: [h[:3] for h in v] for d, v in idx.hits('npm test', False, dirs).items()})
+            finally:
+                idx.close()
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(len(results[0]), 1)
+
+    def fts_ok(self, idx):
+        idx.db.execute("INSERT INTO ev_fts(ev_fts, rank) VALUES('integrity-check', 1)")
+
+    def test_writers_are_serialised_and_fts_stays_consistent(self):
+        import sqlite3
+        import threading
+        path = self.base / 'race.sqlite'
+        a, b = sflog.Index(path), sflog.Index(path)
+        try:
+            ev = lambda t: [{'role': 'user', 'name': None, 'text': t}]
+            a.update('logs/r/claude/s', 'v1', ev('first text'))
+            with a.write():  # A 가 지울 행을 읽는 중
+                a.db.execute("SELECT id, ftext FROM ev WHERE dir = 'logs/r/claude/s'").fetchall()
+                b.db.execute('PRAGMA busy_timeout = 100')
+                with self.assertRaises(sqlite3.OperationalError):  # B 는 A 가 끝날 때까지 쓰지 못한다
+                    b.update('logs/r/claude/s', 'v2', ev('second text'))
+            b.db.execute('PRAGMA busy_timeout = 30000')
+
+            errors = []
+
+            def churn(tag):  # 연결은 thread 마다 따로
+                idx = sflog.Index(path)
+                try:
+                    for i in range(30):
+                        idx.update('logs/r/claude/s', f'{tag}{i}', ev(f'{tag} text number {i}'))
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+                finally:
+                    idx.close()
+            ts = [threading.Thread(target=churn, args=(n,)) for n in ('aa', 'bb', 'cc')]
+            [t.start() for t in ts]
+            [t.join() for t in ts]
+            self.assertEqual(errors, [])
+            self.fts_ok(a)
+            self.assertEqual(a.db.execute('SELECT count(*) FROM ev').fetchone()[0], 1)
+        finally:
+            a.close()
+            b.close()
+
+    def test_rows_added_without_fts_are_indexed_once_fts_appears(self):
+        path = self.base / 'later.sqlite'
+        real = sflog.fts_available
+        sflog.fts_available = lambda: False
+        try:
+            idx = sflog.Index(path)
+            idx.update('logs/r/claude/s', 'v1', [{'role': 'user', 'name': None, 'text': 'hello world'}])
+            idx.close()
+        finally:
+            sflog.fts_available = real
+        idx = sflog.Index(path)
+        try:
+            self.assertTrue(idx.fts)
+            self.assertIn('logs/r/claude/s', idx.hits('hello', False, ['logs/r/claude/s']))  # FTS 로 찾는다
+            idx.update('logs/r/claude/s', 'v2', [{'role': 'user', 'name': None, 'text': 'bye now'}])
+            self.fts_ok(idx)
+            self.assertEqual(idx.hits('hello', False, ['logs/r/claude/s']), {})
+        finally:
+            idx.close()
+
+    def test_legacy_meta_is_moved_once(self):
+        be = sflog.sfbackend.LocalBackend(self.store)
+        legacy = {'tool': 'claude', 'session_id': 'old-1', 'updated': '2026-10-01T00:00:00+09:00', 'format': 'jsonl-segments',
+                  'segments': 1, 'title': '1.4 때 세션'}
+        be.put('logs/github.com/acme/app/claude/old-1/meta.json', json.dumps(legacy).encode())
+        be.put('logs/github.com/acme/app/claude/old-1/000001.jsonl.gz', gzip.compress(jl(CLAUDE_LINES)))
+        be.put('logs/_norepo/manual/m-1/meta.json', json.dumps({**legacy, 'tool': 'manual', 'session_id': 'm-1',
+                                                                 'format': 'markdown'}).encode())
+        be.put('logs/_norepo/manual/m-1/transcript.md', b'# note')
+        cache = self.home / 'logs' / 'cache'
+        for f in cache.glob('*/legacy-meta-migrated'):
+            f.unlink()
+        be, calls = self.counting()
+        metas = sflog.Remote(be).sessions(None)
+        self.assertIn('old-1', [m['session_id'] for m in metas])
+        self.assertIn('m-1', [m['session_id'] for m in metas])
+        self.assertTrue(self.meta_file('claude', 'old-1').exists())
+        shown = sh(sys.executable, str(SFLOG), 'show', 'old-1', cwd=self.project, env=self.env())
+        self.assertIn('로그인 버그 고쳐줘', shown)
+        be, calls = self.counting()
+        sflog.Remote(be).sessions(None)
+        self.assertEqual(calls['list'], ['logs/_meta/'])  # 두 번째부터는 옮기지 않는다
+
+    def test_fts_marks_survive_mixed_sqlite_builds(self):
+        path = self.base / 'mixed.sqlite'
+        real = sflog.fts_available
+        sflog.fts_available = lambda: False
+        try:
+            b = sflog.Index(path)  # FTS 가 안 되는 python3
+        finally:
+            sflog.fts_available = real
+        a = sflog.Index(path)  # FTS 가 되는 python3 — 그사이 열었다
+        b.update('logs/r/claude/s', 'v1', [{'role': 'user', 'name': None, 'text': 'hello world'}])
+        a.close()
+        b.close()
+        a = sflog.Index(path)
+        try:
+            self.assertIn('logs/r/claude/s', a.hits('hello', False, ['logs/r/claude/s']))
+            self.fts_ok(a)
+        finally:
+            a.close()
+
+    def test_old_fts_definition_left_behind_is_recreated(self):
+        import sqlite3
+        path = self.base / 'old.sqlite'
+        db = sqlite3.connect(str(path))  # FTS 없는 쪽이 user_version 만 올리고 예전 ev_fts 를 못 지운 상태
+        db.executescript("""
+            PRAGMA user_version = 2;
+            CREATE TABLE sessions(dir TEXT PRIMARY KEY, sig TEXT NOT NULL);
+            CREATE TABLE ev(id INTEGER PRIMARY KEY, dir TEXT NOT NULL, role TEXT, name TEXT, text TEXT, ftext TEXT);
+            CREATE TABLE state(k TEXT PRIMARY KEY, v TEXT);
+            CREATE VIRTUAL TABLE ev_fts USING fts5(text, content='ev', content_rowid='id', tokenize='trigram');
+        """)
+        db.close()
+        idx = sflog.Index(path)
+        try:
+            idx.update('logs/r/claude/s', 'v1', [{'role': 'user', 'name': None, 'text': 'hello world'}])
+            self.assertIn('logs/r/claude/s', idx.hits('hello', False, ['logs/r/claude/s']))
+            self.fts_ok(idx)
+        finally:
+            idx.close()
+
+    def test_case_folding_is_the_same_with_and_without_fts(self):
+        texts = ['İstanbul trip', 'xxıxx', 'ſecret plan', 'Straße', 'ΣΊΣΥΦΟΣ', 'Kelvin K']
+        queries = ['istanbul', 'xxixx', 'secret', 'STRASSE', 'σίσυφος', 'kelvin k', 'İSTANBUL']
+        results = []
+        for fts in (True, False):
+            idx = sflog.Index(self.base / f'fold-{fts}.sqlite')
+            try:
+                idx.fts = idx.fts and fts
+                for n, t in enumerate(texts):
+                    idx.update(f'logs/r/claude/{n}', 'v', [{'role': 'user', 'name': None, 'text': t}])
+                dirs = [f'logs/r/claude/{n}' for n in range(len(texts))]
+                results.append({q: sorted(idx.hits(q, False, dirs)) for q in queries})
+            finally:
+                idx.close()
+        self.assertEqual(results[0], results[1])
+        found = results[0]
+        self.assertEqual(found['istanbul'], ['logs/r/claude/0'])
+        self.assertEqual(found['İSTANBUL'], ['logs/r/claude/0'])
+        self.assertEqual(found['xxixx'], ['logs/r/claude/1'])
+        self.assertEqual(found['secret'], ['logs/r/claude/2'])
+        self.assertEqual(found['σίσυφος'], ['logs/r/claude/4'])
+        self.assertEqual(found['STRASSE'], [])  # ß 는 길이를 바꾸는 접기라 하지 않는다
+        self.assertEqual(sflog.fold('İſK'), 'isk')
+
+    def test_expired_sessions_leave_the_index(self):
+        self.search('npm test')
+        self.meta_file('devin', 'devin-session-1').unlink()  # lifecycle 이 지웠다
+        self.assertIn('SEARCH=0개 세션', self.search('npm test'))
+        r = sflog.Remote(sflog.sfbackend.LocalBackend(self.store))
+        idx = sflog.Index(r.dir / 'index.sqlite')
+        try:
+            self.assertFalse(any(d.endswith('devin-session-1') for d in idx.sigs()))
+            self.assertEqual(idx.db.execute("SELECT count(*) FROM ev WHERE dir LIKE '%devin-session-1'").fetchone()[0], 0)
+        finally:
+            idx.close()
+
+    def test_in_flight_session_from_1_4_moves_its_meta(self):
+        state = self.home / 'logs' / 'sessions' / 'claude-claude-session-1.json'
+        st = json.loads(state.read_text())
+        del st['meta_key']  # 1.4 가 남긴 진행 기록
+        state.write_text(json.dumps(st))
+        self.meta_file('claude', 'claude-session-1').unlink()
+        self.assertIn('nochange', self.collect('claude', 'claude-session-1', self.base / 'c.jsonl'))
+        self.assertTrue(self.meta_file('claude', 'claude-session-1').exists())
 
 
 class RemoteCacheTests(CollectEnv):
@@ -886,7 +1168,7 @@ class RemoteCacheTests(CollectEnv):
             for sid, updated in (('a', '2026-10-01T12:00:00+09:00'),   # 03:00Z
                                  ('b', '2026-10-01T04:00:00+00:00'),   # 04:00Z — 더 최근
                                  ('c', '2026-10-01T02:30:00Z')):
-                be.put(f'logs/r/claude/{sid}/meta.json', json.dumps({'session_id': sid, 'tool': 'claude',
+                be.put(f'logs/_meta/r/claude/{sid}.json', json.dumps({'session_id': sid, 'tool': 'claude',
                                                                       'updated': updated}).encode())
             self.assertEqual([m['session_id'] for m in r.sessions('r')], ['b', 'a', 'c'])
             self.assertGreater(sflog.instant('2026-10-01T04:00:00+00:00'), sflog.instant('2026-10-01T12:00:00+09:00'))
@@ -940,7 +1222,7 @@ class HookTests(CollectEnv):
                  input=payload)
         self.assertEqual(out, '')
         self.assertLess(time.monotonic() - started, 2)
-        meta = self.remote('claude', 'h-1') / 'meta.json'
+        meta = self.meta_file('claude', 'h-1')
         for _ in range(100):
             if meta.exists():
                 break
@@ -955,7 +1237,7 @@ class HookTests(CollectEnv):
         payload = json.dumps({'hookEventName': 'session_end', 'sessionId': 'g-2', 'cwd': str(self.project)})
         sh(sys.executable, str(SFHOOK), 'session-end', '--tool', 'grok', cwd=self.project, env=self.env(),
            input=payload)
-        meta = self.remote('grok', 'g-2') / 'meta.json'
+        meta = self.meta_file('grok', 'g-2')
         for _ in range(100):
             if meta.exists() and json.loads(meta.read_text()).get('ended'):
                 break

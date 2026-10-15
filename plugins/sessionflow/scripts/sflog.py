@@ -6,7 +6,7 @@
 그리고 세션이 끝날 때 부른다.
 
 원격 key (backend 의 logs/ 아래, followup/handoff 의 repos/ 와 따로):
-  logs/<repo-key|_norepo>/<tool>/<session-id>/meta.json            세션 정보 (도구·저장소·브랜치·시각·세대…)
+  logs/_meta/<repo-key|_norepo>/<tool>/<session-id>.json            세션 정보 (도구·저장소·브랜치·시각·세대…)
   logs/<repo-key|_norepo>/<tool>/<session-id>/000001.jsonl.gz      transcript 를 늘어난 만큼씩 (1세대)
   logs/<repo-key|_norepo>/<tool>/<session-id>/g2-000001.jsonl.gz   transcript 가 다시 쓰인 뒤 (2세대부터)
   logs/<repo-key|_norepo>/<tool>/<session-id>/transcript.json.gz   JSON 한 덩어리 transcript 의 최신본 (steps 가 없는 JSON, 1.3 까지의 Devin)
@@ -23,6 +23,10 @@ Devin 처럼 JSON 한 덩어리를 통째로 다시 쓰는 transcript 는 steps 
 
   logs/<repo-key|_norepo>/manual/<id>/transcript.md              훅이 없는 곳에서 save 로 남긴 기록
 
+meta 를 logs/_meta/ 에 따로 모아 두어 list 는 세션 수만큼만 LIST 한다 (segment 는 세지 않는다). logs/ 아래라
+logs/ 에 건 lifecycle 규칙이 meta 에도 걸린다. 1.4 까지는 meta 가 세션 자리의 meta.json 이었다 — 읽는 쪽이
+PC·저장소마다 한 번 새 자리로 옮기고(migrate_legacy_meta), 진행 중인 세션은 다음 수집 때 새 자리에 다시 쓴다.
+
 서브커맨드:
   collect --tool T --session S [--transcript P] [--cwd D] [--final]
           한 세션의 새 내용을 올린다. backend 가 없으면 아무것도 하지 않는다.
@@ -33,11 +37,12 @@ Devin 처럼 JSON 한 덩어리를 통째로 다시 쓰는 transcript 는 steps 
           세션 하나를 도구와 상관없이 같은 형식(### user / ### assistant / → 도구 / ← 결과)으로 보여준다.
           SESSION 은 session id 의 앞부분이면 된다.
   search  QUERY [--dir D] [--all-repos] [--days N] [--tool T] [--regex] [--limit N]
-          최근 N일(기본 30) 세션에서 글을 찾는다.
+          최근 N일(기본 30) 세션에서 글을 찾는다. 로컬 SQLite 색인(FTS5 trigram)에 바뀐 세션만 넣고 찾는다.
   save    --title T [--dir D] [--file F]      (없으면 stdin)
           훅이 없는 곳(웹 채팅 등)의 대화·요약을 manual 기록으로 남긴다. 비밀값을 가린 뒤 올린다.
 
-읽은 object 는 ~/.hbrness/logs/cache/ 에 etag 와 함께 둔다 — 바뀐 것만 다시 받는다 (암호화한 저장소면 푼 내용).
+읽은 object 는 ~/.hbrness/logs/cache/<저장소>/objects/ 에 etag 와 함께 둔다 — 바뀐 것만 다시 받는다 (암호화한
+저장소면 푼 내용). search 색인은 같은 자리의 index.sqlite.
 
 비밀값 가리기 (올리기 전에, 저장소 암호화와 따로):
   - 아래 SECRET_PATTERNS (알려진 토큰 접두어) + ~/.hbrness/redact.txt (한 줄에 정규식 하나, # 주석)
@@ -61,6 +66,7 @@ import math
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import traceback
@@ -74,6 +80,7 @@ import sfstate  # noqa: E402
 TOOLS = ("claude", "codex", "grok", "devin")
 SEGMENT_MAX = 8 * 1024 * 1024  # 한 segment 에 넣는 원문 상한. 처음 붙는 긴 세션도 나눠 올린다.
 HEAD_LEN = 4096  # 파일이 다시 쓰였는지 볼 때 비교하는 앞부분 길이
+META_ROOT = "logs/_meta/"
 SEGMENT_NAME = re.compile(r"(?:g([1-9]\d*)-)?(\d{6})\.jsonl\.gz")  # 1세대는 g 없이
 LOG_KEEP = 256 * 1024  # collect.log 상한
 
@@ -515,6 +522,20 @@ def reset_progress(st: dict):
     st["meta_dirty"] = True
 
 
+def meta_key(prefix: str) -> str:
+    """세션 자리 logs/<repo>/<tool>/<id> → meta 자리 logs/_meta/<repo>/<tool>/<id>.json"""
+    return META_ROOT + prefix[len("logs/"):] + ".json"
+
+
+def session_dir(key: str) -> str:
+    """meta 자리 → 세션 자리. meta 안의 내용이 아니라 key 로만 정한다."""
+    return "logs/" + key[len(META_ROOT):-len(".json")]
+
+
+def meta_due(st: dict) -> bool:
+    return bool(st.get("meta_dirty") or not st.get("meta_sent") or st.get("meta_key") != meta_key(st["prefix"]))
+
+
 def publish(st: dict):
     """이번 수집의 올리기가 다 끝났다 — meta.json 이 가리킬 세대·segment 수·형식을 지금 진행으로 정한다.
     올리다 실패한 진행(새 세대의 일부만 올라감)은 여기까지 오지 못해 meta 에 나가지 않는다."""
@@ -533,8 +554,9 @@ def write_meta(be, st: dict, tool: str, session: str):
         "started": st.get("started"), "updated": st["updated"], "ended": st.get("ended"),
         "title": st.get("title") or "",
     }
-    be.put(f"{st['prefix']}/meta.json", json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
-    st["meta_sent"], st["meta_dirty"] = True, False
+    key = meta_key(st["prefix"])
+    be.put(key, json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
+    st["meta_sent"], st["meta_dirty"], st["meta_key"] = True, False, key
 
 
 def json_kind(src: Path):
@@ -575,7 +597,7 @@ def collect(tool: str, session: str, transcript: str = "", cwd: str = "", final:
             st["meta_dirty"] = True
         if src is None:
             # transcript 가 사라졌어도 이미 올린 세션이면 끝났다는 것만은 올린다 (세대·segment 는 마지막으로 낸 그대로)
-            if st.get("prefix") and st.get("published") and (st.get("meta_dirty") or not st.get("meta_sent")):
+            if st.get("prefix") and st.get("published") and meta_due(st):
                 write_meta(be, st, tool, session)
             return "no-transcript"
         prefix = remote_dir(st, tool, session, cwd)
@@ -583,7 +605,7 @@ def collect(tool: str, session: str, transcript: str = "", cwd: str = "", final:
         extra = user_patterns()
         kind, steps = ("jsonl", None) if src.suffix == ".jsonl" else json_kind(src)
         if kind == "partial":  # 끝났다는 것 정도만 — 세대·segment 는 마지막으로 낸 그대로
-            if st.get("published") and (st.get("meta_dirty") or not st.get("meta_sent")):
+            if st.get("published") and meta_due(st):
                 write_meta(be, st, tool, session)
             return "partial"
         if "gen" not in st:  # 1.3 까지의 진행 기록은 1세대다
@@ -602,7 +624,7 @@ def collect(tool: str, session: str, transcript: str = "", cwd: str = "", final:
             title = derive_title(tool, src, extra)
             if title:
                 st["title"], st["meta_dirty"] = title, True
-        if st.get("meta_dirty") or not st.get("meta_sent"):
+        if meta_due(st):
             write_meta(be, st, tool, session)
         return f"uploaded {sent}" if sent else "nochange"
 
@@ -880,43 +902,225 @@ class Remote:
                     old.unlink()
         return data
 
-    def sessions(self, repo_key, tool=None) -> list:
-        """meta 목록 (최근 갱신 순). repo_key 가 None 이면 모든 저장소."""
-        keys = self.be.list(f"logs/{repo_key}/" if repo_key else "logs/")
-        by_dir = {}
-        for k, etag in keys.items():
-            d, _, name = k.rpartition("/")
-            by_dir.setdefault(d, {})[name] = etag
-        out = []
-        for d, files in by_dir.items():
-            if "meta.json" not in files:
+    def migrate_legacy_meta(self):
+        """1.4 까지의 meta(세션 자리의 meta.json)를 logs/_meta/ 로 옮긴다. 이 PC·이 저장소에서 한 번만 logs/ 전체를
+        LIST 한다 (끝나면 표시 파일). 이미 새 자리에 있으면 두고(If-None-Match), 예전 meta.json 은 지우지 않는다."""
+        flag = self.dir / "legacy-meta-migrated"
+        if flag.exists():
+            return
+        for k, etag in self.be.list("logs/").items():
+            if k.startswith(META_ROOT) or not k.endswith("/meta.json"):
                 continue
             try:
-                meta = json.loads(self.fetch(f"{d}/meta.json", files["meta.json"]))
+                self.be.put(meta_key(k[:-len("/meta.json")]), self.fetch(k, etag), if_none_match=True)
+            except sfbackend.PreconditionFailed:
+                pass
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.touch()
+
+    def sessions(self, repo_key, tool=None) -> list:
+        """meta 목록 (최근 갱신 순). repo_key 가 None 이면 모든 저장소. logs/_meta/ 만 LIST 한다."""
+        self.migrate_legacy_meta()
+        out = []
+        for k, etag in self.be.list(META_ROOT + (f"{repo_key}/" if repo_key else "")).items():
+            if not k.endswith(".json") or k.count("/") < 4 or (tool and k.split("/")[-2] != tool):
+                continue
+            try:
+                meta = json.loads(self.fetch(k, etag))
             except (ValueError, UnicodeDecodeError):
                 continue
             if not isinstance(meta, dict) or (tool and meta.get("tool") != tool):
                 continue
-            meta["_dir"], meta["_files"] = d, files
+            meta["_dir"], meta["_etag"] = session_dir(k), etag
             out.append(meta)
         out.sort(key=lambda m: instant(m.get("updated")), reverse=True)
         return out
 
+    def files(self, meta: dict) -> dict:
+        """세션 자리의 object (이름 → etag). 읽을 때만 LIST 한다."""
+        pre = meta["_dir"] + "/"
+        return {k[len(pre):]: e for k, e in self.be.list(pre).items() if "/" not in k[len(pre):]}
+
     def raw(self, meta: dict) -> bytes:
         """올라간 기록 원본(가린 뒤). meta 에 붙여 두지 않는다 — search 가 세션을 훑는 동안 쌓이지 않게."""
-        files, d = meta["_files"], meta["_dir"]
+        d, files = meta["_dir"], self.files(meta)
+
+        def get(name):
+            if name not in files:
+                raise sfbackend.BackendError(f"{d}/{name} 가 없다")
+            return self.fetch(f"{d}/{name}", files[name])
+
         fmt = meta.get("format") or ""
         if fmt == "markdown":
-            data = self.fetch(f"{d}/transcript.md", files["transcript.md"])
-        elif fmt == "json-snapshot":
-            data = gzip.decompress(self.fetch(f"{d}/transcript.json.gz", files["transcript.json.gz"]))
-        else:
-            names = latest_segments(files, meta.get("generation"))
-            data = b"".join(gzip.decompress(self.fetch(f"{d}/{n}", files[n])) for n in names)
-        return data
+            return get("transcript.md")
+        if fmt == "json-snapshot":
+            return gzip.decompress(get("transcript.json.gz"))
+        return b"".join(gzip.decompress(get(n)) for n in latest_segments(files, meta.get("generation")))
 
     def events(self, meta: dict) -> list:
         return events_from(meta.get("tool") or "", meta.get("format") or "", self.raw(meta))
+
+
+class _Fold(dict):
+    """글자 하나를 대소문자 구분 없이 비교할 글자 하나로 (길이를 바꾸지 않는다 — 맞은 자리를 원문에서 그대로 쓰게).
+    ı·İ→i, ſ→s, ς→σ, K(켈빈)→k 처럼 re.I 가 같게 보는 글자도 같게 접는다."""
+
+    def __missing__(self, o):
+        c = chr(o)
+        f = c.upper().lower()
+        if len(f) != 1:
+            f = c.lower()
+        if len(f) != 1:
+            f = "i" if c == "\u0130" else c
+        self[o] = f
+        return f
+
+
+FOLD = _Fold()
+
+
+def fold(text: str) -> str:
+    return text.translate(FOLD)
+
+
+def fts_available() -> bool:
+    try:
+        sqlite3.connect(":memory:").execute(
+            "CREATE VIRTUAL TABLE t USING fts5(x, tokenize='trigram case_sensitive 1')")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+class Index:
+    """search 용 로컬 색인 (<캐시>/index.sqlite). 세션마다 meta 의 etag 를 적어 두고 바뀐 세션만 다시 넣는다.
+    글은 원문(text)과 대소문자를 접은 것(ftext, fold)을 같이 둔다. SQLite FTS5 trigram 이 있으면 3글자 이상
+    검색은 ftext 의 색인으로 찾고, 없거나 짧은 검색은 ftext 를 훑는다 — 어느 쪽이든 같은 fold 로 비교하니 결과가
+    같다. --regex 는 원문을 re.I 로 훑는다. 어느 쪽이든 transcript 를 다시 받거나 풀지 않는다.
+    쓰기는 모두 BEGIN IMMEDIATE 트랜잭션 하나로 한다 — search 가 둘 겹쳐 돌아도 FTS 가 어긋나지 않게."""
+
+    SCHEMA = 2  # 바뀌면 색인을 버리고 다시 만든다 (캐시라 다시 넣으면 된다)
+    FTS_SCHEMA = "ftext-trigram-cs1"  # ev_fts 정의. state 에 적힌 것과 다르면 FTS 를 다시 만든다
+
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(str(path), timeout=30, isolation_level=None)
+        self.fts = fts_available()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            if self.db.execute("PRAGMA user_version").fetchone()[0] != self.SCHEMA:
+                for t in ("ev_fts", "ev", "sessions", "state"):
+                    try:
+                        self.db.execute(f"DROP TABLE IF EXISTS {t}")
+                    except sqlite3.OperationalError:  # FTS 가 없는 SQLite 의 예전 ev_fts — state 를 버렸으니
+                        pass                          # FTS 가 되는 쪽이 나중에 다시 만든다 (_sync)
+                self.db.execute(f"PRAGMA user_version = {self.SCHEMA}")
+            for sql in ("CREATE TABLE IF NOT EXISTS sessions(dir TEXT PRIMARY KEY, sig TEXT NOT NULL)",
+                        "CREATE TABLE IF NOT EXISTS ev(id INTEGER PRIMARY KEY, dir TEXT NOT NULL, role TEXT,"
+                        " name TEXT, text TEXT, ftext TEXT)",
+                        "CREATE INDEX IF NOT EXISTS ev_dir ON ev(dir)",
+                        "CREATE TABLE IF NOT EXISTS state(k TEXT PRIMARY KEY, v TEXT)"):
+                self.db.execute(sql)
+            self._sync(modify=False)
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+        self.db.execute("COMMIT")
+
+    def _set(self, k: str, v: str):
+        self.db.execute("INSERT OR REPLACE INTO state(k, v) VALUES(?, ?)", (k, v))
+
+    def _sync(self, modify: bool):
+        """쓰기 트랜잭션마다 처음에 부른다. 같은 색인을 FTS 가 되는 SQLite 와 안 되는 SQLite(다른 python3)가 같이
+        쓸 수 있다. FTS 가 안 되는 쪽이 고친 행은 FTS 에 들어가지 않으므로 같은 트랜잭션에서 'fts=0' 으로 적고,
+        FTS 가 되는 쪽은 그 표시나 ev_fts 정의가 맞지 않으면 먼저 FTS 를 다시 만든다."""
+        st = dict(self.db.execute("SELECT k, v FROM state"))
+        if self.fts:
+            if st.get("fts_schema") != self.FTS_SCHEMA:
+                self.db.execute("DROP TABLE IF EXISTS ev_fts")
+                self.db.execute("CREATE VIRTUAL TABLE ev_fts USING fts5("
+                                "ftext, content='ev', content_rowid='id', tokenize='trigram case_sensitive 1')")
+                self._set("fts_schema", self.FTS_SCHEMA)
+                st["fts"] = "0"
+            if st.get("fts") != "1":
+                self.db.execute("INSERT INTO ev_fts(ev_fts) VALUES('rebuild')")
+                self._set("fts", "1")
+        elif modify and st.get("fts") != "0":
+            self._set("fts", "0")
+
+    @contextlib.contextmanager
+    def write(self, modify: bool = False):
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self._sync(modify)
+            yield
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+        self.db.execute("COMMIT")
+
+    def close(self):
+        self.db.close()
+
+    def sigs(self) -> dict:
+        return dict(self.db.execute("SELECT dir, sig FROM sessions"))
+
+    def _drop(self, d: str):
+        """트랜잭션 안에서만 부른다 — 지울 행을 읽는 것부터 같은 트랜잭션이어야 FTS 와 어긋나지 않는다."""
+        if self.fts:
+            for rid, ftext in self.db.execute("SELECT id, ftext FROM ev WHERE dir = ?", (d,)).fetchall():
+                self.db.execute("INSERT INTO ev_fts(ev_fts, rowid, ftext) VALUES('delete', ?, ?)", (rid, ftext))
+        self.db.execute("DELETE FROM ev WHERE dir = ?", (d,))
+        self.db.execute("DELETE FROM sessions WHERE dir = ?", (d,))
+
+    def update(self, d: str, sig: str, events):
+        with self.write(modify=True):  # 세션 하나를 한 트랜잭션으로 — 도중에 끊겨도 반쯤 넣은 세션이 남지 않는다
+            self._drop(d)
+            for e in events:
+                text = utf8(e["text"])
+                ftext = fold(text)
+                cur = self.db.execute("INSERT INTO ev(dir, role, name, text, ftext) VALUES(?, ?, ?, ?, ?)",
+                                      (d, e["role"], e["name"], text, ftext))
+                if self.fts:
+                    self.db.execute("INSERT INTO ev_fts(rowid, ftext) VALUES(?, ?)", (cur.lastrowid, ftext))
+            self.db.execute("INSERT INTO sessions(dir, sig) VALUES(?, ?)", (d, sig))
+
+    def prune(self, keep: set, scope: str):
+        """scope(logs/<repo>/ 또는 logs/) 안에서 더는 원격에 없는 세션(만료·삭제)을 뺀다."""
+        with self.write(modify=True):
+            for (d,) in self.db.execute("SELECT dir FROM sessions").fetchall():
+                if d.startswith(scope) and d not in keep:
+                    self._drop(d)
+
+    def hits(self, query: str, regex: bool, dirs, per_session: int = 5) -> dict:
+        """dir → [(role, name, text, 맞은 시작, 끝)] (세션마다 앞에서부터 per_session 개)."""
+        with self.write():
+            self.db.execute("CREATE TEMP TABLE IF NOT EXISTS want(dir TEXT PRIMARY KEY)")
+            self.db.execute("DELETE FROM want")
+            self.db.executemany("INSERT OR IGNORE INTO want(dir) VALUES(?)", ((d,) for d in dirs))
+        pat = re.compile(query, re.I) if regex else None
+        fq = fold(query)
+        cols = "SELECT ev.dir, ev.role, ev.name, ev.text, ev.ftext FROM "
+        if self.fts and not regex and len(fq) >= 3:
+            rows = self.db.execute(cols + "ev_fts JOIN ev ON ev.id = ev_fts.rowid JOIN want ON want.dir = ev.dir "
+                                   "WHERE ev_fts MATCH ? ORDER BY ev.id", ('"' + fq.replace('"', '""') + '"',))
+        else:
+            rows = self.db.execute(cols + "ev JOIN want ON want.dir = ev.dir ORDER BY ev.id")
+        out = {}
+        for d, role, name, text, ftext in rows:
+            got = out.setdefault(d, [])
+            if len(got) >= per_session:
+                continue
+            text, ftext = text or "", ftext or ""
+            if pat:
+                m = pat.search(text)
+                span = m.span() if m else None
+            else:
+                i = ftext.find(fq)
+                span = (i, i + len(fq)) if i >= 0 else None
+            if span:
+                got.append((role, name, text, *span))
+        return {d: v for d, v in out.items() if v}
 
 
 def open_remote(a):
@@ -996,28 +1200,37 @@ def cmd_show(a):
 
 def cmd_search(a):
     remote, repo_key = open_remote(a)
+    if a.regex:
+        try:
+            re.compile(a.query)
+        except re.error as e:
+            print(f"SEARCH=failed (정규식이 틀렸다: {e})")
+            sys.exit(1)
     since = dt.datetime.now().astimezone() - dt.timedelta(days=a.days)
-    pat = re.compile(a.query if a.regex else re.escape(a.query), re.I)
+    metas = remote.sessions(repo_key)
+    cands = [m for m in metas if (not a.tool or m.get("tool") == a.tool) and instant(m.get("updated")) >= since]
+    index = Index(remote.dir / "index.sqlite")
+    try:
+        index.prune({m["_dir"] for m in metas}, f"logs/{repo_key}/" if repo_key else "logs/")
+        known = index.sigs()
+        for m in cands:
+            if known.get(m["_dir"]) != m["_etag"]:
+                index.update(m["_dir"], m["_etag"], remote.events(m))
+        found = index.hits(a.query, a.regex, [m["_dir"] for m in cands])
+    finally:
+        index.close()
     hits = 0
-    for m in remote.sessions(repo_key, a.tool):
-        if instant(m.get("updated")) < since:
+    for m in cands:
+        if m["_dir"] not in found:
             continue
-        found = []
-        for e in remote.events(m):
-            for mt in pat.finditer(e["text"]):
-                lo, hi = max(0, mt.start() - 80), min(len(e["text"]), mt.end() + 80)
-                snippet = e["text"][lo:hi].replace("\n", " ")
-                found.append(f"    [{e['role']}{'·' + e['name'] if e['name'] else ''}] …{snippet}…")
-                break
-            if len(found) >= 5:
-                break
-        if found:
-            m["_repo_shown"] = repo_key is not None
-            print(meta_line(m))
-            print("\n".join(found))
-            hits += 1
-            if hits >= a.limit:
-                break
+        m["_repo_shown"] = repo_key is not None
+        print(meta_line(m))
+        for role, name, text, lo, hi in found[m["_dir"]]:
+            snippet = text[max(0, lo - 80):min(len(text), hi + 80)].replace("\n", " ")
+            print(f"    [{role}{'·' + name if name else ''}] …{snippet}…")
+        hits += 1
+        if hits >= a.limit:
+            break
     print(f"SEARCH={hits}개 세션 (최근 {a.days}일, {repo_key or '모든 저장소'})")
 
 
@@ -1041,7 +1254,7 @@ def cmd_save(a):
     meta = {"tool": "manual", "session_id": sid, "repo_key": ctx.repo_key, "branch": ctx.branch,
             "cwd": str(ctx.cwd), "host": host, "format": "markdown", "segments": 1, "rewrites": 0,
             "started": now, "updated": now, "ended": now, "title": utf8(scrub_text(a.title, extra)[:100])}
-    be.put(f"{prefix}/meta.json", json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
+    be.put(meta_key(prefix), json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
     print(f"SAVED={sid} ({prefix})")
 
 
