@@ -1,3 +1,4 @@
+import datetime as dt
 import gzip
 import importlib.util
 import json
@@ -228,7 +229,8 @@ class CollectEnv(unittest.TestCase):
 
     def env(self, **extra):
         return dict(os.environ, **GIT_ENV, HBRNESS_HOME=str(self.home), HBRNESS_STATE_DIR=str(self.home / 'state'),
-                    GROK_HOME=str(self.base / 'grok'), HBRNESS_CREDENTIALS_STORE='file', **extra)
+                    GROK_HOME=str(self.base / 'grok'), HBRNESS_CREDENTIALS_STORE='file',
+                    **{'HBRNESS_LOG_BATCH_BYTES': '0', **extra})  # 모아 올리기는 BatchTests 에서만
 
     def collect(self, tool, session, transcript='', final=False):
         args = [sys.executable, str(SFLOG), 'collect', '--tool', tool, '--session', session,
@@ -418,8 +420,9 @@ class InProcessCollectTests(CollectEnv):
 
     def setUp(self):
         super().setUp()
-        self.saved = {k: os.environ.get(k) for k in ('HBRNESS_HOME', 'HBRNESS_STATE_DIR')}
-        os.environ.update(HBRNESS_HOME=str(self.home), HBRNESS_STATE_DIR=str(self.home / 'state'))
+        self.saved = {k: os.environ.get(k) for k in ('HBRNESS_HOME', 'HBRNESS_STATE_DIR', 'HBRNESS_LOG_BATCH_BYTES')}
+        os.environ.update(HBRNESS_HOME=str(self.home), HBRNESS_STATE_DIR=str(self.home / 'state'),
+                          HBRNESS_LOG_BATCH_BYTES='0')
 
     def tearDown(self):
         for k, v in self.saved.items():
@@ -538,6 +541,28 @@ class InProcessCollectTests(CollectEnv):
         t.write_text('{"steps":[')
         self.assertEqual(sflog.collect('devin', 'lostp', str(t), str(self.project), final=True), 'partial')
         self.assertEqual(self.meta('devin', 'lostp'), before)
+
+    def test_retry_after_a_failed_upload_is_not_batched(self):
+        t = self.base / 'c.jsonl'
+        t.write_text('{"a":1}\n{"a":2}\n')
+        sflog.collect('claude', 'retry', str(t), str(self.project))  # 1세대를 냈다
+        t.write_text('{"b":1}\n{"b":2}\n')  # 다시 쓰였다
+        old = sflog.SEGMENT_MAX
+        sflog.SEGMENT_MAX = 8
+        undo = self.flaky_puts(lambda key, n: n == 2)
+        try:
+            with self.assertRaises(sflog.sfbackend.BackendError):
+                sflog.collect('claude', 'retry', str(t), str(self.project))
+        finally:
+            undo()
+            sflog.SEGMENT_MAX = old
+        os.environ['HBRNESS_LOG_BATCH_BYTES'] = '65536'  # 모아 올리기를 켜도
+        try:
+            self.assertEqual(sflog.collect('claude', 'retry', str(t), str(self.project)), 'uploaded 1')
+        finally:
+            os.environ['HBRNESS_LOG_BATCH_BYTES'] = '0'
+        self.assertEqual(self.meta('claude', 'retry')['generation'], 2)
+        self.assertEqual(self.segments('claude', 'retry'), b'{"b":1}\n{"b":2}\n')
 
     def test_first_rewrite_after_upgrade_keeps_old_meta_readable(self):
         t = self.base / 'c.jsonl'
@@ -790,6 +815,131 @@ class ReadCommandTests(CollectEnv):
         self.assertIn('LOGS=_norepo · 0개', out)
         out = sh(sys.executable, str(SFLOG), 'list', '--all-repos', cwd=other, env=self.env())
         self.assertIn('github.com/acme/app', out)
+
+
+class BatchTests(CollectEnv):
+    """turn 마다 작은 segment 가 쌓이지 않게 모아 올린다."""
+
+    def batched(self, tool, session, transcript, final=False, seconds='300'):
+        args = [sys.executable, str(SFLOG), 'collect', '--tool', tool, '--session', session,
+                '--transcript', str(transcript), '--cwd', str(self.project)] + (['--final'] if final else [])
+        return sh(*args, cwd=self.project, env=self.env(HBRNESS_LOG_BATCH_BYTES='65536',
+                                                        HBRNESS_LOG_BATCH_SECONDS=seconds))
+
+    def test_small_turns_wait_until_enough_or_session_end(self):
+        t = self.base / 'c.jsonl'
+        t.write_bytes(jl(CLAUDE_LINES))
+        self.assertIn('uploaded 1', self.batched('claude', 'b', t))  # 첫 segment 는 바로 — list 에 바로 보이게
+        with open(t, 'ab') as fh:
+            fh.write(jl([{'type': 'user', 'message': {'content': 'small turn'}}]))
+        self.assertIn('nochange', self.batched('claude', 'b', t))  # 작고 5분 안 — 미룬다
+        status = sh(sys.executable, str(SFLOG), 'status', cwd=self.project, env=self.env())
+        self.assertIn('WAITING=1', status)
+        with open(t, 'ab') as fh:
+            fh.write(jl([{'type': 'user', 'message': {'content': 'x' * 70000}}]))
+        self.assertIn('uploaded 1', self.batched('claude', 'b', t))  # 64KB 를 넘었다
+        with open(t, 'ab') as fh:
+            fh.write(jl([{'type': 'user', 'message': {'content': 'last words'}}]))
+        self.assertIn('nochange', self.batched('claude', 'b', t))
+        self.assertIn('uploaded 1', self.batched('claude', 'b', t, final=True))  # 세션 끝은 바로
+        self.assertTrue(self.segments('claude', 'b').endswith(jl([{'type': 'user', 'message': {'content': 'last words'}}])))
+        self.assertIn('WAITING=0', sh(sys.executable, str(SFLOG), 'status', cwd=self.project, env=self.env()))
+
+    def test_waits_at_most_the_batch_time(self):
+        t = self.base / 'c.jsonl'
+        t.write_bytes(jl(CLAUDE_LINES))
+        self.batched('claude', 't', t)
+        with open(t, 'ab') as fh:
+            fh.write(b'{"small":1}\n')
+        self.assertIn('uploaded 1', self.batched('claude', 't', t, seconds='0'))  # 마지막으로 올린 지 오래됐다
+
+    def test_devin_steps_batch_too(self):
+        t = self.base / 'd.json'
+        step = lambda n: {'source': 'user' if n % 2 else 'agent', 'message': f'm{n}'}
+        t.write_text(json.dumps({'steps': [step(1), step(2)]}))
+        self.assertIn('uploaded 1', self.batched('devin', 'dv', t))
+        t.write_text(json.dumps({'steps': [step(1), step(2), step(3), step(4)]}))
+        self.assertIn('nochange', self.batched('devin', 'dv', t))
+        self.assertIn('uploaded 1', self.batched('devin', 'dv', t, final=True))
+        self.assertEqual(len(self.segments('devin', 'dv').splitlines()), 4)
+
+
+class StatusAndReadingTests(CollectEnv):
+    def run_log(self, *args):
+        return sh(sys.executable, str(SFLOG), *args, cwd=self.project, env=self.env())
+
+    def test_status_reports_failures_and_tools(self):
+        t = self.base / 'c.jsonl'
+        t.write_bytes(jl(CLAUDE_LINES))
+        self.collect('claude', 's', t)
+        log = self.home / 'logs' / 'collect.log'
+        old = (dt.datetime.now().astimezone() - dt.timedelta(days=3)).isoformat(timespec='seconds')
+        log.write_text(f'{old} collect claude x: old failure\n{sflog.now_iso()} collect claude s: 목록 실패\n')
+        out = self.run_log('status')
+        for line in ('BACKEND=local:', 'SESSIONS=1 (진행 중 1)', 'FAILURES_24H=1', '목록 실패', 'AGE=', 'GITLEAKS='):
+            self.assertIn(line, out)
+        self.assertNotIn('old failure', out)
+
+    def test_quiet_unended_sessions_look_dropped(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        base = {'tool': 'claude', 'session_id': 's', 'segments': 1}
+        self.assertIn('진행 중', sflog.meta_line({**base, 'updated': now.isoformat()}))
+        old = (now - dt.timedelta(hours=13)).isoformat()
+        self.assertIn('끊김(추정)', sflog.meta_line({**base, 'updated': old}))
+        self.assertNotIn('끊김', sflog.meta_line({**base, 'updated': old, 'ended': old}))
+
+    def test_unknown_records_are_counted_not_shown(self):
+        lines = CLAUDE_LINES + [{'type': 'assistant', 'timestamp': 't9', 'message': {'role': 'assistant', 'content': [
+            {'type': 'server_tool_use', 'name': 'web_search'}, {'type': 'thinking', 'thinking': 'hidden'}]}},
+            {'type': 'attachment', 'x': 1}]
+        t = self.base / 'c.jsonl'
+        t.write_bytes(jl(lines))
+        self.collect('claude', 'u', t, final=True)
+        shown = self.run_log('show', 'u')
+        self.assertIn('읽지 못한 레코드: assistant.server_tool_use×1', shown)
+        self.assertNotIn('attachment', shown)  # 메타데이터 레코드는 세지 않는다
+        self.assertNotIn('hidden', shown)
+        codex = [{'type': 'response_item', 'payload': {'type': 'web_search_call'}},
+                 {'type': 'response_item', 'payload': {'type': 'reasoning'}}]
+        self.assertEqual(sflog.unknown_summary(sflog.events_from('codex', 'jsonl-segments', jl(codex))),
+                         'response_item.web_search_call×1')
+        grok = [{'type': 'backend_tool_call', 'kind': "{'tool_type': 'web_search'}"}, {'type': 'brand_new'}]
+        evs = sflog.events_from('grok', 'jsonl-segments', jl(grok))
+        self.assertEqual([e['role'] for e in evs], ['tool', 'unknown'])
+        devin = {'steps': [{'source': 'robot', 'message': 'x'}, {'source': 'system', 'message': 'y'}]}
+        self.assertEqual(sflog.unknown_summary(sflog.events_from('devin', 'json-snapshot', json.dumps(devin).encode())),
+                         'step.robot×1')
+
+    def test_cache_is_trimmed_oldest_first(self):
+        saved = os.environ.get('HBRNESS_HOME')
+        os.environ['HBRNESS_HOME'] = str(self.home)
+        try:
+            r = sflog.Remote(sflog.sfbackend.LocalBackend(self.store))
+            objs = r.dir / 'objects' / 'x'
+            objs.mkdir(parents=True)
+            for i in range(10):
+                f = objs / f'{i}@e'
+                f.write_bytes(b'z' * 200_000)
+                os.utime(f, (1000 + i, 1000 + i))
+            self.assertEqual(r.trim(cap_mb=1), 6)  # 2MB → 0.8MB 까지
+            self.assertEqual(sorted(f.name for f in objs.iterdir()), [f'{i}@e' for i in range(6, 10)])
+            self.assertEqual(r.trim(cap_mb=1), 0)
+            busy = objs / '.tmp-123-abcd'  # 다른 명령이 쓰는 중
+            busy.write_bytes(b'z' * 300_000)
+            os.utime(busy, (1, 1))
+            r.trim(cap_mb=0)
+            self.assertTrue(busy.exists())
+            etag = r.be.put('logs/x/claude/s/000001.jsonl.gz', b'v1')
+            real = sflog.os.replace
+            sflog.os.replace = lambda a, b: (_ for _ in ()).throw(FileNotFoundError(a))  # 그사이 치워졌다
+            try:
+                self.assertEqual(r.fetch('logs/x/claude/s/000001.jsonl.gz', etag), b'v1')
+            finally:
+                sflog.os.replace = real
+        finally:
+            os.environ.pop('HBRNESS_HOME', None)
+            if saved is not None:
+                os.environ['HBRNESS_HOME'] = saved
 
 
 class BackAndForthTests(CollectEnv):

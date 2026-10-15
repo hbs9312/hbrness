@@ -172,6 +172,7 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 /log show <session>                        ← 세션 하나를 같은 형식(user / assistant / 도구 / 결과)으로 열람
 /log search <검색어>                       ← 최근 30일 대화에서 찾기 (--days, --regex, --all-repos)
 /log save [제목]                           ← 훅이 없는 곳(웹 채팅 등)의 대화를 요약 기록으로 남기기
+/log status                                ← 이 PC 의 수집이 잘 되는지 (아직 안 올린 양·최근 실패)
 ```
 
 - **handoff** = 지금 이 작업을 다음 세션이 그대로 (1회성·워크트리 단위).

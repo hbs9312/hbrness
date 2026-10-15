@@ -40,6 +40,12 @@ PC·저장소마다 한 번 새 자리로 옮기고(migrate_legacy_meta), 진행
           최근 N일(기본 30) 세션에서 글을 찾는다. 로컬 SQLite 색인(FTS5 trigram)에 바뀐 세션만 넣고 찾는다.
   save    --title T [--dir D] [--file F]      (없으면 stdin)
           훅이 없는 곳(웹 채팅 등)의 대화·요약을 manual 기록으로 남긴다. 비밀값을 가린 뒤 올린다.
+  status  이 PC 의 수집 현황: backend, 세션 수, 아직 안 올린 양, 최근 24시간 실패(collect.log), 쓰는 도구.
+
+모아 올리기: turn 마다 작은 segment 가 쌓이지 않게, 새로 쌓인 게 64KB 보다 적고 마지막으로 올린 지 5분이 안
+됐으면 다음 수집으로 미룬다. 세션의 첫 segment·새 세대의 첫 segment·세션 끝(--final)은 바로 올린다.
+(HBRNESS_LOG_BATCH_BYTES / HBRNESS_LOG_BATCH_SECONDS 로 바꾼다. 0 이면 모으지 않는다.)
+읽은 object 캐시는 HBRNESS_LOG_CACHE_MB(기본 512) 를 넘으면 오래 안 쓴 것부터 지운다.
 
 읽은 object 는 ~/.hbrness/logs/cache/<저장소>/objects/ 에 etag 와 함께 둔다 — 바뀐 것만 다시 받는다 (암호화한
 저장소면 푼 내용). search 색인은 같은 자리의 index.sqlite.
@@ -69,6 +75,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import time
 import traceback
 import urllib.parse
 from pathlib import Path
@@ -83,6 +90,10 @@ HEAD_LEN = 4096  # 파일이 다시 쓰였는지 볼 때 비교하는 앞부분 
 META_ROOT = "logs/_meta/"
 SEGMENT_NAME = re.compile(r"(?:g([1-9]\d*)-)?(\d{6})\.jsonl\.gz")  # 1세대는 g 없이
 LOG_KEEP = 256 * 1024  # collect.log 상한
+BATCH_BYTES = 64 * 1024  # 이보다 적게 쌓였으면
+BATCH_SECONDS = 300      # 마지막으로 올린 지 이만큼 안 됐을 때 다음 수집으로 미룬다
+STALE_HOURS = 12         # 끝났다는 기록 없이 이만큼 조용하면 끊긴 것으로 본다 (추정)
+CACHE_MB = 512           # 읽은 object 캐시 상한
 
 # 패턴 앞 경계: 보통의 단어 경계, 또는 JSON escape(\n·\t …) 바로 뒤 — 문자열 안에 JSON 이 한 번 더 들어 있을 때.
 B = r"(?:(?<=\\[nrtbf])|\b)"
@@ -396,6 +407,26 @@ def segment_key(prefix: str, st: dict, seq: int) -> str:
     return f"{prefix}/{seq:06d}.jsonl.gz" if gen == 1 else f"{prefix}/g{gen}-{seq:06d}.jsonl.gz"
 
 
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def should_wait(st: dict, pending: int, final: bool) -> bool:
+    """turn 마다 작은 segment 가 쌓이지 않게 모아서 올린다. 세션 끝이 아니고, 이번 세대를 지난 수집이 끝까지
+    올려 meta 에 냈고(올리다 실패한 뒤의 다시 하기는 미루지 않는다 — 미루면 반쯤 올린 세대가 meta 에 나간다),
+    새로 쌓인 게 BATCH_BYTES 보다 적고, 마지막으로 올린 지 BATCH_SECONDS 가 안 됐으면 미룬다."""
+    pub = st.get("published") or {}
+    done = int(st.get("seq", 0)) > 0 and pub.get("gen") == int(st.get("gen", 1)) and pub.get("segments") == int(st.get("seq", 0))
+    wait = (not final and pending > 0 and done
+            and pending < env_int("HBRNESS_LOG_BATCH_BYTES", BATCH_BYTES)
+            and time.time() - float(st.get("last_put", 0)) < env_int("HBRNESS_LOG_BATCH_SECONDS", BATCH_SECONDS))
+    st["pending_bytes"] = pending if wait else 0
+    return wait
+
+
 def new_generation(st: dict):
     """transcript 가 다시 쓰였다 — 다음 segment 부터 새 세대로 처음부터 올린다. 이번 세대에 아직 올린 게 없으면
     (다시 쓰인 걸 알아챈 뒤 아직 못 올렸으면) 그 세대를 그대로 쓴다."""
@@ -418,6 +449,8 @@ def upload_jsonl(be, st: dict, src: Path, prefix: str, final: bool, extra) -> in
         if size < offset or (head_len and hashlib.sha256(fh.read(head_len)).hexdigest() != st.get("head_sha256")):
             new_generation(st)
             offset, head_len = 0, 0
+        if should_wait(st, size - offset, final):
+            return 0
         sent = upload_lines(be, st, fh, size, offset, prefix, final, extra)
         if st["offset"] and head_len < HEAD_LEN:
             fh.seek(0)
@@ -458,7 +491,7 @@ def upload_lines(be, st, fh, size, offset, prefix, final, extra) -> int:
         st["meta_dirty"] = True  # 올린 뒤 meta.json 이 실패해도 다음 수집이 다시 쓴다
         be.put(segment_key(prefix, st, seq), gzip.compress(scrub(chunk, extra, redact_jsonl), mtime=0))
         offset += len(chunk)
-        st["seq"], st["offset"] = seq, offset
+        st["seq"], st["offset"], st["last_put"] = seq, offset, time.time()
         sent += 1
     st["offset"] = offset
     return sent
@@ -487,6 +520,13 @@ def upload_steps(be, st: dict, steps: list, prefix: str, final: bool, extra) -> 
         new_generation(st)
         done = 0
     ready = len(steps) if final else len(steps) - 1
+    pending = 0
+    for step in steps[done:ready]:  # 상한까지만 센다
+        pending += len(json_line(step))
+        if pending >= env_int("HBRNESS_LOG_BATCH_BYTES", BATCH_BYTES):
+            break
+    if should_wait(st, pending, final):
+        return 0
     sent = 0
     while done < ready:
         lines, size = [], 0
@@ -499,6 +539,7 @@ def upload_steps(be, st: dict, steps: list, prefix: str, final: bool, extra) -> 
         be.put(segment_key(prefix, st, seq), gzip.compress(scrub(b"".join(lines), extra, redact_jsonl), mtime=0))
         done += len(lines)
         st["seq"], st["steps_sent"], st["steps_sha256"] = seq, done, steps_hash(steps[:done])
+        st["last_put"] = time.time()
         sent += 1
     return sent
 
@@ -690,7 +731,20 @@ def dump(v) -> str:
     return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
 
 
+CLAUDE_SKIP_BLOCKS = {"thinking", "redacted_thinking", "image", "document"}  # 일부러 보이지 않는 블록
+CODEX_SKIP = {"reasoning"}
+GROK_SKIP = {"reasoning", "system"}
+DEVIN_SKIP = {"system"}
+
+
+def unknown(kind, ts=None) -> dict:
+    """읽지 못한 레코드 — 도구가 transcript 형식을 바꿨을 수 있다. 보여주지 않고 show 가 종류별로 센다."""
+    return ev("unknown", "", ts, str(kind))
+
+
 def events_claude(records):
+    """사용자·assistant 메시지만 읽는다. 다른 레코드(attachment·api-request·mode …)는 메타데이터라 세지 않고,
+    메시지 안의 모르는 블록만 센다."""
     for d in records:
         t, ts = d.get("type"), d.get("timestamp")
         if t not in ("user", "assistant") or d.get("isMeta"):
@@ -712,6 +766,8 @@ def events_claude(records):
                 yield ev("tool", dump(b.get("input")), ts, b.get("name"))
             elif b.get("type") == "tool_result":
                 yield ev("result", text_of(b.get("content")), ts)
+            elif b.get("type") not in CLAUDE_SKIP_BLOCKS:
+                yield unknown(f"{t}.{b.get('type')}", ts)
 
 
 def events_codex(records):
@@ -729,6 +785,10 @@ def events_codex(records):
         elif kind in ("function_call_output", "custom_tool_call_output"):
             out = p.get("output")
             yield ev("result", text_of(out) if isinstance(out, list) else dump(out), ts)
+        elif kind == "message" and p.get("role") in ("developer", "system"):
+            continue  # 도구가 넣는 지침
+        elif kind not in CODEX_SKIP:
+            yield unknown(f"response_item.{kind}", ts)
 
 
 def events_grok(records):
@@ -746,6 +806,10 @@ def events_grok(records):
                     yield ev("tool", dump(c.get("arguments")), ts, c.get("name"))
         elif t == "tool_result":
             yield ev("result", text_of(d.get("content")), ts)
+        elif t == "backend_tool_call":  # 서버 쪽 도구 (웹 검색 등)
+            yield ev("tool", dump(d.get("kind")), ts, "backend")
+        elif t not in GROK_SKIP and not (t == "user" and d.get("synthetic_reason")):
+            yield unknown(t, ts)
 
 
 def events_devin(doc):
@@ -764,6 +828,8 @@ def events_devin(doc):
             for r in (st.get("observation") or {}).get("results") or []:
                 if isinstance(r, dict):
                     yield ev("result", dump(r.get("content")), ts)
+        elif src not in DEVIN_SKIP and src != "user":
+            yield unknown(f"step.{src}", ts)
 
 
 JSONL_EVENTS = {"claude": events_claude, "codex": events_codex, "grok": events_grok,
@@ -838,9 +904,16 @@ def clip(text: str, limit) -> str:
     return text[:limit] + f" … (+{len(text) - limit}자)"
 
 
+def unknown_summary(events) -> str:
+    counts = collections.Counter(e["name"] for e in events if e["role"] == "unknown")
+    return ", ".join(f"{k}×{n}" for k, n in counts.most_common())
+
+
 def render(events, tools=True, full=False) -> str:
     out = []
     for e in events:
+        if e["role"] == "unknown":
+            continue
         text = e["text"].strip()
         if e["role"] in ("tool", "result"):
             if not tools:
@@ -883,7 +956,10 @@ class Remote:
         sfbackend.check_key(key)
         f = self.dir / "objects" / f"{key}@{safe_part(etag)}"
         try:
-            return f.read_bytes()
+            data = f.read_bytes()
+            with contextlib.suppress(OSError):
+                os.utime(f)  # 최근에 쓴 것 — trim 이 오래 안 쓴 것부터 지운다
+            return data
         except FileNotFoundError:
             pass
         r = self.be.get(key)
@@ -893,8 +969,11 @@ class Remote:
         f = self.dir / "objects" / f"{key}@{safe_part(got)}"
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_name(f".tmp-{os.getpid()}-{os.urandom(4).hex()}")
-        tmp.write_bytes(data)
-        os.replace(tmp, f)
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, f)
+        except FileNotFoundError:  # 그사이 누가 디렉토리를 치웠다 — 캐시는 못 남겨도 받은 내용은 준다
+            return data
         name = key.rsplit("/", 1)[-1]
         for old in f.parent.glob(f"{glob_escape(name)}@*"):  # 같은 key 의 예전 버전
             if old != f:
@@ -917,6 +996,31 @@ class Remote:
                 pass
         flag.parent.mkdir(parents=True, exist_ok=True)
         flag.touch()
+
+    def trim(self, cap_mb=None) -> int:
+        """읽은 object 캐시가 상한(HBRNESS_LOG_CACHE_MB, 기본 512)을 넘으면 오래 안 쓴 것부터 상한의 80% 까지
+        지운다 (색인 index.sqlite 는 두고). 반환: 지운 파일 수."""
+        cap = (cap_mb if cap_mb is not None else env_int("HBRNESS_LOG_CACHE_MB", CACHE_MB)) * 1024 * 1024
+        files = []
+        for f in (self.dir / "objects").rglob("*"):
+            if f.name.startswith(".tmp-"):  # 다른 명령이 쓰는 중인 파일
+                continue
+            with contextlib.suppress(OSError):
+                if f.is_file():
+                    st = f.stat()
+                    files.append((st.st_mtime, st.st_size, f))
+        total = sum(size for _, size, _ in files)
+        removed = 0
+        if total <= cap:
+            return 0
+        for _, size, f in sorted(files, key=lambda x: x[0]):
+            with contextlib.suppress(OSError):
+                f.unlink()
+                total -= size
+                removed += 1
+            if total <= cap * 0.8:
+                break
+        return removed
 
     def sessions(self, repo_key, tool=None) -> list:
         """meta 목록 (최근 갱신 순). repo_key 가 None 이면 모든 저장소. logs/_meta/ 만 LIST 한다."""
@@ -1077,6 +1181,8 @@ class Index:
         with self.write(modify=True):  # 세션 하나를 한 트랜잭션으로 — 도중에 끊겨도 반쯤 넣은 세션이 남지 않는다
             self._drop(d)
             for e in events:
+                if e["role"] == "unknown":
+                    continue
                 text = utf8(e["text"])
                 ftext = fold(text)
                 cur = self.db.execute("INSERT INTO ev(dir, role, name, text, ftext) VALUES(?, ?, ?, ?, ?)",
@@ -1161,11 +1267,27 @@ def meta_line(m: dict) -> str:
     return (f"{(m.get('updated') or '')[:16]}  {m.get('tool', '?'):<6}  {m.get('session_id')}  "
             f"{where}{m.get('branch') or '-'} · {m.get('host') or '-'} · {seg}seg"
             + (f" · {m['generation']}세대" if isinstance(m.get("generation"), int) and m["generation"] > 1 else "")
-            + (" · 진행 중" if not m.get("ended") else "") + (f"\n    {m['title']}" if m.get("title") else ""))
+            + liveness(m) + (f"\n    {m['title']}" if m.get("title") else ""))
+
+
+def liveness(m: dict) -> str:
+    """끝났다는 기록이 없으면 진행 중. 그런데 STALE_HOURS 동안 아무것도 올라오지 않았으면 세션 끝 훅이 오지 못한 채
+    끊긴 것으로 본다 (터미널을 닫았거나 PC 가 꺼졌거나 — 추정이다)."""
+    if m.get("ended"):
+        return ""
+    quiet = dt.datetime.now(dt.timezone.utc) - instant(m.get("updated"))
+    return " · 끊김(추정)" if quiet > dt.timedelta(hours=STALE_HOURS) else " · 진행 중"
 
 
 def cmd_list(a):
     remote, repo_key = open_remote(a)
+    try:
+        _list(a, remote, repo_key)
+    finally:
+        remote.trim()
+
+
+def _list(a, remote, repo_key):
     metas = remote.sessions(repo_key, a.tool)[:a.limit]
     if a.json:
         print(json.dumps([{k: v for k, v in m.items() if not k.startswith("_")} for m in metas],
@@ -1179,6 +1301,13 @@ def cmd_list(a):
 
 def cmd_show(a):
     remote, repo_key = open_remote(a)
+    try:
+        _show(a, remote, repo_key)
+    finally:
+        remote.trim()
+
+
+def _show(a, remote, repo_key):
     meta = find_session(remote, repo_key, a.session)
     data = remote.raw(meta)
     events = events_from(meta.get("tool") or "", meta.get("format") or "", data)
@@ -1190,6 +1319,9 @@ def cmd_show(a):
                 f"host: {meta.get('host') or '-'}\n> {meta.get('started') or '?'} → "
                 f"{meta.get('ended') or meta.get('updated') or '진행 중'}\n\n")
         body = head + render(events, tools=not a.no_tools, full=a.full)
+        skipped = unknown_summary(events)
+        if skipped:
+            body += f"\n> 읽지 못한 레코드: {skipped} — 도구가 transcript 형식을 바꿨을 수 있다 (--raw 로 원본을 본다)\n"
     if a.out:
         Path(a.out).expanduser().write_text(body, encoding="utf-8")
         turns = sum(1 for e in events if e["role"] == "user")
@@ -1200,6 +1332,13 @@ def cmd_show(a):
 
 def cmd_search(a):
     remote, repo_key = open_remote(a)
+    try:
+        _search(a, remote, repo_key)
+    finally:
+        remote.trim()
+
+
+def _search(a, remote, repo_key):
     if a.regex:
         try:
             re.compile(a.query)
@@ -1232,6 +1371,49 @@ def cmd_search(a):
         if hits >= a.limit:
             break
     print(f"SEARCH={hits}개 세션 (최근 {a.days}일, {repo_key or '모든 저장소'})")
+
+
+def cmd_status(a):
+    """이 PC 의 수집 현황. 뒤에서 조용히 도는 수집기가 제대로 도는지 볼 때."""
+    try:
+        be = sfstate.load_backend()
+        print(f"BACKEND={be.describe() if be else 'none (sfstate.py init --backend … 로 정한다)'}")
+    except sfbackend.BackendError as e:
+        print(f"BACKEND=error ({e})")
+    states = []
+    for f in sorted((logs_home() / "sessions").glob("*.json")):
+        with contextlib.suppress(OSError, ValueError):
+            st = json.loads(f.read_text(encoding="utf-8"))
+            if isinstance(st, dict):
+                states.append((f.stem, st))
+    now = dt.datetime.now(dt.timezone.utc)
+    live = [s for s in states if not s[1].get("ended") and now - instant(s[1].get("updated")) < dt.timedelta(hours=STALE_HOURS)]
+    print(f"SESSIONS={len(states)} (진행 중 {len(live)})")
+    waiting = []
+    for name, st in states:
+        pending = int(st.get("pending_bytes") or 0)
+        src = Path(st["source"]) if st.get("source") else None
+        if src and src.suffix == ".jsonl" and "offset" in st:
+            with contextlib.suppress(OSError):
+                pending = max(pending, src.stat().st_size - int(st.get("offset", 0)))
+        if pending > 0 or st.get("meta_dirty"):
+            waiting.append((name, pending, bool(st.get("meta_dirty"))))
+    print(f"WAITING={len(waiting)}" + (" (아직 안 올린 내용 — 다음 turn 끝이나 세션 끝에 올린다)" if waiting else ""))
+    for name, pending, dirty in waiting[:10]:
+        print(f"  {name}: {pending}B" + (" · meta 다시 쓸 차례" if dirty else ""))
+    last = max((instant(st.get("updated")) for _, st in states if st.get("updated")), default=None)
+    print(f"LAST_COLLECT={last.astimezone().isoformat(timespec='seconds') if last else '-'}")
+    fails = []
+    with contextlib.suppress(OSError):
+        for line in (logs_home() / "collect.log").read_text(encoding="utf-8", errors="replace").splitlines():
+            ts = line.split(" ", 1)[0]
+            if now - instant(ts) < dt.timedelta(hours=24):
+                fails.append(line)
+    print(f"FAILURES_24H={len(fails)}" + (f" ({logs_home() / 'collect.log'})" if fails else ""))
+    for line in fails[-3:]:
+        print(f"  {line[:300]}")
+    print(f"AGE={sfbackend.which('age') or 'none'}")
+    print(f"GITLEAKS={sfbackend.which('gitleaks') or 'none (있으면 가린 결과를 한 번 더 훑는다)'}")
 
 
 def cmd_save(a):
@@ -1293,6 +1475,7 @@ def main(argv=None):
     sp.add_argument("--regex", action="store_true")
     sp.add_argument("--limit", type=int, default=20)
     sp.set_defaults(fn=cmd_search)
+    sub.add_parser("status").set_defaults(fn=cmd_status)
     sp = sub.add_parser("save")
     sp.add_argument("--title", required=True)
     sp.add_argument("--dir", default=None)

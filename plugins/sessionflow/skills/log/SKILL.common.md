@@ -1,6 +1,6 @@
 ---
 name: log
-description: "코딩 에이전트 대화 기록을 찾아본다. sessionflow 훅이 Claude Code / Codex / Grok / Devin 의 transcript 를 비밀값을 가려 backend 에 모아 두는데, 이 스킬은 그 기록을 도구·PC 와 상관없이 같은 형식으로 목록·열람·검색하고, 훅이 없는 곳(웹 채팅 등)의 대화는 요약을 남긴다. 사용자가 '대화 기록', '로그 보여줘', '지난 세션', '예전에 뭐라고 했지', '어제 무슨 얘기했지', 'codex 랑 한 대화', '대화 검색', '대화 저장', '이 대화 남겨줘', 'log', '/log' 등을 말하면 트리거. Usage: /log [list | show <session> | search <검색어> | save [제목]]"
+description: "코딩 에이전트 대화 기록을 찾아본다. sessionflow 훅이 Claude Code / Codex / Grok / Devin 의 transcript 를 비밀값을 가려 backend 에 모아 두는데, 이 스킬은 그 기록을 도구·PC 와 상관없이 같은 형식으로 목록·열람·검색하고, 훅이 없는 곳(웹 채팅 등)의 대화는 요약을 남긴다. 사용자가 '대화 기록', '로그 보여줘', '지난 세션', '예전에 뭐라고 했지', '어제 무슨 얘기했지', 'codex 랑 한 대화', '대화 검색', '대화 저장', '이 대화 남겨줘', '대화 기록이 안 모이는 것 같아', 'log', '/log' 등을 말하면 트리거. Usage: /log [list | show <session> | search <검색어> | save [제목] | status]"
 model: sonnet
 ---
 
@@ -14,6 +14,7 @@ sessionflow 훅은 turn 이 끝날 때마다·세션이 끝날 때 각 도구의
 | 세션 하나 열람 | `show <session>` |
 | 대화 내용 검색 | `search <검색어>` |
 | 훅이 없는 곳의 대화를 남기기 | `save [제목]` |
+| 이 PC 의 수집이 잘 되는지 | `status` |
 
 ## 스크립트
 
@@ -27,6 +28,9 @@ python3 "${SKILL_DIR}/../../scripts/sflog.py"
 - `LOG show <session> [--no-tools] [--full] [--out <파일>]` — session id 앞부분만 적어도 된다. 형식은 `### user` / `### assistant` 문단, 도구 호출은 `→ 이름: 입력`, 결과는 `← 결과`. 도구 입력은 300자, 결과는 500자에서 자른다(`--full` 이면 안 자른다). `--no-tools` 는 대화만.
 - `LOG search <검색어> [--days N] [--regex] [--tool T] [--all-repos]` — 최근 N일(기본 30) 세션에서 찾는다. 세션마다 맞는 곳을 5개까지 앞뒤 80자로 보여준다. 대소문자는 가리지 않는다. 처음 찾을 때는 기간 안의 세션을 로컬 색인에 넣느라 오래 걸리고, 그다음부터는 바뀐 세션만 넣는다.
 - `LOG save --title "<제목>" --file <파일>` — 파일 내용을 `manual` 기록으로 올린다. 비밀값은 스크립트가 가린다.
+- `LOG status` — 이 PC 의 수집 현황: `BACKEND=`, `SESSIONS=`, `WAITING=`(아직 안 올린 세션과 양), `LAST_COLLECT=`, `FAILURES_24H=`(최근 실패 3줄), `AGE=`, `GITLEAKS=`.
+
+list 의 `· 진행 중` 은 끝났다는 기록이 없는 세션이고, `· 끊김(추정)` 은 그런데 12시간 넘게 아무것도 올라오지 않은 세션이다 (터미널을 닫았거나 PC 가 꺼져 세션 끝 훅이 오지 못했다고 본다). 훅은 작은 turn 을 모아서(64KB 또는 5분) 올리므로 진행 중인 세션의 마지막 몇 turn 은 아직 안 보일 수 있다 — 세션이 끝나면 다 올라간다. show 끝에 `> 읽지 못한 레코드: …` 가 붙으면 도구가 transcript 형식을 바꿔 일부를 못 읽은 것이다 — 사용자에게 그대로 알린다.
 
 기본 범위는 **현재 저장소**(origin remote 로 가린다)다. 다른 저장소의 기록이면 `--all-repos` 를 붙인다.
 
@@ -42,6 +46,7 @@ python3 "${SKILL_DIR}/../../scripts/sflog.py"
 - `show <session>` 또는 사용자가 특정 세션을 보자고 함 → **show**
 - `search <말>` 또는 "예전에 X 얘기했던 거", "어디서 Y 했더라" → **search**
 - `save [제목]` 또는 "이 대화 남겨줘" → **save**
+- `status` 또는 "기록이 안 모이는 것 같아", "수집 되고 있어?" → **status** — `LOG status` 출력을 보여주고, `FAILURES_24H` 가 0 이 아니면 마지막 실패 줄의 사유를 한 줄로 짚는다.
 
 ## list
 

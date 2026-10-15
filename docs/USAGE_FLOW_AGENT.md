@@ -91,6 +91,7 @@ log             /log [list]                   → sessions of this repo across t
                 /log show <session>           → one session in a common format (### user / ### assistant / → tool / ← result); use --out <file> and read parts
                 /log search <query>           → search recent sessions (--days N, --regex, --tool, --all-repos)
                 /log save [title]             → store a summary for hookless chats (web) as a `manual` record
+                /log status                   → this PC's collection health (pending bytes, last-24h failures from collect.log)
 ```
 
 Storage: followup/handoff live in ~/.hbrness/state/<repo-key>/ synced through an S3-API backend (sfstate.py init --backend s3 …; conditional writes, conflicts set aside in _conflicts/; new stores are age-encrypted, decrypt key ~/.hbrness/age.key copied once per PC, --no-encrypt opts out). Transcripts live only in the backend under logs/. phase-run/phase-loop state stays PC-local.
