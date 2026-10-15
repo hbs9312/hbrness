@@ -1163,6 +1163,26 @@ def logs_lifecycle(logs: str, rules: list) -> str:
     return f"none (WARN: 대화 기록 {logs} 이 계속 쌓인다 — 이 prefix 에 만료(Expiration) 규칙을 거는 게 좋다)"
 
 
+def bucket_settings(be) -> list:
+    """버킷 설정(versioning·lifecycle) 확인. 동기화에 꼭 필요한 건 아니라 읽지 못해도 실패로 치지 않는다 —
+    객체 읽기·쓰기만 준 토큰은 버킷 설정을 못 읽고(403), R2 처럼 versioning 조회가 없는 저장소도 있다."""
+    out = []
+    if hasattr(be, "versioning"):
+        try:
+            v = be.versioning()
+            out.append(f"VERSIONING={v}" + ("" if v == "Enabled" else
+                       " (WARN: 지운 파일·덮어쓴 버전을 되살릴 수 없다 — bucket versioning 을 켜는 게 좋다)"))
+        except sfbackend.BackendError as e:
+            out.append(f"VERSIONING=unknown (확인하지 못했다: {e} — 토큰에 버킷 설정 권한이 없거나 저장소가 지원하지 않는다)")
+    if hasattr(be, "lifecycle_rules"):
+        logs = be.prefix + "logs/"
+        try:
+            out.append("LOGS_LIFECYCLE=" + logs_lifecycle(logs, be.lifecycle_rules()))
+        except sfbackend.BackendError as e:
+            out.append(f"LOGS_LIFECYCLE=unknown (확인하지 못했다: {e} — 저장소 콘솔에서 {logs} 에 만료 규칙이 있는지 본다)")
+    return out
+
+
 def cmd_doctor(a):
     """backend 에 닿는지, conditional write 를 지키는지 확인한다. 실패가 있으면 exit 1."""
     try:
@@ -1230,12 +1250,8 @@ def cmd_doctor(a):
                 failed = True
             except sfbackend.PreconditionFailed:
                 print("DELETE_IF_MATCH=ok")
-        if hasattr(be, "versioning"):
-            v = be.versioning()
-            print(f"VERSIONING={v}" + ("" if v == "Enabled" else
-                  " (WARN: 지운 파일·덮어쓴 버전을 되살릴 수 없다 — bucket versioning 을 켜는 게 좋다)"))
-        if hasattr(be, "lifecycle_rules"):
-            print("LOGS_LIFECYCLE=" + logs_lifecycle(be.prefix + "logs/", be.lifecycle_rules()))
+        for line in bucket_settings(be):
+            print(line)
     except sfbackend.BackendError as e:
         print(f"PROBE=failed ({e})")
         failed = True

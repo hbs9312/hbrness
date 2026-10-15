@@ -583,7 +583,7 @@ class S3Backend(Backend):
             return []
         if status != 200:
             raise self._error(status, body, "lifecycle 확인")
-        root = ET.fromstring(body)
+        root = _xml(body, "lifecycle 확인")
         for el in root.iter():
             el.tag = el.tag.rsplit("}", 1)[-1]
         out = []
@@ -605,7 +605,7 @@ class S3Backend(Backend):
         status, _, body = self._request("GET", params={"versioning": ""})
         if status != 200:
             raise self._error(status, body, "versioning 확인")
-        root = ET.fromstring(body)
+        root = _xml(body, "versioning 확인")
         for el in root.iter():
             el.tag = el.tag.rsplit("}", 1)[-1]
         return root.findtext("Status") or "Off"
@@ -641,6 +641,13 @@ def location(cfg: dict) -> str:
         host += f":{port}"
     prefix = (cfg.get("prefix") or "").strip("/")
     return f"s3:{u.scheme}://{host}{u.path.rstrip('/')}/{cfg.get('bucket')}/{prefix + '/' if prefix else ''}"
+
+
+def _xml(body: bytes, what: str):
+    try:
+        return ET.fromstring(body)
+    except ET.ParseError as e:
+        raise BackendError(f"{what}: 응답을 읽지 못했다 ({e})") from None
 
 
 CRED_KEYS = ("access_key_id", "secret_access_key", "session_token")

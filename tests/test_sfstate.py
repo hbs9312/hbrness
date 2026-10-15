@@ -1085,6 +1085,33 @@ class EncryptedS3BackendTests(S3BackendTests):
         self.assertIn('SEALED=ok', self.run_sf('doctor', pc='a'))
 
 
+class BucketSettingsTests(unittest.TestCase):
+    """doctor 의 버킷 설정 확인은 읽지 못해도 실패가 아니라 unknown — R2 + 객체 권한 토큰이 그렇다."""
+
+    def backend(self, status, body=b''):
+        sfbackend = sfstate.sfbackend
+
+        class Fake(sfbackend.S3Backend):
+            def _request(self, method, key='', params=None, body_=b'', extra=None, **k):
+                return status, {}, body
+        return Fake({'type': 's3', 'bucket': 'b', 'endpoint': 'http://x', 'prefix': 'p'},
+                    {'access_key_id': 'k', 'secret_access_key': 's'})
+
+    def test_denied_or_unsupported_is_unknown(self):
+        denied = b'<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>'
+        for status, body in ((403, denied), (501, b'<Error><Code>NotImplemented</Code></Error>'), (200, b'not xml')):
+            lines = sfstate.bucket_settings(self.backend(status, body))
+            self.assertEqual([l.split('=', 1)[0] for l in lines], ['VERSIONING', 'LOGS_LIFECYCLE'], status)
+            self.assertTrue(all('=unknown (' in l for l in lines), lines)
+
+    def test_readable_settings_are_reported(self):
+        body = (b'<LifecycleConfiguration><Rule><Status>Enabled</Status><Filter><Prefix>p/logs/</Prefix></Filter>'
+                b'<Expiration><Days>180</Days></Expiration></Rule><Status>Enabled</Status></LifecycleConfiguration>')
+        lines = sfstate.bucket_settings(self.backend(200, body))
+        self.assertTrue(lines[0].startswith('VERSIONING=Enabled'))
+        self.assertTrue(lines[1].startswith("LOGS_LIFECYCLE=ok ('p/logs/')"), lines[1])
+
+
 class MigrateTests(Env):
     def legacy(self, pc='a'):
         d = self.base / f'pc-{pc}' / 'sessionflow' / str(self.project).replace('/', '-')
