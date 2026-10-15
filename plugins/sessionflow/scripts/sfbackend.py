@@ -27,6 +27,12 @@ s3 자격증명은 backend.json 옆의 credentials.json(mode 600)에 둔다:
 
 저장소마다 표시 object(<prefix>.sfbackend, local 은 <dir>/.sfbackend)에 저장소 ID 를 적어 둔다.
 표시가 없으면 원격에 닿지 못한 것으로 보고 실패한다. manifest 는 이 ID 에 묶인다.
+  {"id": "<uuid>", "encryption": {"type": "age", "recipients": ["age1…"]}}   (1.2 까지는 ID 한 줄)
+
+암호화: 저장소를 만들 때(init) 표시에 age 공개키를 적으면 그 저장소의 object 는 모두 age 로 암호화해 올리고
+풀어서 읽는다 (표시만 평문). 암호화는 공개키로 하고, 푸는 키는 backend.json 옆의 age.key(mode 600)에 둔다 —
+자격증명처럼 PC 마다 한 번 복사한다. init 이 같은 설정을 backend.json 의 "encryption" 에도 적고, 이후에는
+매번 표시와 맞춰 본다. 누가 표시를 고쳐 암호화를 빼거나 공개키를 바꿔치기하면 올리지 않고 실패한다.
 """
 
 from __future__ import annotations
@@ -39,7 +45,10 @@ import json
 import os
 import hmac
 import http.client
+import re
+import shutil
 import socket
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -51,6 +60,10 @@ REMOTE_PREFIX = "repos/"
 CONFLICT_DIR = "_conflicts"
 META_DIR = ".sfstate"
 SKIP_FILES = {"INDEX.md"}
+AGE_MAGIC = b"age-encryption.org/"  # age 로 암호화한 내용의 첫 줄
+AGE_RECIPIENT = re.compile(r"age1[0-9a-z]{20,}")
+# GUI 로 띄운 에이전트의 훅은 PATH 가 짧다 — PATH 에 없으면 흔한 설치 자리도 본다
+TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin")
 
 
 class BackendError(Exception):
@@ -79,40 +92,201 @@ def check_key(key: str):
         raise BackendError(f"잘못된 key: {key!r}")
 
 
+def which(name: str):
+    return shutil.which(name) or next((f"{d}/{name}" for d in TOOL_DIRS if os.access(f"{d}/{name}", os.X_OK)), None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 저장소 표시 · 암호화
+# ─────────────────────────────────────────────────────────────────────────────
+
+def new_marker(encryption=None) -> bytes:
+    doc = {"id": uuid.uuid4().hex}
+    if encryption:
+        doc["encryption"] = encryption
+    return (json.dumps(doc) + "\n").encode()
+
+
+def parse_marker(raw: bytes) -> dict:
+    """저장소 표시 → {"id", "encryption"(있으면)}. 1.2 까지 만든 표시는 ID 한 줄이다."""
+    text = raw.decode("utf-8", "replace").strip()
+    doc = None
+    if text.startswith("{"):
+        with contextlib.suppress(ValueError):
+            doc = json.loads(text)
+    elif text:
+        doc = {"id": text.splitlines()[0].strip()}
+    if not isinstance(doc, dict) or not isinstance(doc.get("id"), str) or not doc["id"]:
+        raise BackendError(f"저장소 표시({text[:60]!r})를 읽지 못했다 — init 을 다시 한다")
+    return doc
+
+
+def run_tool(args, data: bytes = b"") -> bytes:
+    exe = which(args[0])
+    if not exe:
+        raise BackendError(f"{args[0]} 가 없다 — age 를 설치한다 (brew install age · apt install age)")
+    try:
+        p = subprocess.run([exe, *args[1:]], input=data, capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise BackendError(f"{args[0]} 를 돌리지 못했다: {e}") from None
+    if p.returncode != 0:
+        err = p.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise BackendError(f"{args[0]}: {err[0] if err else f'exit {p.returncode}'}")
+    return p.stdout
+
+
+def public_keys(key_path: Path) -> list:
+    return run_tool(["age-keygen", "-y", str(key_path)]).decode().split()
+
+
+def make_key(key_path: Path) -> str:
+    """age.key 가 없으면 만든다 (age-keygen 이 mode 600 으로 쓰고, 있는 파일은 덮어쓰지 않는다). 반환: 공개키."""
+    if not key_path.exists():
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        run_tool(["age-keygen", "-o", str(key_path)])
+    keys = public_keys(key_path)
+    if not keys:
+        raise BackendError(f"{key_path} 에 age 키가 없다")
+    return keys[0]
+
+
+class Age:
+    """age CLI 로 object 내용을 암호화한다. 암호화는 표시에 적힌 공개키로만 하므로 키를 아직 복사하지 않은 PC 도
+    올릴 수는 있고, 읽을 때 이 PC 의 age.key 가 필요하다."""
+
+    def __init__(self, encryption, key_path: Path | None):
+        enc = encryption if isinstance(encryption, dict) else {}
+        recipients = enc.get("recipients")
+        if enc.get("type") != "age" or not isinstance(recipients, list) or not recipients or not all(
+                isinstance(r, str) and AGE_RECIPIENT.fullmatch(r) for r in recipients):
+            raise BackendError(f"모르는 암호화 설정: {encryption!r}")
+        self.recipients = recipients
+        self.key_path = key_path
+        self._key_ok = False
+
+    def seal(self, data: bytes) -> bytes:
+        args = ["age"]
+        for r in self.recipients:
+            args += ["-r", r]
+        return run_tool(args, data)
+
+    def check_key(self):
+        """이 PC 의 키가 있고 저장소 공개키와 짝이 맞는지. 아니면 할 일을 적은 BackendError."""
+        if self._key_ok:
+            return
+        if self.key_path is None or not self.key_path.is_file():
+            raise BackendError(f"이 저장소는 age 로 암호화돼 있는데 이 PC 에 키({self.key_path or 'age.key'})가 없다 — "
+                               "저장소를 만든 PC 의 age.key 를 같은 자리에 복사한다 (mode 600)")
+        if not set(public_keys(self.key_path)) & set(self.recipients):
+            raise BackendError(f"{self.key_path} 는 이 저장소의 키가 아니다 (저장소 공개키: {', '.join(self.recipients)})"
+                               " — 저장소를 만든 PC 의 age.key 로 바꾼다")
+        self._key_ok = True
+
+    def open(self, data: bytes, key: str) -> bytes:
+        self.check_key()
+        try:
+            return run_tool(["age", "-d", "-i", str(self.key_path)], data)
+        except BackendError as e:
+            raise BackendError(f"{key} 를 풀지 못했다 ({e})") from None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # backend
 # ─────────────────────────────────────────────────────────────────────────────
 
-class LocalBackend:
+class Backend:
+    """LocalBackend·S3Backend 공통. 저장소 표시를 읽고, 표시가 age 암호화를 정했으면 object 를 암호화해 올리고
+    풀어서 읽는다. 각 backend 는 내용을 그대로 다루는 read_marker / get_raw / put_raw 를 만든다."""
+
+    MARKER = ".sfbackend"
+    encryption = None  # backend.json 의 "encryption" — 표시와 다르면 쓰지도 읽지도 않는다
+    key_path = None    # 푸는 키 (age.key)
+    _marker = None
+    _cipher = None
+
+    def marker(self) -> dict:
+        """표시는 명령 하나에서 한 번만 읽는다 — put/get 마다 다시 받지 않게."""
+        if self._marker is None:
+            raw = self.read_marker()
+            if raw is None:
+                raise BackendError(f"{self.describe()} 에 저장소 표시({self.MARKER})가 없다 — "
+                                   "옮겼거나 지웠으면 init 을 다시 한다")
+            self._marker = parse_marker(raw)
+        return self._marker
+
+    def identity(self) -> str:
+        """manifest 가 가리키는 저장소. 같은 자리라도 저장소를 새로 만들었으면 달라진다."""
+        return f"{self.describe()}#{self.marker()['id']}"
+
+    def cipher(self):
+        """이 저장소의 암호화. 없으면 None."""
+        declared = self.marker().get("encryption")
+        if declared != self.encryption:
+            if not self.encryption:
+                raise BackendError("저장소가 age 로 암호화돼 있는데 이 PC 의 backend.json 에는 그 설정이 없다 — "
+                                   "init 을 다시 한다 (저장소를 만든 PC 의 age.key 를 먼저 복사한다)")
+            raise BackendError("저장소 표시의 암호화 설정이 이 PC 의 backend.json 에 적어 둔 것과 다르다 — 누가 왜 "
+                               "바꿨는지 확인한다. 맞게 바꾼 것이면 init --accept-encryption-change 로 다시 한다")
+        if declared and self._cipher is None:
+            self._cipher = Age(declared, self.key_path)
+        return self._cipher
+
+    def put(self, key: str, data: bytes, if_match: str | None = None, if_none_match: bool = False) -> str:
+        c = self.cipher()
+        return self.put_raw(key, c.seal(data) if c else data, if_match=if_match, if_none_match=if_none_match)
+
+    def get(self, key: str):
+        """(내용, etag) 또는 None. etag 는 올라간 그대로(암호문)의 것이다. 암호화한 저장소에서 암호문이 아닌
+        object 는 받지 않는다 — 망가졌거나 누가 넣은 내용이 로컬 사본을 덮지 않게."""
+        r = self.get_raw(key)
+        c = self.cipher() if r else None
+        if not c:
+            return r
+        if not r[0].startswith(AGE_MAGIC):
+            raise BackendError(f"{key} 가 암호문이 아니다 — 암호화한 저장소에 평문 object 가 있다 "
+                               "(망가졌거나 누가 넣었는지 확인한다)")
+        return c.open(r[0], key), r[1]
+
+
+class LocalBackend(Backend):
     """디렉토리 하나를 원격처럼 쓴다. etag 는 내용의 sha256 이다.
     conditional write 는 디렉토리의 .lock 을 flock 으로 잡고 확인과 쓰기를 한 번에 한다.
     init 이 표시 파일(.sfbackend)을 만들고 저장소 ID 를 적는다. 표시 파일이 없으면 디렉토리가 옮겨졌거나
     빠진 것으로 보고 실패한다 — 빈 목록으로 읽으면 pull 이 로컬 사본을 전부 지운다. 같은 경로에 저장소를
     새로 만들면 ID 가 달라져서 예전 manifest 를 버린다 (identity)."""
 
-    MARKER = ".sfbackend"
-
     def __init__(self, path):
         self.root = Path(path).expanduser()
 
     def describe(self) -> str:
-        return f"local:{os.path.abspath(self.root)}"
+        return location({"type": "local", "path": str(self.root)})
 
-    def ensure(self):
-        """init 에서만 부른다. 원격 디렉토리를 만들고, 표시 파일이 없으면 새 저장소 ID 로 만든다."""
+    def ensure(self, encryption=None) -> dict:
+        """init 에서만 부른다. 원격 디렉토리를 만들고, 표시 파일이 없으면 새 저장소로 만든다. 반환: 표시 내용."""
         self.root.mkdir(parents=True, exist_ok=True)
         marker = self.root / self.MARKER
-        if not marker.is_file() or not marker.read_text(encoding="utf-8").strip():
-            marker.write_text(uuid.uuid4().hex + "\n", encoding="utf-8")
+        # 두 PC 가 같은 때 만들어도 표시는 하나다 — 먼저 만든 쪽의 ID·공개키를 둘 다 쓴다
+        with open(self.root / ".lock", "w") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                if not marker.is_file() or not marker.read_bytes().strip():
+                    tmp = marker.with_name(f".tmp-{os.getpid()}-{self.MARKER}")
+                    tmp.write_bytes(new_marker(encryption))
+                    os.replace(tmp, marker)
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+        self._marker = self._cipher = None
+        return self.marker()
 
     def _check(self):
         if not (self.root / self.MARKER).is_file():
             raise BackendError(f"원격 디렉토리 {self.root} 에 닿을 수 없다 (옮겼거나 빠졌으면 init 을 다시 한다)")
 
-    def identity(self) -> str:
-        """manifest 가 가리키는 저장소. 경로가 같아도 저장소를 새로 만들었으면 달라진다."""
-        self._check()
-        return f"{self.describe()}#{(self.root / self.MARKER).read_text(encoding='utf-8').strip()}"
+    def read_marker(self):
+        try:
+            return (self.root / self.MARKER).read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
+            return None
 
     @contextlib.contextmanager
     def _lock(self):
@@ -139,7 +313,7 @@ class LocalBackend:
                 out[f.relative_to(self.root).as_posix()] = sha256(f.read_bytes())
         return out
 
-    def get(self, key: str):
+    def get_raw(self, key: str):
         self._check()
         try:
             data = self._path(key).read_bytes()
@@ -148,10 +322,10 @@ class LocalBackend:
         return data, sha256(data)
 
     def stat(self, key: str):
-        r = self.get(key)
+        r = self.get_raw(key)
         return r[1] if r else None
 
-    def put(self, key: str, data: bytes, if_match: str | None = None, if_none_match: bool = False) -> str:
+    def put_raw(self, key: str, data: bytes, if_match: str | None = None, if_none_match: bool = False) -> str:
         p = self._path(key)
         with self._lock():
             cur = self.stat(key)
@@ -179,11 +353,10 @@ class LocalBackend:
             return True
 
 
-class S3Backend:
+class S3Backend(Backend):
     """S3 API 저장소. ETag 를 etag 로 쓰고, PutObject 의 If-Match / If-None-Match 로 conditional write 를 한다.
     DeleteObject 는 If-Match 를 보내되, 지원하지 않는 저장소도 있어 HEAD 로 먼저 etag 를 확인한다."""
 
-    MARKER = ".sfbackend"
     TIMEOUT = 30
     page_size = None  # ListObjectsV2 max-keys. None 이면 저장소 기본값(보통 1000). 테스트가 줄인다.
 
@@ -197,19 +370,17 @@ class S3Backend:
         prefix = (cfg.get("prefix") or "").strip("/")
         self.prefix = prefix + "/" if prefix else ""
         self.region = cfg.get("region") or "us-east-1"
-        endpoint = cfg.get("endpoint") or f"https://s3.{self.region}.amazonaws.com"
-        u = urllib.parse.urlsplit(endpoint)
-        if u.scheme not in ("http", "https") or not u.netloc:
-            raise BackendError(f"잘못된 endpoint: {endpoint!r}")
+        u = s3_endpoint(cfg)
         self.scheme = u.scheme
         self.base_path = u.path.rstrip("/")
         self.path_style = bool(cfg.get("path_style", bool(cfg.get("endpoint"))))
         self.host = u.netloc if self.path_style else f"{self.bucket}.{u.netloc}"
         self.endpoint = f"{u.scheme}://{u.netloc}{self.base_path}"
         self.creds = creds
+        self._location = location({**cfg, "type": "s3"})
 
     def describe(self) -> str:
-        return f"s3:{self.endpoint}/{self.bucket}/{self.prefix}"
+        return self._location
 
     # ── 서명·요청 ──────────────────────────────────────────────────────────
 
@@ -284,19 +455,20 @@ class S3Backend:
 
     # ── backend 인터페이스 ─────────────────────────────────────────────────
 
-    def ensure(self):
-        """init 에서만 부른다. bucket 에 닿는지 보고, 표시 object 가 없으면 새 저장소 ID 로 만든다."""
+    def ensure(self, encryption=None) -> dict:
+        """init 에서만 부른다. bucket 에 닿는지 보고, 표시 object 가 없으면 새 저장소로 만든다. 반환: 표시 내용.
+        같은 때 다른 PC 가 먼저 만들었으면 그쪽 표시가 남는다."""
         self.list("", limit=1)
         try:
-            self._put_raw(self.prefix + self.MARKER, (uuid.uuid4().hex + "\n").encode(), if_none_match=True)
+            self._put_full(self.prefix + self.MARKER, new_marker(encryption), if_none_match=True)
         except PreconditionFailed:
             pass
+        self._marker = self._cipher = None
+        return self.marker()
 
-    def identity(self) -> str:
-        r = self._get_raw(self.prefix + self.MARKER)
-        if r is None:
-            raise BackendError(f"{self.describe()} 에 저장소 표시({self.MARKER})가 없다 — 지웠거나 다른 곳이면 init 을 다시 한다")
-        return f"{self.describe()}#{r[0].decode('utf-8', 'replace').strip()}"
+    def read_marker(self):
+        r = self._get_full(self.prefix + self.MARKER)
+        return r[0] if r else None
 
     def list(self, prefix: str, limit: int | None = None) -> dict:
         out, token = {}, None
@@ -334,7 +506,7 @@ class S3Backend:
             if not token:
                 raise BackendError(f"목록 {full}: 다음 페이지가 있다는데 NextContinuationToken 이 없다")
 
-    def _get_raw(self, full_key: str):
+    def _get_full(self, full_key: str):
         status, headers, body = self._request("GET", full_key)
         if status == 404:
             return None
@@ -342,9 +514,9 @@ class S3Backend:
             raise self._error(status, body, f"읽기 {full_key}")
         return body, self._etag(headers)
 
-    def get(self, key: str):
+    def get_raw(self, key: str):
         check_key(key)
-        return self._get_raw(self.prefix + key)
+        return self._get_full(self.prefix + key)
 
     def stat(self, key: str):
         check_key(key)
@@ -355,7 +527,7 @@ class S3Backend:
             raise self._error(status, body, f"확인 {key}")
         return self._etag(headers)
 
-    def _put_raw(self, full_key: str, data: bytes, if_match=None, if_none_match=False) -> str:
+    def _put_full(self, full_key: str, data: bytes, if_match=None, if_none_match=False) -> str:
         extra = {"Content-Type": "application/octet-stream"}
         if if_none_match:
             extra["If-None-Match"] = "*"
@@ -369,9 +541,9 @@ class S3Backend:
             raise PreconditionFailed(full_key)
         raise self._error(status, body, f"쓰기 {full_key}")
 
-    def put(self, key: str, data: bytes, if_match: str | None = None, if_none_match: bool = False) -> str:
+    def put_raw(self, key: str, data: bytes, if_match: str | None = None, if_none_match: bool = False) -> str:
         check_key(key)
-        return self._put_raw(self.prefix + key, data, if_match=if_match, if_none_match=if_none_match)
+        return self._put_full(self.prefix + key, data, if_match=if_match, if_none_match=if_none_match)
 
     def delete_request(self, key: str, if_match: str | None = None) -> int:
         """DeleteObject 를 그대로 보낸다 (doctor 가 If-Match 지원을 확인할 때 쓴다). 반환: HTTP status."""
@@ -429,6 +601,38 @@ class S3Backend:
         return root.findtext("Status") or "Off"
 
 
+def s3_endpoint(cfg: dict):
+    region = cfg.get("region") or "us-east-1"
+    endpoint = cfg.get("endpoint") or f"https://s3.{region}.amazonaws.com"
+    u = urllib.parse.urlsplit(endpoint)
+    if u.scheme not in ("http", "https") or not u.netloc:
+        raise BackendError(f"잘못된 endpoint: {endpoint!r}")
+    return u
+
+
+def location(cfg: dict) -> str:
+    """설정이 가리키는 저장소 자리 (describe() 의 값). 같은 자리를 다르게 적어도 — 끝의 '/', host 대소문자,
+    기본 포트, 기본 endpoint 를 적었는지 — 같게 나온다. init 이 이 PC 가 쓰던 저장소인지 볼 때도 쓴다."""
+    kind = cfg.get("type")
+    if kind == "local":
+        if not cfg.get("path"):
+            raise BackendError("local backend 에 path 가 없다")
+        return f"local:{os.path.abspath(Path(cfg['path']).expanduser())}"
+    if kind != "s3":
+        raise BackendError(f"모르는 backend type: {kind!r}")
+    u = s3_endpoint(cfg)
+    try:
+        port = u.port
+    except ValueError as e:
+        raise BackendError(f"잘못된 endpoint: {e}") from None
+    host = u.hostname or ""
+    host = f"[{host}]" if ":" in host else host
+    if port and port != {"http": 80, "https": 443}[u.scheme]:
+        host += f":{port}"
+    prefix = (cfg.get("prefix") or "").strip("/")
+    return f"s3:{u.scheme}://{host}{u.path.rstrip('/')}/{cfg.get('bucket')}/{prefix + '/' if prefix else ''}"
+
+
 CRED_KEYS = ("access_key_id", "secret_access_key", "session_token")
 
 
@@ -456,15 +660,19 @@ def load_credentials(path: Path | None) -> dict:
     return {k: str(v) for k, v in data.items() if k in CRED_KEYS and v}
 
 
-def make_backend(cfg: dict, creds_path: Path | None = None):
+def make_backend(cfg: dict, creds_path: Path | None = None, key_path: Path | None = None):
     kind = cfg.get("type")
     if kind == "local":
         if not cfg.get("path"):
             raise BackendError("local backend 에 path 가 없다")
-        return LocalBackend(cfg["path"])
-    if kind == "s3":
-        return S3Backend(cfg, load_credentials(creds_path))
-    raise BackendError(f"모르는 backend type: {kind!r}")
+        be = LocalBackend(cfg["path"])
+    elif kind == "s3":
+        be = S3Backend(cfg, load_credentials(creds_path))
+    else:
+        raise BackendError(f"모르는 backend type: {kind!r}")
+    be.encryption = cfg.get("encryption") or None
+    be.key_path = key_path
+    return be
 
 
 def load_config(path: Path):
@@ -484,9 +692,13 @@ def credentials_file(config_path: Path) -> Path:
     return config_path.with_name("credentials.json")
 
 
+def key_file(config_path: Path) -> Path:
+    return config_path.with_name("age.key")
+
+
 def load_backend(path: Path):
     cfg = load_config(path)
-    return make_backend(cfg, credentials_file(path)) if cfg is not None else None
+    return make_backend(cfg, credentials_file(path), key_file(path)) if cfg is not None else None
 
 
 def save_config(path: Path, cfg: dict):

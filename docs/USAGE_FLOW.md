@@ -180,7 +180,7 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 - **phase-loop** = phase-run 에 출하(리뷰→커밋→push→PR)를 끼운 상위 루프 — 위 Phase 2~4 를 통째로 감쌀 수 있다.
 - **log** = 지난 대화를 도구와 상관없이 찾기. 기록은 훅이 모으므로 따로 저장할 필요가 없다.
 
-저장(Tier 1): followup·handoff 는 `~/.hbrness/state/<repo-key>/` (origin remote 기준)에 두고 backend(S3 API, `sfstate.py init --backend …`)와 동기화한다. 대화 기록은 backend 의 `logs/` 에만 쌓인다. phase-run·phase-loop 상태는 `~/.hbrness/sessionflow/<project-key>/` (PC 로컬). 양쪽 MEMORY.md 자동 동기화.
+저장(Tier 1): followup·handoff 는 `~/.hbrness/state/<repo-key>/` (origin remote 기준)에 두고 backend(S3 API, `sfstate.py init --backend …`)와 동기화한다. 새 저장소는 age 로 암호화한다 — 푸는 키 `~/.hbrness/age.key` 를 PC 마다 한 번 복사한다. 대화 기록은 backend 의 `logs/` 에만 쌓인다. phase-run·phase-loop 상태는 `~/.hbrness/sessionflow/<project-key>/` (PC 로컬). 양쪽 MEMORY.md 자동 동기화.
 
 ---
 

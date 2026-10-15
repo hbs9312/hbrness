@@ -90,8 +90,9 @@ Runtime differences:
   `/ghflow:chronicle` explicitly there. Template-fetch hooks remain disabled.
 - Shared handoff/followup files live in `~/.hbrness/state`, keyed by the
   repository's origin remote and synced across machines through an S3-API
-  backend with conditional writes (`sessionflow/scripts/sfstate.py init --backend s3 …`,
-  then `sfstate.py doctor`). The skills also
+  backend with conditional writes, encrypted with age by default
+  (`sessionflow/scripts/sfstate.py init --backend s3 …`, then `sfstate.py doctor`;
+  copy `~/.hbrness/age.key` to each machine). The skills also
   maintain the Claude/Codex memory indexes. This does not create a native
   Grok/Devin automatic-memory integration.
 

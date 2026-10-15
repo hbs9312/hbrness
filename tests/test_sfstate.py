@@ -230,7 +230,7 @@ class BackendSyncTests(Env):
         self.store = self.base / 'store'
 
     def init(self, pc='a', cwd=None):
-        return self.run_sf('init', '--backend', 'local', '--path', str(self.store), pc=pc, cwd=cwd)
+        return self.run_sf('init', '--backend', 'local', '--path', str(self.store), '--no-encrypt', pc=pc, cwd=cwd)
 
     def item(self, pc, slug, text):
         d = Path(self.paths(pc)['FOLLOWUPS_DIR'])
@@ -407,6 +407,208 @@ class BackendSyncTests(Env):
         self.assertIn('late', Path(pb['INDEX_FILE']).read_text())
 
 
+AGE = __import__('shutil').which('age')
+
+
+@unittest.skipUnless(AGE, 'age 가 있을 때만')
+class EncryptionTests(Env):
+    """새 저장소는 age 로 암호화한다. 다른 PC 는 키를 복사해야 init 할 수 있고, 표시를 고쳐도 평문을 올리지 않는다."""
+
+    KEY = 'github.com/acme/my-app'
+
+    def setUp(self):
+        super().setUp()
+        self.store = self.base / 'store'
+
+    def init(self, *extra, pc='a'):
+        return self.run_sf('init', '--backend', 'local', '--path', str(self.store), *extra, pc=pc)
+
+    def item(self, pc, slug, text):
+        d = Path(self.paths(pc)['FOLLOWUPS_DIR'])
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f'{slug}.md').write_text(text)
+
+    def key(self, pc='a'):
+        return self.base / f'pc-{pc}' / 'age.key'
+
+    def copy_key(self, src='a', dst='b'):
+        self.key(dst).parent.mkdir(parents=True, exist_ok=True)
+        self.key(dst).write_bytes(self.key(src).read_bytes())
+        self.key(dst).chmod(0o600)
+
+    def test_new_store_is_sealed_and_other_pcs_need_the_key(self):
+        out = self.init()
+        self.assertIn('ENCRYPTION=age (age1', out)
+        self.assertIn('AGE_KEY_CREATED=', out)
+        self.assertEqual(oct(self.key().stat().st_mode & 0o777), '0o600')
+        cfg = json.loads((self.base / 'pc-a' / 'backend.json').read_text())
+        marker = json.loads((self.store / '.sfbackend').read_text())
+        self.assertEqual(cfg['encryption'], marker['encryption'])
+        self.assertEqual(cfg['encryption']['type'], 'age')
+
+        self.item('a', 'x', 'secret plan 한글\n')
+        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='a'))
+        stored = (self.store / 'repos' / self.KEY / 'followups' / 'x.md').read_bytes()
+        self.assertTrue(stored.startswith(b'age-encryption.org/'))
+        self.assertNotIn(b'secret plan', stored)
+
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.init(pc='b')
+        self.assertIn('age.key', cm.exception.stderr)
+        self.assertFalse((self.base / 'pc-b' / 'backend.json').exists())  # 키 없이는 설정을 남기지 않는다
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.init('--no-encrypt', pc='b')
+        self.assertIn('--no-encrypt', cm.exception.stderr)
+
+        self.copy_key()
+        out = self.init(pc='b')
+        self.assertNotIn('AGE_KEY_CREATED', out)
+        xb = Path(self.paths('b')['FOLLOWUPS_DIR']) / 'x.md'
+        self.assertEqual(xb.read_text(), 'secret plan 한글\n')
+        xb.write_text('edited on b\n')
+        self.run_sf('sync', pc='b')
+        self.run_sf('pull', pc='a')
+        self.assertEqual((Path(self.paths('a')['FOLLOWUPS_DIR']) / 'x.md').read_text(), 'edited on b\n')
+
+    def test_a_different_key_is_refused(self):
+        self.init()
+        self.key('b').parent.mkdir(parents=True)
+        sh('age-keygen', '-o', str(self.key('b')))
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.init(pc='b')
+        self.assertIn('이 저장소의 키가 아니다', cm.exception.stderr)
+
+    def test_tampered_marker_never_gets_plaintext(self):
+        self.init()
+        self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        marker = self.store / '.sfbackend'
+        doc = json.loads(marker.read_text())
+        stored = self.store / 'repos' / self.KEY / 'followups' / 'x.md'
+
+        other = self.base / 'attacker.key'
+        sh('age-keygen', '-o', str(other))
+        attacker = sh('age-keygen', '-y', str(other)).strip()
+        for tampered in ({'id': doc['id']}, {'id': doc['id'], 'encryption': {'type': 'age', 'recipients': [attacker]}}):
+            marker.write_text(json.dumps(tampered))
+            self.item('a', 'x', 'v2 must not leak\n')
+            out = self.run_sf('sync', pc='a')
+            self.assertIn('SYNC=failed', out)
+            self.assertIn('backend.json', out)
+            self.assertTrue(stored.read_bytes().startswith(b'age-encryption.org/'))
+            self.assertIn('v1', sh('age', '-d', '-i', str(self.key()), str(stored)))
+
+    def test_reinit_does_not_accept_a_changed_marker_silently(self):
+        self.init()
+        self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.assertIn('ENCRYPTION=age', self.init())  # 그대로면 다시 init 해도 된다
+        marker = self.store / '.sfbackend'
+        doc = json.loads(marker.read_text())
+        cfg_file = self.base / 'pc-a' / 'backend.json'
+        stored = self.store / 'repos' / self.KEY / 'followups' / 'x.md'
+        other = self.base / 'attacker.key'
+        sh('age-keygen', '-o', str(other))
+        attacker = sh('age-keygen', '-y', str(other)).strip()
+        added = {'type': 'age', 'recipients': doc['encryption']['recipients'] + [attacker]}
+        for tampered in ({'id': doc['id']}, {'id': doc['id'], 'encryption': added}):
+            marker.write_text(json.dumps(tampered))
+            self.item('a', 'x', 'v2 must not leak\n')
+            with self.assertRaises(subprocess.CalledProcessError) as cm:
+                self.init()
+            self.assertIn('--accept-encryption-change', cm.exception.stderr)
+            self.assertEqual(json.loads(cfg_file.read_text())['encryption'], doc['encryption'])
+            self.assertTrue(stored.read_bytes().startswith(b'age-encryption.org/'))
+        out = self.init('--accept-encryption-change')  # 확인한 뒤 명시적으로 받아들인다
+        self.assertIn('ENCRYPTION_WARN=', out)
+        self.assertEqual(json.loads(cfg_file.read_text())['encryption'], added)
+
+    def test_same_place_ignores_how_the_endpoint_is_written(self):
+        base = {'type': 's3', 'endpoint': 'https://s3.example.test', 'bucket': 'b', 'prefix': 'p'}
+        for variant in ({'endpoint': 'https://s3.example.test/'}, {'endpoint': 'https://S3.Example.test:443'},
+                        {'prefix': '/p/'}, {'region': 'auto', 'path_style': False}):
+            self.assertTrue(sfstate._same_place(base, {**base, **variant}), variant)
+        aws = {'type': 's3', 'bucket': 'b', 'region': 'eu-west-1'}
+        self.assertTrue(sfstate._same_place(aws, {**aws, 'endpoint': 'https://s3.eu-west-1.amazonaws.com/'}))
+        for variant in ({'bucket': 'c'}, {'prefix': 'q'}, {'endpoint': 'https://s3.example.test:9000'},
+                        {'endpoint': 'http://s3.example.test'}):
+            self.assertFalse(sfstate._same_place(base, {**base, **variant}), variant)
+        local = {'type': 'local', 'path': str(self.store)}
+        self.assertTrue(sfstate._same_place(local, {'type': 'local', 'path': str(self.store) + '/'}))
+
+    def test_moving_from_an_encrypted_store_to_a_plain_one_needs_no_encrypt(self):
+        self.init()
+        plain = self.base / 'plain-store'
+        self.run_sf('init', '--backend', 'local', '--path', str(plain), '--no-encrypt', pc='b')
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.run_sf('init', '--backend', 'local', '--path', str(plain), pc='a')
+        self.assertIn('--no-encrypt', cm.exception.stderr)
+        self.assertIn('ENCRYPTION=off', self.run_sf('init', '--backend', 'local', '--path', str(plain), '--no-encrypt', pc='a'))
+
+    def test_plaintext_object_in_a_sealed_store_is_refused(self):
+        self.init()
+        self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        stored = self.store / 'repos' / self.KEY / 'followups' / 'x.md'
+        stored.write_text('planted plaintext\n')
+        out = self.run_sf('pull', pc='a')
+        self.assertIn('PULL=failed', out)
+        self.assertIn('암호문이 아니다', out)
+        self.assertEqual((Path(self.paths('a')['FOLLOWUPS_DIR']) / 'x.md').read_text(), 'v1\n')
+
+    def test_two_inits_of_a_new_local_store_share_one_marker(self):
+        import threading
+        sfbackend = sfstate.sfbackend
+        keys = [{'type': 'age', 'recipients': [f'age1{c * 58}']} for c in 'qp']
+        for _ in range(10):
+            store = self.base / f'race-{_}'
+            barrier, got = threading.Barrier(2), []
+
+            def run(enc):
+                barrier.wait()
+                got.append(sfbackend.LocalBackend(store).ensure(enc))
+            threads = [threading.Thread(target=run, args=(k,)) for k in keys]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(got[0], got[1])
+            self.assertEqual(sfbackend.parse_marker((store / '.sfbackend').read_bytes()), got[0])
+
+    def test_plain_store_stays_plain(self):
+        out = self.init('--no-encrypt')
+        self.assertIn('ENCRYPTION=off', out)
+        self.assertFalse(self.key().exists())
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.init('--encrypt', pc='b')
+        self.assertIn('암호화하지 않고 만든 저장소', cm.exception.stderr)
+        self.init(pc='b')  # 기본값은 저장소를 따른다
+        self.item('b', 'x', 'plain\n')
+        self.run_sf('sync', pc='b')
+        self.assertEqual((self.store / 'repos' / self.KEY / 'followups' / 'x.md').read_text(), 'plain\n')
+
+    def test_doctor_checks_the_seal(self):
+        self.init()
+        out = self.run_sf('doctor', pc='a')
+        self.assertIn('ENCRYPTION=age', out)
+        self.assertIn('SEALED=ok', out)
+        self.key().unlink()
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.run_sf('doctor', pc='a')
+        self.assertIn('ENCRYPTION=failed', cm.exception.stdout)
+
+    def test_markers_from_1_2_still_identify_the_store(self):
+        sfbackend = sfstate.sfbackend
+        self.store.mkdir()
+        (self.store / '.sfbackend').write_text('0123abcd\n')
+        be = sfbackend.LocalBackend(self.store)
+        self.assertTrue(be.identity().endswith('#0123abcd'))
+        self.assertIsNone(be.cipher())
+        (self.store / '.sfbackend').write_text('{"broken')
+        with self.assertRaises(sfbackend.BackendError):
+            sfbackend.LocalBackend(self.store).identity()
+
+
 class S3UnitTests(unittest.TestCase):
     """네트워크 없이 S3Backend 의 응답 검증과 자격증명 처리를 본다."""
 
@@ -574,9 +776,11 @@ class S3BackendTests(Env):
         import uuid
         self.prefix = f'sfstate-test/{uuid.uuid4().hex}'
 
+    init_args = ('--no-encrypt',)
+
     def init(self, pc='a', cwd=None):
         args = [sys.executable, str(SCRIPT), 'init', '--backend', 's3', '--endpoint', S3_ENV['endpoint'],
-                '--bucket', S3_ENV['bucket'], '--prefix', self.prefix, '--credentials-stdin']
+                '--bucket', S3_ENV['bucket'], '--prefix', self.prefix, '--credentials-stdin', *self.init_args]
         if S3_ENV['region']:
             args += ['--region', S3_ENV['region']]
         r = subprocess.run(args, cwd=cwd or self.project, env=self.env(pc), check=True, capture_output=True,
@@ -633,6 +837,28 @@ class S3BackendTests(Env):
         self.assertIn('IF_NONE_MATCH=ok', out)
         self.assertIn('IF_MATCH=ok', out)
         self.assertIn('DELETE_IF_MATCH=', out)
+
+
+@unittest.skipUnless(AGE, 'age 가 있을 때만')
+class EncryptedS3BackendTests(S3BackendTests):
+    """같은 시나리오를 암호화한 저장소로 한다. 두 번째 PC 는 첫 PC 의 키를 복사해 온다."""
+
+    init_args = ()
+
+    def init(self, pc='a', cwd=None):
+        if pc != 'a':
+            key = self.base / f'pc-{pc}' / 'age.key'
+            key.parent.mkdir(parents=True, exist_ok=True)
+            key.write_bytes((self.base / 'pc-a' / 'age.key').read_bytes())
+        return super().init(pc, cwd)
+
+    def test_objects_are_sealed(self):
+        self.init('a')
+        self.item('a', 'x', 'sealed 한글\n')
+        self.run_sf('sync', pc='a')
+        raw = self.backend().get_raw(f'repos/{self.KEY}/followups/x.md')[0]
+        self.assertTrue(raw.startswith(b'age-encryption.org/'))
+        self.assertIn('SEALED=ok', self.run_sf('doctor', pc='a'))
 
 
 class MigrateTests(Env):

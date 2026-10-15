@@ -177,7 +177,7 @@ SF sync -m "handoff: <BRANCH>"
 
 - `SYNC=pushed` — backend 까지 올라갔다.
 - `SYNC=nochange` — 올릴 변경이 없었다.
-- `SYNC=failed` — 원격에 닿지 못했다. 괄호 안 사유를 보고한다. 못 올린 변경은 로컬에 남아 다음 sync 때 다시 올린다.
+- `SYNC=failed` — 원격에 닿지 못했거나 저장소 암호화 설정·키가 맞지 않는다. 괄호 안 사유를 보고한다. 못 올린 변경은 로컬에 남아 다음 sync 때 다시 올린다.
 - `SYNC=local-only` — 동기화가 꺼진 프로젝트다.
 - `CONFLICT=` 가 있으면 「스크립트」 절에 적은 대로 사용자에게 알린다.
 

@@ -73,6 +73,12 @@ class RedactTests(unittest.TestCase):
             self.assertNotIn('123456789', out)
         self.assertEqual(sflog.redact('{"input_tokens":123,"is_secret":true}'), '{"input_tokens":123,"is_secret":true}')
 
+    def test_lone_surrogates_survive_redaction(self):
+        line = b'{"t":"\\ud800 password=hunter2hunter2"}'
+        out = sflog.redact_jsonl(line + b'\n')
+        self.assertNotIn(b'hunter2', out)
+        self.assertEqual(json.loads(out)['t'], '\ud800 password=[REDACTED:assignment]')
+
     def test_unchanged_lines_keep_their_bytes(self):
         line = b'{ "a" : 1 ,  "b":"\\u00e9" }'
         self.assertEqual(sflog.redact_jsonl(line + b'\n'), line + b'\n')
@@ -98,6 +104,110 @@ class RedactTests(unittest.TestCase):
         text = 'the password field must be at least 8 chars; skip-ant is a word'
         self.assertEqual(sflog.redact(text), text)
 
+    def test_more_token_prefixes(self):
+        cases = {
+            'sk_live_' + 'a1B2' * 6: 'stripe-key', 'rk_test_' + 'a1B2' * 6: 'stripe-key',
+            'whsec_' + 'Ab1' * 10: 'stripe-key', 'npm_' + 'a1' * 18: 'npm-token',
+            'glpat-' + 'Ab1_' * 6: 'gitlab-token', 'pypi-AgEIcHlwaS5vcmc' + 'x1' * 30: 'pypi-token',
+            'hf_' + 'Ab1' * 12: 'huggingface-token', 'xapp-1-A0' + 'b1' * 10: 'slack-token',
+            'shpat_' + '0a' * 16: 'shopify-token', 'dop_v1_' + '0a' * 32: 'digitalocean-token',
+            'SG.' + 'Ab1' * 8 + '.' + 'Cd2' * 15: 'sendgrid-key', 'gsk_' + 'Ab1' * 18: 'groq-key',
+            'xai-' + 'Ab1' * 20: 'xai-key', 'ya29.' + 'Ab1_' * 8: 'google-oauth', 'GOCSPX-' + 'Ab1' * 9: 'google-oauth',
+            'AGE-SECRET-KEY-1' + 'QYQSZQGP' * 7 + 'QY': 'age-secret-key', 'dapi' + '0a' * 16: 'databricks-token',
+            'lin_api_' + 'Ab1' * 14: 'linear-key', 'ntn_' + 'Ab1' * 15: 'notion-token',
+            'sntrys_' + 'Ab1=' * 8: 'sentry-token',
+        }
+        for secret, name in cases.items():
+            out = sflog.redact(json.dumps({'text': f'value {secret} ok'}))
+            self.assertNotIn(secret, out, name)
+            self.assertIn(f'[REDACTED:{name}]', out, secret)
+
+    def test_url_passwords_keep_user_and_host(self):
+        for text, secret in (('DATABASE_URL=postgres://app:S3cr3tPass@db/x', 'S3cr3tPass'),
+                             ('mongodb+srv://u:pw@cluster0.example.net/db', 'pw@'),
+                             ('redis://:only-pass@cache:6379/0', 'only-pass')):
+            out = sflog.redact(text)
+            self.assertNotIn(secret, out, text)
+            self.assertIn('[REDACTED:url-password]@', out)
+        self.assertEqual(sflog.redact('postgres://app:pw@db/x'), 'postgres://app:[REDACTED:url-password]@db/x')
+        for text in ('https://example.com:8080/a@b', 'git@github.com:acme/app.git', 'ssh://git@github.com:22/a/b'):
+            self.assertEqual(sflog.redact(text), text)
+
+    def test_env_lines_with_random_looking_values(self):
+        env = ('     1\tAPP=web\n     2\tSESSION_SALT=9fK2xLq8Zp3Mabc\n  3→export TENANT="1b4e28ba2fa111d2883f"\n'
+               'NODE_ENV=production\nPORT=3000\nPATH=/usr/local/bin:/bin\nPYTHONPATH=/opt/lib/python3.12/site\n'
+               'MY_PRIVATE=hunter2hunter2\nLOG_LEVEL=debug')
+        out = json.loads(sflog.redact(json.dumps({'content': env})))['content']
+        for secret in ('9fK2xLq8Zp3Mabc', '1b4e28ba2fa111d2883f', 'hunter2hunter2'):
+            self.assertNotIn(secret, out)
+        self.assertIn('SESSION_SALT=[REDACTED:env]', out)
+        self.assertIn('export TENANT="[REDACTED:env]"', out)
+        for kept in ('APP=web', 'NODE_ENV=production', 'PORT=3000', 'PATH=/usr/local/bin:/bin',
+                     'PYTHONPATH=/opt/lib/python3.12/site', 'LOG_LEVEL=debug'):
+            self.assertIn(kept, out)
+        nested = json.dumps({'r': json.dumps({'out': 'A=1\nTOKEN_Q=9fK2xLq8Zp3Mabc\n'})})
+        self.assertNotIn('9fK2xLq8Zp3Mabc', sflog.redact(nested))
+
+    def test_more_sensitive_names(self):
+        for text, secret in (('SECRET_KEY=abc', 'abc'), ('PRIVATE_KEY: zzz', 'zzz'), ('db_dsn = mysql-host-x', 'mysql-host-x'),
+                             ('passphrase="open sesame"', 'open sesame')):
+            self.assertNotIn(secret, sflog.redact(text), text)
+        for text in ('"private": true', '{"private": true}', 'password = "[REDACTED:openai-key]"', 'token: null'):
+            self.assertEqual(sflog.redact(text), text)
+
+    def test_handoff_leak_examples(self):
+        text = ('STRIPE_KEY=sk_live_51HxYzAbCdEfGhIjKlMn\nDATABASE_URL=postgres://app:S3cr3tPass@db/x\n'
+                'mongodb+srv://u:pw@c.example.net/d\nnpm_abcdefghijklmnopqrstuvwxyz0123456789\nMY_PRIVATE=hunter2hunter2\n')
+        out = sflog.redact(json.dumps({'t': text}))
+        for secret in ('sk_live_51Hx', 'S3cr3tPass', 'u:pw@', 'npm_abcdef', 'hunter2hunter2'):
+            self.assertNotIn(secret, out)
+
+
+class GitleaksTests(unittest.TestCase):
+    """gitleaks 가 있으면 가린 결과를 한 번 더 훑는다. 가짜 gitleaks 로 출력 형식에 맞춰 본다."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = (sflog.sfbackend.which, os.environ.get('HBRNESS_HOME'))
+        os.environ['HBRNESS_HOME'] = self.tmp.name
+
+    def tearDown(self):
+        sflog.sfbackend.which = self.saved[0]
+        os.environ.pop('HBRNESS_HOME', None)
+        if self.saved[1] is not None:
+            os.environ['HBRNESS_HOME'] = self.saved[1]
+        self.tmp.cleanup()
+
+    def fake(self, findings, exit_code=0):
+        exe = Path(self.tmp.name) / 'gitleaks'
+        exe.write_text(f'#!/bin/sh\ncat > /dev/null\nprintf %s {json.dumps(json.dumps(findings))}\nexit {exit_code}\n')
+        exe.chmod(0o755)
+        sflog.sfbackend.which = lambda name: str(exe) if name == 'gitleaks' else None
+
+    def test_findings_are_masked_and_json_stays_valid(self):
+        self.fake([{'RuleID': 'x', 'Secret': 'Zx9vB2nM4kL6jH8g'}, {'RuleID': 'y', 'Secret': 'a\\/b-Qw7Er5Ty3Ui'},
+                   {'RuleID': 'short', 'Secret': 'abc'}])
+        chunk = (json.dumps({'t': 'cf Zx9vB2nM4kL6jH8g'}) + '\n' + json.dumps({'t': 'u a/b-Qw7Er5Ty3Ui abc'}) + '\n').encode()
+        out = sflog.scrub(chunk, [], sflog.redact_jsonl)
+        self.assertNotIn(b'Zx9vB2nM4kL6jH8g', out)
+        self.assertNotIn(b'Qw7Er5Ty3Ui', out)
+        self.assertEqual([json.loads(l)['t'] for l in out.splitlines()],
+                         ['cf [REDACTED:gitleaks]', 'u [REDACTED:gitleaks] abc'])
+
+    def test_missing_or_broken_gitleaks_changes_nothing(self):
+        chunk = json.dumps({'t': 'plain'}).encode() + b'\n'
+        sflog.sfbackend.which = lambda name: None
+        self.assertEqual(sflog.scrub(chunk, [], sflog.redact_jsonl), chunk)
+        self.fake('not a list', exit_code=2)
+        self.assertEqual(sflog.scrub(chunk, [], sflog.redact_jsonl), chunk)
+
+    @unittest.skipUnless(__import__('shutil').which('gitleaks'), 'gitleaks 가 있을 때만')
+    def test_real_gitleaks_catches_what_patterns_miss(self):
+        secret = 'SK0123456789abcdef0123456789abcdef'  # twilio — SECRET_PATTERNS 에 없다
+        chunk = json.dumps({'t': f'twilio {secret}'}).encode() + b'\n'
+        self.assertIn(secret.encode(), sflog.redact_jsonl(chunk))
+        self.assertNotIn(secret.encode(), sflog.scrub(chunk, [], sflog.redact_jsonl))
+
 
 class CollectEnv(unittest.TestCase):
     def setUp(self):
@@ -110,7 +220,7 @@ class CollectEnv(unittest.TestCase):
         e = self.env()
         sh('git', 'init', '-q', '-b', 'main', cwd=self.project, env=e)
         sh('git', 'remote', 'add', 'origin', 'git@github.com:acme/app.git', cwd=self.project, env=e)
-        sh(sys.executable, str(SFSTATE), 'init', '--backend', 'local', '--path', str(self.store),
+        sh(sys.executable, str(SFSTATE), 'init', '--backend', 'local', '--path', str(self.store), '--no-encrypt',
            cwd=self.project, env=e)
 
     def tearDown(self):
@@ -184,6 +294,12 @@ class CollectTests(CollectEnv):
         self.assertIn('uploaded 1', self.collect('devin', 'd-1', t))
         snap = gzip.decompress((self.remote('devin', 'd-1') / 'transcript.json.gz').read_bytes())
         self.assertIn(b'[REDACTED:github-token]', snap)
+
+    def test_lone_surrogate_in_the_first_message_does_not_break_collect(self):
+        t = self.base / 'surrogate.jsonl'
+        t.write_text('{"type":"user","message":{"content":"hello \\ud800 world"}}\n')
+        self.assertIn('uploaded 1', self.collect('claude', 'sur', t))
+        self.assertIn('hello', json.loads((self.remote('claude', 'sur') / 'meta.json').read_text())['title'])
 
     def test_custom_patterns_from_redact_txt(self):
         self.home.mkdir(exist_ok=True)
@@ -270,7 +386,7 @@ class StoreSwitchTests(CollectEnv):
         t.write_text('{"a":1}\n')
         self.collect('claude', 'sw', t)
         other = self.base / 'store-b'
-        sh(sys.executable, str(SFSTATE), 'init', '--backend', 'local', '--path', str(other),
+        sh(sys.executable, str(SFSTATE), 'init', '--backend', 'local', '--path', str(other), '--no-encrypt',
            cwd=self.project, env=self.env())
         self.assertIn('uploaded 1', self.collect('claude', 'sw', t))
         d = other / 'logs' / 'github.com/acme/app' / 'claude' / 'sw'
@@ -468,6 +584,22 @@ class ReadCommandTests(CollectEnv):
         self.assertIn('[REDACTED:assignment]', shown)
         self.assertNotIn('hunter2', shown)
 
+    def test_save_title_goes_through_gitleaks_too(self):
+        secret = 'Zx9vB2nM4kL6jH8gQ1w'
+        fake = self.base / 'bin'
+        fake.mkdir()
+        (fake / 'gitleaks').write_text('#!/bin/sh\ncat > /dev/null\n'
+                                       f'printf %s \'[{{"RuleID":"t","Secret":"{secret}"}}]\'\n')
+        (fake / 'gitleaks').chmod(0o755)
+        env = self.env(PATH=f"{fake}:{os.environ['PATH']}")
+        out = sh(sys.executable, str(SFLOG), 'save', '--title', f'key {secret}', cwd=self.project, env=env,
+                 input=f'body {secret}\n')
+        sid = out.split('SAVED=')[1].split()[0]
+        d = self.store / 'logs' / 'github.com/acme/app' / 'manual' / sid
+        for f in ('meta.json', 'transcript.md'):
+            self.assertNotIn(secret, (d / f).read_text(), f)
+        self.assertIn('[REDACTED:gitleaks]', json.loads((d / 'meta.json').read_text())['title'])
+
     def test_other_repos_need_all_repos(self):
         other = self.base / 'elsewhere'
         other.mkdir()
@@ -475,6 +607,39 @@ class ReadCommandTests(CollectEnv):
         self.assertIn('LOGS=_norepo · 0개', out)
         out = sh(sys.executable, str(SFLOG), 'list', '--all-repos', cwd=other, env=self.env())
         self.assertIn('github.com/acme/app', out)
+
+
+@unittest.skipUnless(__import__('shutil').which('age'), 'age 가 있을 때만')
+class EncryptedCollectTests(CollectEnv):
+    """암호화한 저장소: 올라간 object 는 age 암호문이고, list·show 는 풀어서 읽는다."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = self.base / 'sealed'
+        sh(sys.executable, str(SFSTATE), 'init', '--backend', 'local', '--path', str(self.store),
+           cwd=self.project, env=self.env())
+
+    def test_segments_and_meta_are_sealed_and_read_back(self):
+        t = self.base / 'c.jsonl'
+        t.write_bytes(jl(CLAUDE_LINES) + jl([{'type': 'user', 'message': {'content': 'key sk_live_51HxYzAbCdEfGhIjKlMn'}}]))
+        self.assertIn('uploaded 1', self.collect('claude', 'enc-1', t, final=True))
+        d = self.remote('claude', 'enc-1')
+        for f in (d / '000001.jsonl.gz', d / 'meta.json'):
+            self.assertTrue(f.read_bytes().startswith(b'age-encryption.org/'), f.name)
+        run = lambda *a: sh(sys.executable, str(SFLOG), *a, cwd=self.project, env=self.env())
+        self.assertIn('로그인 버그 고쳐줘', run('list'))
+        shown = run('show', 'enc-1', '--raw')
+        self.assertIn('[REDACTED:stripe-key]', shown)
+        self.assertNotIn('sk_live_51Hx', shown)
+
+    def test_pc_without_the_key_can_upload_but_not_read(self):
+        (self.home / 'age.key').unlink()
+        t = self.base / 'c.jsonl'
+        t.write_bytes(jl(CLAUDE_LINES))
+        self.assertIn('uploaded 1', self.collect('claude', 'enc-2', t))  # 공개키만으로 암호화한다
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            sh(sys.executable, str(SFLOG), 'show', 'enc-2', cwd=self.project, env=self.env())
+        self.assertIn('age.key', cm.exception.stderr + cm.exception.stdout)
 
 
 class RemoteCacheTests(CollectEnv):

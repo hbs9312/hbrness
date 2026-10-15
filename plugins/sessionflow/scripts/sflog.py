@@ -29,23 +29,31 @@ offset 은 ~/.hbrness/logs/sessions/<tool>-<session>.json 에 적는다.
   save    --title T [--dir D] [--file F]      (없으면 stdin)
           훅이 없는 곳(웹 채팅 등)의 대화·요약을 manual 기록으로 남긴다. 비밀값을 가린 뒤 올린다.
 
-읽은 object 는 ~/.hbrness/logs/cache/ 에 etag 와 함께 둔다 — 바뀐 것만 다시 받는다.
+읽은 object 는 ~/.hbrness/logs/cache/ 에 etag 와 함께 둔다 — 바뀐 것만 다시 받는다 (암호화한 저장소면 푼 내용).
 
-비밀값 가리기: 아래 SECRET_PATTERNS + ~/.hbrness/redact.txt (한 줄에 정규식 하나, # 주석).
+비밀값 가리기 (올리기 전에, 저장소 암호화와 따로):
+  - 아래 SECRET_PATTERNS (알려진 토큰 접두어) + ~/.hbrness/redact.txt (한 줄에 정규식 하나, # 주석)
+  - URL 안의 비밀번호 (postgres://user:비밀번호@host)
+  - .env 꼴 줄(NAME=value)은 이름과 상관없이 값이 무작위 문자열처럼 보이면
+  - password=… · "api_key": "…" 처럼 이름이 비밀값인 것의 값
+  - gitleaks 가 설치돼 있으면 가린 결과를 한 번 더 훑어 찾은 것도 가린다
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import datetime as dt
 import fcntl
 import gzip
 import hashlib
 import json
+import math
 import os
 import re
 import socket
+import subprocess
 import sys
 import traceback
 import urllib.parse
@@ -64,26 +72,50 @@ LOG_KEEP = 256 * 1024  # collect.log 상한
 B = r"(?:(?<=\\[nrtbf])|\b)"
 SECRET_PATTERNS = [
     ("private-key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.S)),
+    ("age-secret-key", re.compile(B + r"AGE-SECRET-KEY-(?:PQ-)?1[0-9A-Z]{50,}")),
     ("aws-access-key", re.compile(B + r"(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("github-token", re.compile(B + r"(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,})")),
+    ("gitlab-token", re.compile(B + r"gl(?:pat|dt|ptt|rt|soat|cbt|imt|ffct)-[A-Za-z0-9_\-]{20,}")),
     ("anthropic-key", re.compile(B + r"sk-ant-[A-Za-z0-9_\-]{20,}")),
     ("openai-key", re.compile(B + r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}")),
-    ("slack-token", re.compile(B + r"xox[abprs]-[A-Za-z0-9\-]{10,}")),
+    ("stripe-key", re.compile(B + r"(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9+/=]{24,})")),
+    ("slack-token", re.compile(B + r"(?:xox[abprse]-[A-Za-z0-9\-]{10,}|xapp-\d-[A-Za-z0-9\-]{10,})")),
+    ("npm-token", re.compile(B + r"npm_[A-Za-z0-9]{36,}")),
+    ("pypi-token", re.compile(B + r"pypi-[A-Za-z0-9_\-]{40,}")),
+    ("huggingface-token", re.compile(B + r"hf_[A-Za-z0-9]{30,}")),
+    ("shopify-token", re.compile(B + r"shp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}")),
+    ("digitalocean-token", re.compile(B + r"do[opr]_v1_[a-f0-9]{64}")),
+    ("sendgrid-key", re.compile(B + r"SG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}")),
     ("google-api-key", re.compile(B + r"AIza[0-9A-Za-z_\-]{35}")),
+    ("google-oauth", re.compile(B + r"(?:ya29\.[A-Za-z0-9_\-]{20,}|GOCSPX-[A-Za-z0-9_\-]{20,})")),
+    ("groq-key", re.compile(B + r"gsk_[A-Za-z0-9]{40,}")),
+    ("xai-key", re.compile(B + r"xai-[A-Za-z0-9]{40,}")),
+    ("databricks-token", re.compile(B + r"dapi[a-f0-9]{32}\b")),
+    ("linear-key", re.compile(B + r"lin_(?:api|oauth)_[A-Za-z0-9]{32,}")),
+    ("notion-token", re.compile(B + r"(?:ntn_[A-Za-z0-9]{40,}|secret_[A-Za-z0-9]{43}\b)")),
+    ("sentry-token", re.compile(B + r"sntry[su]_[A-Za-z0-9_=+/\-]{20,}")),
     ("atlassian-token", re.compile(B + r"ATATT[A-Za-z0-9_\-=]{20,}")),
     ("jwt", re.compile(B + r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")),
     ("bearer", re.compile(r"(?i)" + B + r"bearer\s+[A-Za-z0-9._~+/=\-]{16,}")),
 ]
-_SENSITIVE = (r"password|passwd|secret|secret[_-]?access[_-]?key|api[_-]?key|access[_-]?token|auth[_-]?token"
-              r"|client[_-]?secret|token")
+# scheme://user:비밀번호@host 의 비밀번호. user 와 host 는 남긴다.
+URL_PASSWORD = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]{1,20}://[^\s:/@\"'<>\\]{0,128}):([^\s/@\"'<>\\]{1,256})@")
+# .env 꼴 줄: NAME=value 가 한 줄을 다 차지한다. 줄 앞의 `export ` 와 Read 도구의 줄 번호(`  12→`, `12\t`)도 받는다.
+ENV_LINE = re.compile(
+    r"(?m)(?:^|(?<=\\n))((?:[ \t]*\d+(?:→|\t|\\t))?[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]{0,63}[ \t]*=[ \t]*)"
+    r"([\"']?)([A-Za-z0-9+/=_.~\-]{12,512})\2(?=[ \t]*(?:\r?$|\\[nr]))")
+_SENSITIVE = (r"password|passwd|passphrase|secret|secret[_-]?access[_-]?key|api[_-]?key|access[_-]?token"
+              r"|auth[_-]?token|client[_-]?secret|token|private|dsn|signing[_-]?key|encryption[_-]?key|master[_-]?key")
+_NAME = r"(?:" + _SENSITIVE + r")(?:[_-]?key)?"  # SECRET_KEY · PRIVATE_KEY 처럼 뒤에 _KEY 가 붙은 이름도
 # 글 속의 `password=…`, `DB_PASSWORD="two words"`, `"api_key": "…"` 꼴은 값만 가린다. 따옴표로 묶인 값은
 # 닫는 따옴표까지 통째로(짧아도, 공백이 있어도), 안 묶인 값은 공백·구분자 전까지.
 ASSIGNMENT = re.compile(
-    r"(?i)" + B + r"((?:[A-Za-z0-9]{1,32}[_-]){0,4}(?:" + _SENSITIVE + r"))"  # 접두어 반복에 상한 — 긴 base64 에서 느려지지 않게
+    r"(?i)" + B + r"((?:[A-Za-z0-9]{1,32}[_-]){0,4}" + _NAME + r")"  # 접두어 반복에 상한 — 긴 base64 에서 느려지지 않게
     r"(\\?[\"']?\s*[:=]\s*)"
     r"(\\\"(?:(?!\\\").)*\\\"|\"[^\"\n]*\"|'[^'\n]*'|[^\s\"'\\,;}&)]+)")
 # JSON 객체에서 이름이 이런 key 의 값(문자열·숫자)은 통째로 가린다. 예: {"db_password": 123456789}
-SENSITIVE_KEY = re.compile(r"(?i)^(?:.*[_-])?(?:" + _SENSITIVE + r")$")
+SENSITIVE_KEY = re.compile(r"(?i)^(?:.*[_-])?" + _NAME + r"$")
+NOT_SECRET = {"true", "false", "null", "none", "undefined"}  # "private": true 같은 설정값
 MASK = "[REDACTED:assignment]"
 
 
@@ -138,13 +170,33 @@ def _mask_assignment(m) -> str:
     value = m.group(3)
     for q in ('\\"', '"', "'"):
         if value.startswith(q) and value.endswith(q) and len(value) >= 2 * len(q):
+            if value[len(q):].startswith("[REDACTED:"):
+                return m.group(0)
             return f"{m.group(1)}{m.group(2)}{q}{MASK}{q}"
+    if value.startswith("[REDACTED:") or value.lower() in NOT_SECRET:
+        return m.group(0)
     return f"{m.group(1)}{m.group(2)}{MASK}"
+
+
+def looks_random(value: str) -> bool:
+    """비밀값처럼 무작위로 보이나: 글자와 숫자가 섞였고, 글자당 엔트로피가 3 bit 이상. 경로는 빼 둔다."""
+    if value.startswith(("/", "~/", "./", "../")) or not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+        return False
+    n = len(value)
+    return -sum(c / n * math.log2(c / n) for c in collections.Counter(value).values()) >= 3.0
+
+
+def _mask_env(m) -> str:
+    if not looks_random(m.group(3)):
+        return m.group(0)
+    return f"{m.group(1)}{m.group(2)}[REDACTED:env]{m.group(2)}"
 
 
 def redact_text(text: str, extra=()) -> str:
     for name, pat in [*SECRET_PATTERNS, *extra]:
         text = pat.sub(f"[REDACTED:{name}]", text)
+    text = URL_PASSWORD.sub(r"\1:[REDACTED:url-password]@", text)
+    text = ENV_LINE.sub(_mask_env, text)
     return ASSIGNMENT.sub(_mask_assignment, text)
 
 
@@ -182,7 +234,12 @@ def redact_json_bytes(data: bytes, extra=()) -> bytes:
     except (ValueError, UnicodeDecodeError, RecursionError):
         return redact_text(data.decode("utf-8", "surrogateescape"), extra).encode("utf-8", "surrogateescape")
     new, changed = redact_value(obj, extra)
-    return json.dumps(new, ensure_ascii=False, separators=(",", ":")).encode("utf-8") if changed else data
+    if not changed:
+        return data
+    try:
+        return json.dumps(new, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except UnicodeEncodeError:  # 짝 없는 surrogate(\ud800 등) — escape 해 둔다
+        return json.dumps(new, separators=(",", ":")).encode("ascii")
 
 
 def redact_jsonl(data: bytes, extra=()) -> bytes:
@@ -197,6 +254,55 @@ def redact_jsonl(data: bytes, extra=()) -> bytes:
 def redact(text: str, extra=()) -> str:
     """글 하나를 가린다. JSON 이면 JSON 으로 다룬다."""
     return redact_json_bytes(text.encode("utf-8", "surrogateescape"), extra).decode("utf-8", "surrogateescape")
+
+
+def gitleaks_patterns(data: bytes) -> list:
+    """gitleaks 가 있으면 가린 결과를 한 번 더 훑는다. 반환: 찾은 비밀값을 그대로 가리는 패턴 (없거나 실패하면 []).
+    저장소의 .gitleaks.toml·.gitleaksignore 가 걸러 내지 않게 빈 디렉토리에서 돌린다."""
+    exe = sfbackend.which("gitleaks")
+    if not exe or not data.strip():
+        return []
+    cwd = logs_home() / "gitleaks"
+    try:
+        cwd.mkdir(parents=True, exist_ok=True)
+        p = subprocess.run([exe, "stdin", "--no-banner", "--no-color", "--log-level", "error", "--exit-code", "0",
+                            "--redact=0", "--report-format", "json", "--report-path", "-"],
+                           input=data, capture_output=True, cwd=cwd, timeout=60)
+        findings = json.loads(p.stdout or b"[]") if p.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        note(f"gitleaks 를 건너뜀: {e}")
+        return []
+    if not isinstance(findings, list):
+        note(f"gitleaks 를 건너뜀: exit {p.returncode} {p.stderr[-300:]!r}")
+        return []
+    secrets = set()
+    for f in findings:
+        secret = f.get("Secret") if isinstance(f, dict) else None
+        if not isinstance(secret, str) or len(secret) < 8 or secret.startswith("[REDACTED:"):
+            continue
+        secrets.add(secret)
+        with contextlib.suppress(ValueError):  # JSONL 에서 찾은 것 — 풀린 글자로도 가린다
+            secrets.add(json.loads(f'"{secret}"'))
+    return [("gitleaks", re.compile(re.escape(s))) for s in sorted(secrets, key=len, reverse=True)]
+
+
+def scrub(data: bytes, extra, redactor) -> bytes:
+    """redactor(data, extra) 로 가린 뒤 gitleaks 가 더 찾으면 그것까지 넣어 처음부터 다시 가린다."""
+    out = redactor(data, extra)
+    found = gitleaks_patterns(out)
+    return redactor(data, [*extra, *found]) if found else out
+
+
+def utf8(text: str) -> str:
+    """짝 없는 surrogate 를 ? 로 — meta.json 에 들어갈 글이 UTF-8 로 바뀌게."""
+    return text.encode("utf-8", "replace").decode("utf-8")
+
+
+def scrub_text(text: str, extra) -> str:
+    """글(제목·save 본문)을 scrub 처럼 가린다. 짝 없는 surrogate 가 섞여 있어도 깨지지 않는다."""
+    out = redact_text(text, extra)
+    found = gitleaks_patterns(out.encode("utf-8", "surrogatepass"))
+    return redact_text(text, [*extra, *found]) if found else out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -317,7 +423,7 @@ def upload_lines(be, st, fh, size, offset, prefix, final, extra) -> int:
             break  # 아직 쓰는 중인 줄 — 다음에 올린다
         seq = int(st.get("seq", 0)) + 1
         st["meta_dirty"] = True  # 올린 뒤 meta.json 이 실패해도 다음 수집이 다시 쓴다
-        be.put(f"{prefix}/{seq:06d}.jsonl.gz", gzip.compress(redact_jsonl(chunk, extra), mtime=0))
+        be.put(f"{prefix}/{seq:06d}.jsonl.gz", gzip.compress(scrub(chunk, extra, redact_jsonl), mtime=0))
         offset += len(chunk)
         st["seq"], st["offset"] = seq, offset
         sent += 1
@@ -331,7 +437,7 @@ def upload_snapshot(be, st: dict, src: Path, prefix: str, extra) -> int:
     if st.get("snapshot_sha256") == h:
         return 0
     st["meta_dirty"] = True
-    be.put(f"{prefix}/transcript.json.gz", gzip.compress(redact_json_bytes(data, extra), mtime=0))
+    be.put(f"{prefix}/transcript.json.gz", gzip.compress(scrub(data, extra, redact_json_bytes), mtime=0))
     st["snapshot_sha256"] = h
     return 1
 
@@ -582,7 +688,7 @@ def derive_title(tool: str, src: Path, extra=()) -> str:
                 if re.fullmatch(r"/\S+", plain):
                     plain = ""
             if plain:
-                return redact_text(" ".join(plain.split()), extra)[:100]
+                return utf8(scrub_text(" ".join(plain.split()), extra)[:100])
     except OSError:
         pass
     return ""
@@ -815,10 +921,10 @@ def cmd_save(a):
     sid = f"{dt.datetime.now():%Y%m%d-%H%M%S}-{safe_part(host)}-{os.urandom(2).hex()}"
     prefix = f"logs/{ctx.repo_key or '_norepo'}/manual/{sid}"
     now = now_iso()
-    be.put(f"{prefix}/transcript.md", redact_text(text, extra).encode("utf-8"), if_none_match=True)
+    be.put(f"{prefix}/transcript.md", scrub_text(text, extra).encode("utf-8", "surrogateescape"), if_none_match=True)
     meta = {"tool": "manual", "session_id": sid, "repo_key": ctx.repo_key, "branch": ctx.branch,
             "cwd": str(ctx.cwd), "host": host, "format": "markdown", "segments": 1, "rewrites": 0,
-            "started": now, "updated": now, "ended": now, "title": redact_text(a.title, extra)[:100]}
+            "started": now, "updated": now, "ended": now, "title": utf8(scrub_text(a.title, extra)[:100])}
     be.put(f"{prefix}/meta.json", json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
     print(f"SAVED={sid} ({prefix})")
 
@@ -864,7 +970,11 @@ def main(argv=None):
     sp.add_argument("--file", default="")
     sp.set_defaults(fn=cmd_save)
     a = p.parse_args(argv)
-    a.fn(a)
+    try:
+        a.fn(a)
+    except sfbackend.BackendError as e:  # 원격에 닿지 못했거나 저장소 키가 없다 — traceback 대신 사유만
+        print(f"{a.cmd.upper()}=failed ({e})")
+        sys.exit(1)
     return 0
 
 

@@ -32,6 +32,8 @@ python3 "${SKILL_DIR}/../../scripts/sflog.py"
 
 출력이 `LOG=off` 또는 `SAVE=off` 로 시작하면 backend 가 없는 PC 다. 사용자에게 `sfstate.py init --backend …` 로 backend 를 정해야 기록이 모인다고 한 줄로 알리고 멈춘다.
 
+출력이 `LIST=failed (…)`·`SHOW=failed (…)`·`SEARCH=failed (…)`·`SAVE=failed (…)` 면 괄호 안 사유를 그대로 알리고 멈춘다. 사유에 `age.key` 가 나오면 암호화한 저장소의 키가 이 PC 에 없거나 다른 것이다 — 저장소를 만든 PC 의 `~/.hbrness/age.key` 를 같은 자리에 복사해야 읽을 수 있다.
+
 ## 인자
 
 `$ARGUMENTS` 또는 사용자 요청에서 고른다.

@@ -5,6 +5,7 @@ Terraform backend 처럼 원격 key-value 저장소(backend)로 여러 PC 사이
 $HBRNESS_HOME/backend.json 이 backend 를 정한다 (sfbackend.py). 없으면 이 PC 에만 저장한다.
   local   디렉토리 하나를 원격처럼 쓴다 (테스트·오프라인용)
   s3      S3 API 저장소 (AWS S3·R2·MinIO 등). 자격증명은 $HBRNESS_HOME/credentials.json (mode 600).
+새 저장소는 age 로 암호화한다 — 푸는 키는 $HBRNESS_HOME/age.key (mode 600, PC 마다 한 번 복사).
 
 저장 위치 ($HBRNESS_STATE_DIR, 기본 ~/.hbrness/state — 원격의 로컬 캐시):
 
@@ -39,9 +40,14 @@ PC 로컬 상태라 여기서 다루지 않는다 — 계속 ~/.hbrness/sessionf
   init        --backend local --path D
               --backend s3 --bucket B [--endpoint URL] [--prefix P] [--region R]
                            [--path-style | --virtual-host] [--credentials-stdin]
+              [--encrypt | --no-encrypt] [--accept-encryption-change]
                                       backend.json 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다.
                                       예전 git state repo clone 이 있으면 .git 을 옆으로 치우고 내용을 올린다.
-  doctor                              backend 에 닿는지, conditional write 를 지키는지 확인한다
+                                      새 저장소는 age 로 암호화한다 (age.key 가 없으면 만든다. --no-encrypt 로 끈다).
+                                      이미 있는 저장소는 그 설정을 따른다 — 암호화한 저장소면 키를 먼저 복사해 둔다.
+                                      같은 저장소를 다시 init 할 때 표시의 암호화 설정이 이 PC 가 쓰던 것과 다르면
+                                      멈춘다 (--accept-encryption-change 로 받아들인다).
+  doctor                              backend 에 닿는지, conditional write 를 지키는지, 암호화가 되는지 확인한다
 
 환경변수:
   HBRNESS_HOME          기본 ~/.hbrness
@@ -973,7 +979,7 @@ def _init_config(a):
         if not a.path:
             raise sfbackend.BackendError("--backend local 에는 --path <dir> 가 필요하다")
         cfg = {"type": "local", "path": str(Path(a.path).expanduser().resolve())}
-        return cfg, sfbackend.make_backend(cfg), None
+        return cfg, sfbackend.make_backend(cfg, key_path=key_file()), None
     if not a.bucket:
         raise sfbackend.BackendError("--backend s3 에는 --bucket 이 필요하다")
     cfg = {"type": "s3", "bucket": a.bucket}
@@ -990,7 +996,63 @@ def _init_config(a):
               "stdin 자격증명은 저장만 하고 지금은 환경변수로 맞춘다", file=sys.stderr)
     # 이후 명령(load_backend)과 같은 순서로 고른다: 환경변수 묶음 → stdin(곧 저장될 파일) → 저장된 파일
     creds = env or new_creds or sfbackend.load_credentials(sfbackend.credentials_file(backend_config_file()))
-    return cfg, sfbackend.S3Backend(cfg, creds), new_creds
+    be = sfbackend.S3Backend(cfg, creds)
+    be.key_path = key_file()
+    return cfg, be, new_creds
+
+
+def _same_place(prev, cfg) -> bool:
+    """예전 backend.json 이 같은 저장소 자리를 가리키나. backend 가 실제로 쓰는 주소(location)로 비교한다."""
+    if not isinstance(prev, dict):
+        return False
+    try:
+        return sfbackend.location(prev) == sfbackend.location(cfg)
+    except sfbackend.BackendError:
+        return False
+
+
+def _init_encryption(a, cfg, be):
+    """저장소의 암호화를 정한다. 새 저장소는 기본으로 age 로 암호화하고(키가 없으면 만든다), 이미 있는 저장소는
+    그 설정을 따른다. 같은 저장소를 다시 init 하면 이 PC 가 backend.json 에 적어 둔 설정과 먼저 맞춰 본다 —
+    누가 표시를 고쳐 암호화를 빼거나 공개키를 더해도 다시 init 한 번으로 받아들이지 않게.
+    반환: (encryption 설정 또는 None, 새로 만든 키 경로 또는 None)"""
+    try:
+        prev = sfbackend.load_config(backend_config_file())
+    except sfbackend.BackendError:
+        prev = None
+    prev_enc = (prev.get("encryption") or None) if isinstance(prev, dict) else None
+    pinned = prev_enc if _same_place(prev, cfg) else False  # False: 이 PC 가 쓰던 자리가 아니다
+    raw = be.read_marker()
+    created = None
+    if raw is None or not raw.strip():  # 새 저장소
+        enc = None
+        if a.encrypt is not False:
+            created = None if be.key_path.exists() else be.key_path
+            enc = {"type": "age", "recipients": [sfbackend.make_key(be.key_path)]}
+        declared = be.ensure(enc).get("encryption")
+    else:
+        declared = sfbackend.parse_marker(raw).get("encryption")
+        if a.encrypt and not declared:
+            raise sfbackend.BackendError("암호화하지 않고 만든 저장소다 — 암호화하려면 새 bucket 이나 --prefix 로 init 한다")
+        if a.encrypt is False and declared:
+            raise sfbackend.BackendError("age 로 암호화한 저장소라 --no-encrypt 로 바꿀 수 없다")
+        # 자리를 다르게 적어 같은 저장소로 안 보여도: 암호화를 쓰던 PC 가 평문 저장소로 가려면 그렇다고 적어야 한다
+        if pinned is False and prev_enc and not declared and a.encrypt is not False \
+                and not a.accept_encryption_change:
+            raise sfbackend.BackendError("이 PC 는 암호화한 저장소를 쓰고 있었는데 이 저장소는 암호화하지 않았다 — "
+                                         "평문 저장소로 옮기는 게 맞으면 --no-encrypt 를 붙인다")
+    if pinned is not False and declared != pinned and not a.accept_encryption_change:
+        raise sfbackend.BackendError(
+            f"저장소 표시의 암호화 설정이 이 PC 가 쓰던 것과 다르다 (이 PC: {describe_encryption(pinned)} → 표시: "
+            f"{describe_encryption(declared)}) — 누가 왜 바꿨는지 확인한다. 맞게 바꾼 것이면 --accept-encryption-change 를 붙인다")
+    if declared:
+        sfbackend.Age(declared, be.key_path).check_key()  # 다른 PC 가 만든 저장소면 그 키를 복사해 왔어야 한다
+    be.encryption = declared
+    return declared, created
+
+
+def describe_encryption(enc) -> str:
+    return f"age {', '.join(enc['recipients'])}" if enc else "암호화 없음"
 
 
 def cmd_init(a):
@@ -998,10 +1060,12 @@ def cmd_init(a):
     clone 포함)가 있으면 그 내용이 그대로 올라간다."""
     try:
         cfg, be, new_creds = _init_config(a)
-        be.ensure()
+        enc, created_key = _init_encryption(a, cfg, be)
     except (sfbackend.BackendError, OSError) as e:
         print(f"init: {e}", file=sys.stderr)
         sys.exit(1)
+    if enc:
+        cfg["encryption"] = enc
     root = state_root()
     with state_lock():
         if new_creds:
@@ -1022,11 +1086,28 @@ def cmd_init(a):
             sys.exit(1)
     print(f"STATE_ROOT={root}")
     print(f"BACKEND={be.describe()}")
+    print(f"ENCRYPTION={encryption_line(enc, be.key_path)}")
+    if enc and len(enc["recipients"]) > 1:
+        print("ENCRYPTION_WARN=공개키가 여럿이다 — init 은 하나만 만든다. 모두 아는 키인지 확인한다 "
+              "(모르는 키가 있으면 그 키의 주인도 기록을 풀 수 있다)")
+    if created_key:
+        print(f"AGE_KEY_CREATED={tilde(created_key)} — 다른 PC 에는 이 파일을 같은 자리에 복사한다 (mode 600). "
+              "잃으면 올린 기록을 아무도 풀 수 없으니 따로 보관해 둔다")
     if archived:
         print(f"GIT_ARCHIVE={archived} (예전 state repo 의 .git — 확인 뒤 지워도 된다)")
     print(f"PULL=ok (받음 {len(pulled['got'])} · 지움 {len(pulled['removed'])})")
     print(f"PUSH=ok (올림 {len(pushed['put'])} · 지움 {len(pushed['deleted'])})")
     print_conflicts(pulled["conflicts"] + pushed["conflicts"])
+
+
+def key_file() -> Path:
+    return sfbackend.key_file(backend_config_file())
+
+
+def encryption_line(enc, key_path) -> str:
+    if not enc:
+        return "off (WARN: 저장소에 닿는 사람은 핸드오프·대화 기록을 그대로 읽을 수 있다)"
+    return f"age ({', '.join(enc['recipients'])} · 푸는 키 {tilde(key_path)})"
 
 
 def logs_lifecycle(logs: str, rules: list) -> str:
@@ -1060,6 +1141,14 @@ def cmd_doctor(a):
     except sfbackend.BackendError as e:
         print(f"STORE=failed ({e})")
         sys.exit(1)
+    try:
+        cipher = be.cipher()
+        if cipher:
+            cipher.check_key()
+        print(f"ENCRYPTION={encryption_line(be.encryption, be.key_path)}")
+    except sfbackend.BackendError as e:
+        print(f"ENCRYPTION=failed ({e})")
+        sys.exit(1)
 
     key = f".doctor/{socket.gethostname().split('.')[0] or 'host'}-{os.getpid()}"
     try:
@@ -1078,6 +1167,13 @@ def cmd_doctor(a):
         except sfbackend.PreconditionFailed:
             print("IF_MATCH=ok")
         e2 = be.put(key, b"4", if_match=be.stat(key))
+        if cipher:
+            stored, plain = be.get_raw(key)[0], be.get(key)[0]
+            if stored.startswith(sfbackend.AGE_MAGIC) and plain == b"4":
+                print("SEALED=ok (올라간 내용은 암호문이고 이 PC 의 키로 풀린다)")
+            else:
+                print("SEALED=failed (올라간 내용이 암호문이 아니거나 다시 풀리지 않는다)")
+                failed = True
         if hasattr(be, "delete_request"):
             status = be.delete_request(key, if_match=e1 if e1 != e2 else "0" * 32)
             if status == 412:
@@ -1150,6 +1246,12 @@ def main(argv=None):
     g.add_argument("--virtual-host", dest="path_style", action="store_false")
     sp.add_argument("--credentials-stdin", action="store_true",
                     help="s3: 자격증명을 stdin 으로 받아 credentials.json(mode 600)에 저장한다")
+    g = sp.add_mutually_exclusive_group()
+    g.add_argument("--encrypt", dest="encrypt", action="store_true", default=None,
+                   help="age 로 암호화한다 (새 저장소의 기본값)")
+    g.add_argument("--no-encrypt", dest="encrypt", action="store_false", help="새 저장소를 암호화하지 않는다")
+    sp.add_argument("--accept-encryption-change", action="store_true",
+                    help="저장소 표시의 암호화 설정이 이 PC 가 쓰던 것과 달라도 받아들인다 (바뀐 이유를 확인한 뒤에만)")
     sp.set_defaults(fn=cmd_init)
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
 

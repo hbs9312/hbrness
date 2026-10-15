@@ -93,7 +93,7 @@ log             /log [list]                   → sessions of this repo across t
                 /log save [title]             → store a summary for hookless chats (web) as a `manual` record
 ```
 
-Storage: followup/handoff live in ~/.hbrness/state/<repo-key>/ synced through an S3-API backend (sfstate.py init --backend s3 …; conditional writes, conflicts set aside in _conflicts/). Transcripts live only in the backend under logs/. phase-run/phase-loop state stays PC-local.
+Storage: followup/handoff live in ~/.hbrness/state/<repo-key>/ synced through an S3-API backend (sfstate.py init --backend s3 …; conditional writes, conflicts set aside in _conflicts/; new stores are age-encrypted, decrypt key ~/.hbrness/age.key copied once per PC, --no-encrypt opts out). Transcripts live only in the backend under logs/. phase-run/phase-loop state stays PC-local.
 
 handoff = carry THIS work forward (1-shot/worktree). followup = LATER backlog (persistent/project). phase-run = hands-off multi-phase run that resets context between phases. phase-loop = phase-run plus shipping. log = find past conversations from any tool (collected by hooks, nothing to save manually).
 
