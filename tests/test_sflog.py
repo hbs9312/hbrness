@@ -286,6 +286,251 @@ class StoreSwitchTests(CollectEnv):
         self.assertIsNotNone(json.loads((self.remote('claude', 'gone') / 'meta.json').read_text())['ended'])
 
 
+CLAUDE_LINES = [
+    {'type': 'mode', 'mode': 'x'},
+    {'type': 'user', 'isMeta': True, 'message': {'role': 'user', 'content': '<local-command-caveat>x</local-command-caveat>'}},
+    {'type': 'user', 'timestamp': 't1', 'message': {'role': 'user', 'content':
+        '<command-name>/clear</command-name><command-message>clear</command-message><command-args></command-args>'}},
+    {'type': 'user', 'timestamp': 't2', 'message': {'role': 'user', 'content': '로그인 버그 고쳐줘'}},
+    {'type': 'assistant', 'timestamp': 't3', 'message': {'role': 'assistant', 'content': [
+        {'type': 'thinking', 'thinking': 'secret thoughts'}, {'type': 'text', 'text': '보겠습니다.'},
+        {'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'pytest -q'}}]}},
+    {'type': 'user', 'timestamp': 't4', 'message': {'role': 'user', 'content': [
+        {'type': 'tool_result', 'content': [{'type': 'text', 'text': '1 failed'}]}]}},
+]
+CODEX_LINES = [
+    {'type': 'session_meta', 'payload': {'cwd': '/x'}},
+    {'type': 'response_item', 'timestamp': 't1', 'payload': {'type': 'message', 'role': 'developer', 'content': [{'type': 'input_text', 'text': 'rules'}]}},
+    {'type': 'response_item', 'timestamp': 't1', 'payload': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': '<environment_context>cwd</environment_context>'}]}},
+    {'type': 'response_item', 'timestamp': 't2', 'payload': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': '리뷰해줘'}]}},
+    {'type': 'response_item', 'timestamp': 't3', 'payload': {'type': 'custom_tool_call', 'name': 'apply_patch', 'input': '*** Begin Patch'}},
+    {'type': 'response_item', 'timestamp': 't4', 'payload': {'type': 'custom_tool_call_output', 'output': [{'type': 'text', 'text': 'Done'}]}},
+    {'type': 'response_item', 'timestamp': 't5', 'payload': {'type': 'function_call', 'name': 'shell', 'arguments': '{"cmd":"ls"}'}},
+    {'type': 'response_item', 'timestamp': 't6', 'payload': {'type': 'function_call_output', 'output': 'a b'}},
+    {'type': 'response_item', 'timestamp': 't7', 'payload': {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': '끝났습니다'}]}},
+]
+GROK_LINES = [
+    {'type': 'system', 'content': 'sys'},
+    {'type': 'user', 'content': [{'type': 'text', 'text': '<user_info>\nOS Version: macos\n</user_info>'}]},
+    {'type': 'user', 'synthetic_reason': 'system_reminder', 'content': [{'type': 'text', 'text': 'skills'}]},
+    {'type': 'user', 'prompt_index': 0, 'content': [{'type': 'text', 'text': '<user_query>\n배포 스크립트 점검\n</user_query>'}]},
+    {'type': 'reasoning', 'summary': []},
+    {'type': 'assistant', 'content': '확인합니다', 'tool_calls': [{'id': '1', 'name': 'run_terminal_command', 'arguments': '{"command":"ls"}'}]},
+    {'type': 'tool_result', 'tool_call_id': '1', 'content': 'deploy.sh'},
+]
+DEVIN_DOC = {'schema_version': '1', 'session_id': 'd', 'steps': [
+    {'source': 'system', 'message': 'sys'},
+    {'source': 'user', 'timestamp': 't1', 'message': '테스트 돌려줘'},
+    {'source': 'agent', 'timestamp': 't2', 'message': '돌립니다', 'tool_calls': [{'function_name': 'exec', 'arguments': {'command': 'npm test'}}],
+     'observation': {'results': [{'source_call_id': 'x', 'content': 'ok'}]}},
+]}
+
+
+def jl(lines):
+    return ''.join(json.dumps(l, ensure_ascii=False) + '\n' for l in lines).encode()
+
+
+class NormaliseTests(unittest.TestCase):
+    def roles(self, events):
+        return [(e['role'], e['name'] or '', e['text']) for e in events]
+
+    def test_claude(self):
+        self.assertEqual(self.roles(sflog.events_from('claude', 'jsonl-segments', jl(CLAUDE_LINES)))[1:], [
+            ('user', '', '로그인 버그 고쳐줘'), ('assistant', '', '보겠습니다.'),
+            ('tool', 'Bash', '{"command": "pytest -q"}'), ('result', '', '1 failed')])
+
+    def test_codex_skips_developer_and_injected_context(self):
+        self.assertEqual(self.roles(sflog.events_from('codex', 'jsonl-segments', jl(CODEX_LINES))), [
+            ('user', '', '리뷰해줘'), ('tool', 'apply_patch', '*** Begin Patch'), ('result', '', 'Done'),
+            ('tool', 'shell', '{"cmd":"ls"}'), ('result', '', 'a b'), ('assistant', '', '끝났습니다')])
+
+    def test_grok_skips_injected_and_synthetic(self):
+        self.assertEqual(self.roles(sflog.events_from('grok', 'jsonl-segments', jl(GROK_LINES))), [
+            ('user', '', '<user_query>\n배포 스크립트 점검\n</user_query>'), ('assistant', '', '확인합니다'),
+            ('tool', 'run_terminal_command', '{"command":"ls"}'), ('result', '', 'deploy.sh')])
+
+    def test_devin(self):
+        self.assertEqual(self.roles(sflog.events_from('devin', 'json-snapshot', json.dumps(DEVIN_DOC).encode())), [
+            ('user', '', '테스트 돌려줘'), ('assistant', '', '돌립니다'),
+            ('tool', 'exec', '{"command": "npm test"}'), ('result', '', 'ok')])
+
+    def test_injected_blocks_are_dropped_one_by_one(self):
+        codex = [{'type': 'response_item', 'payload': {'type': 'message', 'role': 'user', 'content': [
+            {'type': 'input_text', 'text': '<environment_context>cwd</environment_context>'},
+            {'type': 'input_text', 'text': 'Fix the login bug'}]}}]
+        self.assertEqual(self.roles(sflog.events_from('codex', 'jsonl-segments', jl(codex))),
+                         [('user', '', 'Fix the login bug')])
+        grok = [{'type': 'user', 'content': [{'type': 'text', 'text': '<user_info>OS</user_info>\n배포 점검'}]}]
+        self.assertEqual(self.roles(sflog.events_from('grok', 'jsonl-segments', jl(grok))), [('user', '', '배포 점검')])
+        only = [{'type': 'user', 'content': [{'type': 'text', 'text': '<system-reminder>never closed'}]}]
+        self.assertEqual(sflog.events_from('grok', 'jsonl-segments', jl(only)), [])
+
+    def test_title_applies_line_patterns_before_flattening(self):
+        import re
+        extra = [('custom', re.compile(r'(?m)^internal-credential-.*$'))]
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / 'c.jsonl'
+            f.write_bytes(jl([{'type': 'user', 'message': {'role': 'user', 'content':
+                'Here is the credential:\ninternal-credential-demo\nPlease use it.'}}]))
+            title = sflog.derive_title('claude', f, extra)
+        self.assertNotIn('internal-credential-demo', title)
+        self.assertIn('[REDACTED:custom]', title)
+
+    def test_title_respects_whitespace_sensitive_patterns(self):
+        import re
+        extra = [('custom', re.compile(r'(?m)^    internal-credential-.*$'))]
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / 'c.jsonl'
+            f.write_bytes(jl([{'type': 'user', 'message': {'role': 'user', 'content':
+                '    internal-credential-demo\nPlease use it.'}}]))
+            title = sflog.derive_title('claude', f, extra)
+        self.assertNotIn('internal-credential-demo', title)
+
+    def test_titles(self):
+        with tempfile.TemporaryDirectory() as d:
+            for tool, name, data, want in (
+                    ('claude', 'c.jsonl', jl(CLAUDE_LINES), '로그인 버그 고쳐줘'),
+                    ('grok', 'g.jsonl', jl(GROK_LINES), '배포 스크립트 점검'),
+                    ('devin', 'd.json', json.dumps(DEVIN_DOC).encode(), '테스트 돌려줘')):
+                f = Path(d) / name
+                f.write_bytes(data)
+                self.assertEqual(sflog.derive_title(tool, f), want)
+            f = Path(d) / 'cmd.jsonl'
+            f.write_bytes(jl([{'type': 'user', 'message': {'role': 'user', 'content':
+                '<command-name>/sessionflow:phase-loop</command-name><command-args>continue</command-args>'}}]))
+            self.assertEqual(sflog.derive_title('claude', f), '/sessionflow:phase-loop continue')
+
+    def test_render(self):
+        out = sflog.render(sflog.events_from('claude', 'jsonl-segments', jl(CLAUDE_LINES)))
+        self.assertIn('### user · t2\n\n로그인 버그 고쳐줘', out)
+        self.assertIn('→ Bash: {"command": "pytest -q"}', out)
+        self.assertIn('← 1 failed', out)
+        self.assertNotIn('secret thoughts', out)
+        self.assertNotIn('→ Bash', sflog.render(sflog.events_from('claude', 'jsonl-segments', jl(CLAUDE_LINES)), tools=False))
+
+
+class ReadCommandTests(CollectEnv):
+    def run_log(self, *args, input=None):
+        return sh(sys.executable, str(SFLOG), *args, cwd=self.project, env=self.env(), input=input)
+
+    def setUp(self):
+        super().setUp()
+        for tool, name, data in (('claude', 'c.jsonl', jl(CLAUDE_LINES)), ('codex', 'x.jsonl', jl(CODEX_LINES)),
+                                 ('devin', 'd.json', json.dumps(DEVIN_DOC).encode())):
+            f = self.base / name
+            f.write_bytes(data)
+            self.collect(tool, f'{tool}-session-1', f, final=True)
+
+    def test_list_show_search(self):
+        out = self.run_log('list')
+        self.assertIn('LOGS=github.com/acme/app · 3개', out)
+        self.assertIn('로그인 버그 고쳐줘', out)
+        self.assertIn('codex   codex-session-1', out)
+        self.assertIn('codex-session-1', self.run_log('list', '--tool', 'codex'))
+        self.assertNotIn('claude-session-1', self.run_log('list', '--tool', 'codex'))
+
+        shown = self.run_log('show', 'claude-sess')
+        self.assertIn('# claude · claude-session-1', shown)
+        self.assertIn('→ Bash:', shown)
+        target = self.base / 'shown.md'
+        self.assertIn('사용자 말 1개', self.run_log('show', 'devin-session-1', '--no-tools', '--out', str(target)))
+        self.assertNotIn('→ exec', target.read_text())
+
+        found = self.run_log('search', 'npm test')
+        self.assertIn('devin-session-1', found)
+        self.assertIn('SEARCH=1개 세션', found)
+        self.assertIn('SEARCH=2개 세션', self.run_log('search', '--regex', '버그|리뷰'))
+
+    def test_search_does_not_keep_transcripts_around(self):
+        os.environ['HBRNESS_HOME'] = str(self.home)
+        try:
+            r = sflog.Remote(sflog.sfbackend.LocalBackend(self.store))
+            metas = r.sessions('github.com/acme/app')
+            for m in metas:
+                r.events(m)
+            self.assertFalse(any(k == '_raw' for m in metas for k in m))
+        finally:
+            os.environ.pop('HBRNESS_HOME', None)
+
+    def test_show_needs_a_unique_prefix(self):
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.run_log('show', 'c')  # claude·codex 둘 다
+        self.assertIn('SHOW=ambiguous', cm.exception.stdout)
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            self.run_log('show', 'nope')
+        self.assertIn('SHOW=none', cm.exception.stdout)
+
+    def test_save_redacts_and_lists_as_manual(self):
+        out = self.run_log('save', '--title', '웹 채팅 요약', input='# 요약\n\npassword="hunter2 x" 로 접속했다\n')
+        sid = out.split('SAVED=')[1].split()[0]
+        self.assertIn('웹 채팅 요약', self.run_log('list', '--tool', 'manual'))
+        shown = self.run_log('show', sid)
+        self.assertIn('[REDACTED:assignment]', shown)
+        self.assertNotIn('hunter2', shown)
+
+    def test_other_repos_need_all_repos(self):
+        other = self.base / 'elsewhere'
+        other.mkdir()
+        out = sh(sys.executable, str(SFLOG), 'list', cwd=other, env=self.env())
+        self.assertIn('LOGS=_norepo · 0개', out)
+        out = sh(sys.executable, str(SFLOG), 'list', '--all-repos', cwd=other, env=self.env())
+        self.assertIn('github.com/acme/app', out)
+
+
+class RemoteCacheTests(CollectEnv):
+    def open_remote(self):
+        os.environ['HBRNESS_HOME'] = str(self.home)  # 캐시 위치 — 각 테스트가 끝에 되돌린다
+        be = sflog.sfbackend.LocalBackend(self.store)
+        return sflog.Remote(be), be
+
+    def test_parallel_fetches_and_new_versions(self):
+        import threading
+        saved = os.environ.get('HBRNESS_HOME')
+        try:
+            r1, be = self.open_remote()
+            r2, _ = self.open_remote()
+            etag = be.put('logs/x/claude/s/meta.json', b'v1')
+            errors = []
+
+            def go(r):
+                try:
+                    for _ in range(20):
+                        self.assertEqual(r.fetch('logs/x/claude/s/meta.json', etag), b'v1')
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+            ts = [threading.Thread(target=go, args=(r,)) for r in (r1, r2, r1, r2)]
+            [t.start() for t in ts]
+            [t.join() for t in ts]
+            self.assertEqual(errors, [])
+            etag2 = be.put('logs/x/claude/s/meta.json', b'v2')
+            self.assertEqual(r2.fetch('logs/x/claude/s/meta.json', etag2), b'v2')
+            cached = list((r1.dir / 'objects' / 'logs/x/claude/s').glob('meta.json@*'))
+            self.assertEqual(len(cached), 1)  # 예전 버전은 지운다
+            self.assertFalse((r1.dir / 'index.json').exists())
+        finally:
+            if saved is None:
+                os.environ.pop('HBRNESS_HOME', None)
+            else:
+                os.environ['HBRNESS_HOME'] = saved
+
+    def test_sessions_sort_by_instant_across_offsets(self):
+        saved = os.environ.get('HBRNESS_HOME')
+        try:
+            r, be = self.open_remote()
+            for sid, updated in (('a', '2026-10-01T12:00:00+09:00'),   # 03:00Z
+                                 ('b', '2026-10-01T04:00:00+00:00'),   # 04:00Z — 더 최근
+                                 ('c', '2026-10-01T02:30:00Z')):
+                be.put(f'logs/r/claude/{sid}/meta.json', json.dumps({'session_id': sid, 'tool': 'claude',
+                                                                      'updated': updated}).encode())
+            self.assertEqual([m['session_id'] for m in r.sessions('r')], ['b', 'a', 'c'])
+            self.assertGreater(sflog.instant('2026-10-01T04:00:00+00:00'), sflog.instant('2026-10-01T12:00:00+09:00'))
+        finally:
+            if saved is None:
+                os.environ.pop('HBRNESS_HOME', None)
+            else:
+                os.environ['HBRNESS_HOME'] = saved
+
+
 class LifecycleTests(unittest.TestCase):
     def test_only_full_unfiltered_expiration_counts(self):
         f = sflog.sfstate.logs_lifecycle

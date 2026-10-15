@@ -12,6 +12,7 @@
 | `handoff-clear` | `/handoff-clear [-y] [--all]` | 현재 브랜치의 핸드오프 삭제(다른 PC 에도 반영) + `MEMORY.md` 의 해당 라인 정리. `--all` 로 저장소 전체 핸드오프 일괄 정리. | 저장소 + 브랜치 단위 (또는 `--all` 시 저장소 전체) |
 | `phase-run` | `/phase-run [continue\|pause\|resume\|stop\|status\|reset] \| <계획>` | 작업을 페이즈로 분해해, 각 페이즈가 끝나면 자기 pane 에 `/clear` + `/phase-run continue` 를 자동 주입 → 새 세션이 `HANDOFF.md` 를 읽고 다음 페이즈를 이어받게 한다. 컨텍스트 누적을 경계마다 리셋. 자동 커밋은 하지 않음. | 워크트리 단위 (PC 로컬, 동기화 안 함) |
 | `phase-loop` | `/phase-loop [continue\|pause\|resume\|stop\|status\|reset] \| <구현 계획>` | `phase-run` 엔진 위에 각 페이즈 경계마다 **구현 → xreview 리뷰 N라운드 → 커밋 → push → PR → 핸드오프** 를 끼워 넣어, 모든 페이즈(=PR 단위)가 끝날 때까지 자동 반복하는 루프. 개인=브랜치 직접, 팀=워크트리+스택 PR. 커밋은 모드별(팀=무인 / 개인=확인). | 워크트리 단위 (PC 로컬, phase-run 과 분리된 `phase-loop` 상태 네임스페이스, HANDOFF 는 공유) |
+| `log` | `/log [list \| show <session> \| search <검색어> \| save [제목]]` | 훅이 모은 **대화 기록**을 도구(Claude / Codex / Grok / Devin)·PC 와 상관없이 같은 형식으로 목록·열람·검색한다. 훅이 없는 곳(웹 채팅 등)의 대화는 `save` 로 요약을 남긴다. | 저장소 단위 (`--all-repos` 로 전체) |
 
 ### phase-run 동작 개요
 
@@ -212,6 +213,7 @@ python3 <sessionflow>/scripts/sfstate.py migrate-all
 - **자리**: 세션을 처음 수집할 때의 cwd 로 저장소 키를 정하고, 세션 내내 그 자리에 모은다(도중에 `cd` 해도 한 세션은 한 곳에). 올린 위치(offset)는 `~/.hbrness/logs/sessions/<tool>-<session>.json` 에 적고 저장소 ID 에 묶는다 — backend 를 바꾸면 그 세션을 처음부터 다시 올린다. transcript 가 사라져도 세션이 끝났다는 것(`ended`)은 올린다. transcript 가 줄었거나 앞부분이 바뀌면(다시 쓰임) 처음부터 새 segment 로 잇고 `meta.json` 의 `rewrites` 를 올린다.
 - **비밀값 가리기**: 올리기 전에 private key 블록, AWS access key, GitHub·Anthropic·OpenAI·Slack·Google·Atlassian 토큰, JWT, `Bearer …`, `password=…`·`DB_PASSWORD="…"`·`"api_key": "…"` 꼴의 값을 `[REDACTED:<종류>]` 로 바꾼다. 따옴표로 묶인 값은 짧거나 공백이 있어도 닫는 따옴표까지 통째로 가린다. transcript 는 줄마다 JSON 으로 풀어서 문자열 값을 검사하고(escape 에 가려지지 않게), `password`·`api_key`·`client_secret` 같은 이름의 key 값은 숫자여도 가린다. 가린 줄만 다시 직렬화하므로 JSON 이 깨지지 않고, segment 는 줄 중간에서 자르지 않는다. `~/.hbrness/redact.txt` 에 한 줄에 정규식 하나씩 더할 수 있다. 패턴에 안 걸리는 비밀값은 그대로 올라가므로 bucket 은 공개하지 않는다.
 - **보관 기간**: 기록은 계속 쌓인다. bucket lifecycle 규칙으로 `<prefix>logs/` 에 만료를 건다(예: 180일). `sfstate.py doctor` 가 규칙이 없으면 `LOGS_LIFECYCLE=none` 으로 알린다.
+- **읽기**: `/log` 스킬(`sflog.py list|show|search|save`). 도구마다 다른 transcript 를 읽을 때 같은 사건 목록(user / assistant / 도구 호출 / 결과)으로 바꾼다 — 도구가 끼워 넣은 환경·지침 블록과 thinking 은 뺀다. 읽은 object 는 `~/.hbrness/logs/cache/` 에 etag 와 함께 두고 바뀐 것만 다시 받는다. `meta.json` 의 `title` 은 첫 사용자 말(인자 없는 슬래시 명령은 건너뜀)이고, 비밀값을 가린 뒤 올린다.
 - **실패**: 수집기는 뒤에서 조용히 돌기 때문에 실패를 `~/.hbrness/logs/collect.log` 에 남긴다. 직접 돌려 볼 수도 있다: `python3 <sessionflow>/scripts/sflog.py collect --tool claude --session <id> --transcript <path> --cwd <dir>`.
 
 ## MEMORY.md 갱신 (Tier 2 — 하네스별 자동로드 위치)

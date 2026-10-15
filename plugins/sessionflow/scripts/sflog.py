@@ -13,10 +13,23 @@
 S3 object 는 뒤에 이어 쓸 수 없어서, JSONL 은 지난번에 올린 곳(offset) 뒤로 늘어난 줄만 segment 로 올린다.
 offset 은 ~/.hbrness/logs/sessions/<tool>-<session>.json 에 적는다.
 
+  logs/<repo-key|_norepo>/manual/<id>/transcript.md              훅이 없는 곳에서 save 로 남긴 기록
+
 서브커맨드:
   collect --tool T --session S [--transcript P] [--cwd D] [--final]
           한 세션의 새 내용을 올린다. backend 가 없으면 아무것도 하지 않는다.
           --final: 세션 끝 — 마지막 줄이 줄바꿈 없이 끝나도 올린다.
+  list    [--dir D] [--all-repos] [--tool T] [--limit N] [--json]
+          이 저장소(또는 전체)의 세션을 최근 것부터. meta.json 만 읽는다.
+  show    SESSION [--dir D] [--all-repos] [--no-tools] [--full] [--raw] [--out FILE]
+          세션 하나를 도구와 상관없이 같은 형식(### user / ### assistant / → 도구 / ← 결과)으로 보여준다.
+          SESSION 은 session id 의 앞부분이면 된다.
+  search  QUERY [--dir D] [--all-repos] [--days N] [--tool T] [--regex] [--limit N]
+          최근 N일(기본 30) 세션에서 글을 찾는다.
+  save    --title T [--dir D] [--file F]      (없으면 stdin)
+          훅이 없는 곳(웹 채팅 등)의 대화·요약을 manual 기록으로 남긴다. 비밀값을 가린 뒤 올린다.
+
+읽은 object 는 ~/.hbrness/logs/cache/ 에 etag 와 함께 둔다 — 바뀐 것만 다시 받는다.
 
 비밀값 가리기: 아래 SECRET_PATTERNS + ~/.hbrness/redact.txt (한 줄에 정규식 하나, # 주석).
 """
@@ -338,6 +351,7 @@ def write_meta(be, st: dict, tool: str, session: str):
         "host": socket.gethostname().split(".")[0], "format": st.get("format"),
         "segments": int(st.get("seq", 0)), "rewrites": int(st.get("rewrites", 0)),
         "started": st.get("started"), "updated": st["updated"], "ended": st.get("ended"),
+        "title": st.get("title") or "",
     }
     be.put(f"{st['prefix']}/meta.json", json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
     st["meta_sent"], st["meta_dirty"] = True, False
@@ -373,6 +387,10 @@ def collect(tool: str, session: str, transcript: str = "", cwd: str = "", final:
         else:
             st["format"] = "json-snapshot"
             sent = upload_snapshot(be, st, src, prefix, extra)
+        if not st.get("title"):
+            title = derive_title(tool, src, extra)
+            if title:
+                st["title"], st["meta_dirty"] = title, True
         if st.get("meta_dirty") or not st.get("meta_sent"):
             write_meta(be, st, tool, session)
         return f"uploaded {sent}" if sent else "nochange"
@@ -390,6 +408,421 @@ def cmd_collect(a):
         raise
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 읽기 — 도구마다 다른 transcript 를 같은 사건 목록으로
+# ─────────────────────────────────────────────────────────────────────────────
+# 사건(event): {"role": user|assistant|tool|result|note, "text": str, "ts": str|None, "name": 도구 이름|None}
+
+# 도구가 사용자 말인 것처럼 끼워 넣는 환경·지침 블록 — 사람이 쓴 말이 아니다
+INJECTED_TAGS = ("environment_context", "user_instructions", "permissions", "turn_aborted", "user_info",
+                 "system-reminder", "local-command-caveat")
+INJECTED_BLOCK = re.compile(r"<(" + "|".join(map(re.escape, INJECTED_TAGS)) + r")\b[^>]*>.*?</\1>\s*", re.S)
+INJECTED_OPEN = tuple(f"<{t}" for t in INJECTED_TAGS) + ("# AGENTS.md",)
+
+
+def human(text: str) -> str:
+    """끼워 넣은 블록을 떼어 낸 사람의 말. 같은 글 안에 사람이 쓴 말이 남아 있으면 그것만 남긴다."""
+    rest = INJECTED_BLOCK.sub("", text)
+    if rest.lstrip().startswith(INJECTED_OPEN):  # 닫히지 않은 블록·AGENTS.md 지침 — 통째로 끼워 넣은 것
+        return ""
+    return rest.strip()
+
+
+def human_of(content) -> str:
+    """사용자 메시지의 블록마다 끼워 넣은 것을 따로 걸러 낸 뒤 이어 붙인다 — 한 블록 때문에 전체를 버리지 않게."""
+    blocks = content if isinstance(content, list) else [content]
+    return "\n".join(t for t in (human(text_of([b]) if not isinstance(b, str) else b) for b in blocks) if t)
+
+
+def ev(role, text, ts=None, name=None) -> dict:
+    return {"role": role, "text": text if isinstance(text, str) else "", "ts": ts, "name": name}
+
+
+def text_of(content) -> str:
+    """문자열이거나 [{type: text|input_text|output_text, text}] 블록 목록일 때 글만 모은다."""
+    if isinstance(content, str):
+        return content
+    out = []
+    for b in content if isinstance(content, list) else []:
+        if isinstance(b, str):
+            out.append(b)
+        elif isinstance(b, dict) and isinstance(b.get("text"), str):
+            out.append(b["text"])
+    return "\n".join(out)
+
+
+def dump(v) -> str:
+    if v is None:
+        return ""
+    return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+
+
+def events_claude(records):
+    for d in records:
+        t, ts = d.get("type"), d.get("timestamp")
+        if t not in ("user", "assistant") or d.get("isMeta"):
+            continue
+        content = (d.get("message") or {}).get("content")
+        if isinstance(content, str):
+            text = human(content) if t == "user" else content
+            if text:
+                yield ev(t, text, ts)
+            continue
+        for b in content if isinstance(content, list) else []:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text":
+                text = human(b.get("text") or "") if t == "user" else b.get("text")
+                if text:
+                    yield ev(t, text, ts)
+            elif b.get("type") == "tool_use":
+                yield ev("tool", dump(b.get("input")), ts, b.get("name"))
+            elif b.get("type") == "tool_result":
+                yield ev("result", text_of(b.get("content")), ts)
+
+
+def events_codex(records):
+    for d in records:
+        if d.get("type") != "response_item":
+            continue
+        p, ts = d.get("payload") or {}, d.get("timestamp")
+        kind = p.get("type")
+        if kind == "message" and p.get("role") in ("user", "assistant"):
+            text = human_of(p.get("content")) if p["role"] == "user" else text_of(p.get("content"))
+            if text:
+                yield ev(p["role"], text, ts)
+        elif kind in ("function_call", "custom_tool_call", "local_shell_call"):
+            yield ev("tool", dump(p.get("arguments") or p.get("input") or p.get("action")), ts, p.get("name"))
+        elif kind in ("function_call_output", "custom_tool_call_output"):
+            out = p.get("output")
+            yield ev("result", text_of(out) if isinstance(out, list) else dump(out), ts)
+
+
+def events_grok(records):
+    for d in records:
+        t, ts = d.get("type"), d.get("timestamp")
+        if t == "user" and not d.get("synthetic_reason"):
+            text = human_of(d.get("content"))
+            if text:
+                yield ev("user", text, ts)
+        elif t == "assistant":
+            if d.get("content"):
+                yield ev("assistant", text_of(d.get("content")), ts)
+            for c in d.get("tool_calls") or []:
+                if isinstance(c, dict):
+                    yield ev("tool", dump(c.get("arguments")), ts, c.get("name"))
+        elif t == "tool_result":
+            yield ev("result", text_of(d.get("content")), ts)
+
+
+def events_devin(doc):
+    for st in (doc.get("steps") or []) if isinstance(doc, dict) else []:
+        if not isinstance(st, dict):
+            continue
+        src, ts = st.get("source"), st.get("timestamp")
+        if src == "user" and human(dump(st.get("message"))):
+            yield ev("user", human(dump(st.get("message"))), ts)
+        elif src == "agent":
+            if st.get("message"):
+                yield ev("assistant", dump(st.get("message")), ts)
+            for c in st.get("tool_calls") or []:
+                if isinstance(c, dict):
+                    yield ev("tool", dump(c.get("arguments")), ts, c.get("function_name"))
+            for r in (st.get("observation") or {}).get("results") or []:
+                if isinstance(r, dict):
+                    yield ev("result", dump(r.get("content")), ts)
+
+
+JSONL_EVENTS = {"claude": events_claude, "codex": events_codex, "grok": events_grok}
+
+
+def jsonl_records(data: bytes):
+    for line in data.splitlines():
+        try:
+            d = json.loads(line)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            continue
+        if isinstance(d, dict):
+            yield d
+
+
+def events_from(tool: str, fmt: str, data: bytes) -> list:
+    if fmt == "markdown":
+        return [ev("note", data.decode("utf-8", "replace"))]
+    if fmt == "json-snapshot":
+        try:
+            return list(events_devin(json.loads(data)))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            return []
+    return list(JSONL_EVENTS.get(tool, events_claude)(jsonl_records(data)))
+
+
+def derive_title(tool: str, src: Path, extra=()) -> str:
+    """첫 사용자 말 한 줄. meta.json 으로 올라가므로 비밀값을 가린다."""
+    try:
+        with open(src, "rb") as fh:
+            data = fh.read(2 * 1024 * 1024)
+        fmt = "jsonl-segments" if src.suffix == ".jsonl" else "json-snapshot"
+        # 올리는 기록과 똑같이 먼저 가린 뒤에 고른다 — 제목에는 올라간 기록에 있는 글만 들어간다
+        if fmt == "jsonl-segments":
+            data = redact_jsonl(data[:data.rfind(b"\n") + 1], extra)
+        else:
+            data = redact_json_bytes(data, extra)
+        for e in events_from(tool, fmt, data):
+            if e["role"] != "user":
+                continue
+            # 원문 그대로 먼저 가린다 — 줄을 합친 뒤에는 줄 단위 사용자 패턴이 안 걸린다
+            text = redact_text(e["text"], extra)
+            cmd = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
+            if cmd:  # Claude 슬래시 명령 — 인자가 있을 때만 제목감이다 (/clear 같은 건 건너뛴다)
+                args = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
+                plain = f"{cmd.group(1).strip()} {args.group(1).strip()}" if args and args.group(1).strip() else ""
+            else:
+                plain = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+                if re.fullmatch(r"/\S+", plain):
+                    plain = ""
+            if plain:
+                return redact_text(" ".join(plain.split()), extra)[:100]
+    except OSError:
+        pass
+    return ""
+
+
+def instant(ts) -> dt.datetime:
+    """ISO 시각 → 비교할 수 있는 시점. PC 마다 offset 이 달라도 같은 순간이면 같다. 못 읽으면 아주 옛날."""
+    try:
+        t = dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    return t if t.tzinfo else t.astimezone()
+
+
+def clip(text: str, limit) -> str:
+    text = text.strip()
+    if limit is None or len(text) <= limit:
+        return text
+    return text[:limit] + f" … (+{len(text) - limit}자)"
+
+
+def render(events, tools=True, full=False) -> str:
+    out = []
+    for e in events:
+        text = e["text"].strip()
+        if e["role"] in ("tool", "result"):
+            if not tools:
+                continue
+            if e["role"] == "tool":
+                out.append(f"→ {e['name'] or 'tool'}: {clip(text, None if full else 300)}")
+            elif text:
+                out += [f"← {clip(text, None if full else 500)}", ""]
+            continue
+        if not text:
+            continue
+        out += [f"### {e['role']}" + (f" · {e['ts']}" if e["ts"] else ""), "", text, ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 원격 기록 찾기 (캐시)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Remote:
+    """backend 의 logs/ 를 읽는다. 받은 object 는 etag 와 함께 캐시해 두고 바뀐 것만 다시 받는다."""
+
+    def __init__(self, be):
+        self.be = be
+        store = be.identity()
+        self.dir = logs_home() / "cache" / hashlib.sha256(store.encode()).hexdigest()[:16]
+
+    def fetch(self, key: str, etag: str) -> bytes:
+        """캐시 파일 이름에 etag 를 넣는다(<key>@<etag>). 그래서 index 가 따로 없고, 여러 명령이 겹쳐 돌아도
+        파일마다 통째로 바꿔 넣으니(os.replace) 반쯤 쓴 파일이나 엉뚱한 버전을 읽지 않는다."""
+        sfbackend.check_key(key)
+        f = self.dir / "objects" / f"{key}@{safe_part(etag)}"
+        try:
+            return f.read_bytes()
+        except FileNotFoundError:
+            pass
+        r = self.be.get(key)
+        if r is None:
+            raise sfbackend.BackendError(f"{key} 가 그사이 사라졌다")
+        data, got = r
+        f = self.dir / "objects" / f"{key}@{safe_part(got)}"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_name(f".tmp-{os.getpid()}-{os.urandom(4).hex()}")
+        tmp.write_bytes(data)
+        os.replace(tmp, f)
+        name = key.rsplit("/", 1)[-1]
+        for old in f.parent.glob(f"{glob_escape(name)}@*"):  # 같은 key 의 예전 버전
+            if old != f:
+                with contextlib.suppress(OSError):
+                    old.unlink()
+        return data
+
+    def sessions(self, repo_key, tool=None) -> list:
+        """meta 목록 (최근 갱신 순). repo_key 가 None 이면 모든 저장소."""
+        keys = self.be.list(f"logs/{repo_key}/" if repo_key else "logs/")
+        by_dir = {}
+        for k, etag in keys.items():
+            d, _, name = k.rpartition("/")
+            by_dir.setdefault(d, {})[name] = etag
+        out = []
+        for d, files in by_dir.items():
+            if "meta.json" not in files:
+                continue
+            try:
+                meta = json.loads(self.fetch(f"{d}/meta.json", files["meta.json"]))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if not isinstance(meta, dict) or (tool and meta.get("tool") != tool):
+                continue
+            meta["_dir"], meta["_files"] = d, files
+            out.append(meta)
+        out.sort(key=lambda m: instant(m.get("updated")), reverse=True)
+        return out
+
+    def raw(self, meta: dict) -> bytes:
+        """올라간 기록 원본(가린 뒤). meta 에 붙여 두지 않는다 — search 가 세션을 훑는 동안 쌓이지 않게."""
+        files, d = meta["_files"], meta["_dir"]
+        fmt = meta.get("format") or ""
+        if fmt == "markdown":
+            data = self.fetch(f"{d}/transcript.md", files["transcript.md"])
+        elif fmt == "json-snapshot":
+            data = gzip.decompress(self.fetch(f"{d}/transcript.json.gz", files["transcript.json.gz"]))
+        else:
+            segs = sorted(n for n in files if re.fullmatch(r"\d{6}\.jsonl\.gz", n))
+            data = b"".join(gzip.decompress(self.fetch(f"{d}/{n}", files[n])) for n in segs)
+        return data
+
+    def events(self, meta: dict) -> list:
+        return events_from(meta.get("tool") or "", meta.get("format") or "", self.raw(meta))
+
+
+def open_remote(a):
+    be = sfstate.load_backend()
+    if not be:
+        print("LOG=off (backend 가 없다 — sfstate.py init --backend … 로 정한다)")
+        sys.exit(1)
+    remote = Remote(be)
+    repo_key = None
+    if not a.all_repos:
+        ctx = sfstate.Ctx(a.dir)
+        repo_key = ctx.repo_key or "_norepo"
+    return remote, repo_key
+
+
+def find_session(remote, repo_key, wanted: str):
+    metas = remote.sessions(repo_key)
+    hits = [m for m in metas if str(m.get("session_id", "")).startswith(wanted)
+            or m["_dir"].rsplit("/", 1)[-1].startswith(wanted)]
+    exact = [m for m in hits if m.get("session_id") == wanted]
+    if exact:
+        return exact[0]
+    if len(hits) == 1:
+        return hits[0]
+    where = "모든 저장소" if repo_key is None else repo_key
+    if not hits:
+        print(f"SHOW=none ({where} 에 '{wanted}' 로 시작하는 세션이 없다 — 다른 저장소면 --all-repos)")
+    else:
+        print(f"SHOW=ambiguous ({len(hits)}개) — 더 길게 적는다:")
+        for m in hits[:20]:
+            print(f"  {m.get('session_id')}  {m.get('tool')}  {m.get('updated')}  {m.get('title') or ''}")
+    sys.exit(1)
+
+
+def meta_line(m: dict) -> str:
+    seg = m.get("segments") or (1 if m.get("format") in ("json-snapshot", "markdown") else 0)
+    where = "" if m.get("_repo_shown") else f"{m.get('repo_key') or '_norepo'} · "
+    return (f"{(m.get('updated') or '')[:16]}  {m.get('tool', '?'):<6}  {m.get('session_id')}  "
+            f"{where}{m.get('branch') or '-'} · {m.get('host') or '-'} · {seg}seg"
+            + (" · 진행 중" if not m.get("ended") else "") + (f"\n    {m['title']}" if m.get("title") else ""))
+
+
+def cmd_list(a):
+    remote, repo_key = open_remote(a)
+    metas = remote.sessions(repo_key, a.tool)[:a.limit]
+    if a.json:
+        print(json.dumps([{k: v for k, v in m.items() if not k.startswith("_")} for m in metas],
+                         ensure_ascii=False))
+        return
+    print(f"LOGS={repo_key or '(모든 저장소)'} · {len(metas)}개")
+    for m in metas:
+        m["_repo_shown"] = repo_key is not None
+        print(meta_line(m))
+
+
+def cmd_show(a):
+    remote, repo_key = open_remote(a)
+    meta = find_session(remote, repo_key, a.session)
+    data = remote.raw(meta)
+    events = events_from(meta.get("tool") or "", meta.get("format") or "", data)
+    if a.raw:
+        body = data.decode("utf-8", "replace")
+    else:
+        head = (f"# {meta.get('tool')} · {meta.get('session_id')}\n\n"
+                f"> repo: {meta.get('repo_key') or '-'} · branch: {meta.get('branch') or '-'} · "
+                f"host: {meta.get('host') or '-'}\n> {meta.get('started') or '?'} → "
+                f"{meta.get('ended') or meta.get('updated') or '진행 중'}\n\n")
+        body = head + render(events, tools=not a.no_tools, full=a.full)
+    if a.out:
+        Path(a.out).expanduser().write_text(body, encoding="utf-8")
+        turns = sum(1 for e in events if e["role"] == "user")
+        print(f"SHOW={a.out} ({meta.get('session_id')} · 사용자 말 {turns}개 · {len(body)}자)")
+    else:
+        sys.stdout.write(body)
+
+
+def cmd_search(a):
+    remote, repo_key = open_remote(a)
+    since = dt.datetime.now().astimezone() - dt.timedelta(days=a.days)
+    pat = re.compile(a.query if a.regex else re.escape(a.query), re.I)
+    hits = 0
+    for m in remote.sessions(repo_key, a.tool):
+        if instant(m.get("updated")) < since:
+            continue
+        found = []
+        for e in remote.events(m):
+            for mt in pat.finditer(e["text"]):
+                lo, hi = max(0, mt.start() - 80), min(len(e["text"]), mt.end() + 80)
+                snippet = e["text"][lo:hi].replace("\n", " ")
+                found.append(f"    [{e['role']}{'·' + e['name'] if e['name'] else ''}] …{snippet}…")
+                break
+            if len(found) >= 5:
+                break
+        if found:
+            m["_repo_shown"] = repo_key is not None
+            print(meta_line(m))
+            print("\n".join(found))
+            hits += 1
+            if hits >= a.limit:
+                break
+    print(f"SEARCH={hits}개 세션 (최근 {a.days}일, {repo_key or '모든 저장소'})")
+
+
+def cmd_save(a):
+    be = sfstate.load_backend()
+    if not be:
+        print("SAVE=off (backend 가 없다 — sfstate.py init --backend … 로 정한다)")
+        sys.exit(1)
+    be.identity()
+    text = Path(a.file).expanduser().read_text(encoding="utf-8") if a.file else sys.stdin.read()
+    if not text.strip():
+        print("SAVE=empty (남길 내용이 없다)")
+        sys.exit(1)
+    extra = user_patterns()
+    ctx = sfstate.Ctx(a.dir)
+    host = socket.gethostname().split(".")[0]
+    sid = f"{dt.datetime.now():%Y%m%d-%H%M%S}-{safe_part(host)}-{os.urandom(2).hex()}"
+    prefix = f"logs/{ctx.repo_key or '_norepo'}/manual/{sid}"
+    now = now_iso()
+    be.put(f"{prefix}/transcript.md", redact_text(text, extra).encode("utf-8"), if_none_match=True)
+    meta = {"tool": "manual", "session_id": sid, "repo_key": ctx.repo_key, "branch": ctx.branch,
+            "cwd": str(ctx.cwd), "host": host, "format": "markdown", "segments": 1, "rewrites": 0,
+            "started": now, "updated": now, "ended": now, "title": redact_text(a.title, extra)[:100]}
+    be.put(f"{prefix}/meta.json", json.dumps(meta, ensure_ascii=False, indent=1).encode("utf-8"))
+    print(f"SAVED={sid} ({prefix})")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="sflog", description="코딩 에이전트 transcript 를 backend 에 모은다")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -400,6 +833,36 @@ def main(argv=None):
     sp.add_argument("--cwd", default="")
     sp.add_argument("--final", action="store_true")
     sp.set_defaults(fn=cmd_collect)
+
+    def where(sp):
+        sp.add_argument("--dir", default=None, help="저장소 (기본: 현재 cwd)")
+        sp.add_argument("--all-repos", action="store_true", help="모든 저장소의 기록")
+        return sp
+
+    sp = where(sub.add_parser("list"))
+    sp.add_argument("--tool", choices=(*TOOLS, "manual"))
+    sp.add_argument("--limit", type=int, default=20)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(fn=cmd_list)
+    sp = where(sub.add_parser("show"))
+    sp.add_argument("session")
+    sp.add_argument("--no-tools", action="store_true", help="도구 호출·결과를 빼고 대화만")
+    sp.add_argument("--full", action="store_true", help="도구 입력·결과를 자르지 않는다")
+    sp.add_argument("--raw", action="store_true", help="올라간 원본 그대로 (가린 뒤)")
+    sp.add_argument("--out", default="", help="화면 대신 파일에 쓴다")
+    sp.set_defaults(fn=cmd_show)
+    sp = where(sub.add_parser("search"))
+    sp.add_argument("query")
+    sp.add_argument("--days", type=int, default=30)
+    sp.add_argument("--tool", choices=(*TOOLS, "manual"))
+    sp.add_argument("--regex", action="store_true")
+    sp.add_argument("--limit", type=int, default=20)
+    sp.set_defaults(fn=cmd_search)
+    sp = sub.add_parser("save")
+    sp.add_argument("--title", required=True)
+    sp.add_argument("--dir", default=None)
+    sp.add_argument("--file", default="")
+    sp.set_defaults(fn=cmd_save)
     a = p.parse_args(argv)
     a.fn(a)
     return 0

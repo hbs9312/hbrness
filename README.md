@@ -57,7 +57,7 @@ node bin/hbrness.js doctor devin
 ```
 
 Both use `/<plugin>:<skill>`, for example `/ghflow:create-pr`,
-`/sessionflow:handoff`, and `/xreview:status`. Each gets 35 skills across the five
+`/sessionflow:handoff`, and `/xreview:status`. Each gets 36 skills across the five
 plugins. `ghflow:pick-issue` and `ghflow:clear-issue` remain Claude-only because
 they manage Claude session memory. Skill-level Claude model pins and tool
 auto-approval lists are omitted; the current session's model and permissions apply.

@@ -87,9 +87,15 @@ phase-run       /phase-run <plan>             → split into phases; auto /clear
                 /phase-run continue|status|pause|resume|stop|reset
 phase-loop      /phase-loop <plan>            → phase-run + per-phase xreview → commit → push → PR. Personal repo: direct branch. Team repo: worktree + stacked PRs. Wraps P2→P4.
                 /phase-loop continue|status|pause|resume|stop|reset
+log             /log [list]                   → sessions of this repo across tools/PCs (hooks upload Claude/Codex/Grok/Devin transcripts, secrets redacted, to backend logs/)
+                /log show <session>           → one session in a common format (### user / ### assistant / → tool / ← result); use --out <file> and read parts
+                /log search <query>           → search recent sessions (--days N, --regex, --tool, --all-repos)
+                /log save [title]             → store a summary for hookless chats (web) as a `manual` record
 ```
 
-handoff = carry THIS work forward (1-shot/worktree). followup = LATER backlog (persistent/project). phase-run = hands-off multi-phase run that resets context between phases. phase-loop = phase-run plus shipping.
+Storage: followup/handoff live in ~/.hbrness/state/<repo-key>/ synced through an S3-API backend (sfstate.py init --backend s3 …; conditional writes, conflicts set aside in _conflicts/). Transcripts live only in the backend under logs/. phase-run/phase-loop state stays PC-local.
+
+handoff = carry THIS work forward (1-shot/worktree). followup = LATER backlog (persistent/project). phase-run = hands-off multi-phase run that resets context between phases. phase-loop = phase-run plus shipping. log = find past conversations from any tool (collected by hooks, nothing to save manually).
 
 ---
 
@@ -138,7 +144,7 @@ xreview (cross-model review)
      ▼
 ghflow (commit · chronicle · create-pr · review-pr)
 
-sessionflow — spans every phase (handoff / followup / phase-run / phase-loop)
+sessionflow — spans every phase (handoff / followup / phase-run / phase-loop / log)
 agentbus    — cross-session messaging (pipeline-independent)
 ```
 
@@ -153,8 +159,8 @@ Key cross-plugin data flows:
 
 | Model | Skills | Ratio |
 |---|---|---|
-| **Sonnet** (auto, via frontmatter) | `ghflow` all (incl. `commit`), `agentbus` all, `xreview` all, `dbflow` (init~diff), `sessionflow` handoff/followup family | 31/36 (86%) |
-| **Opus** (session default) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/36 (14%) |
+| **Sonnet** (auto, via frontmatter) | `ghflow` all (incl. `commit`), `agentbus` all, `xreview` all, `dbflow` (init~diff), `sessionflow` handoff/followup/log family | 32/37 (86%) |
+| **Opus** (session default) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/37 (14%) |
 
 ---
 

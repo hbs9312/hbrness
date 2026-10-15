@@ -166,14 +166,21 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 /phase-run continue|status|pause|resume|stop|reset
 /phase-loop <자연어 계획>                  ← phase-run + 페이즈마다 xreview 리뷰·커밋·push·PR
 /phase-loop continue|status|pause|resume|stop|reset
+
+# 대화 기록 — 훅이 Claude·Codex·Grok·Devin transcript 를 비밀값을 가려 backend 에 모은다
+/log [list]                                ← 이 저장소의 세션 목록 (도구·PC 무관, 최근 것부터)
+/log show <session>                        ← 세션 하나를 같은 형식(user / assistant / 도구 / 결과)으로 열람
+/log search <검색어>                       ← 최근 30일 대화에서 찾기 (--days, --regex, --all-repos)
+/log save [제목]                           ← 훅이 없는 곳(웹 채팅 등)의 대화를 요약 기록으로 남기기
 ```
 
 - **handoff** = 지금 이 작업을 다음 세션이 그대로 (1회성·워크트리 단위).
 - **followup** = 나중에 할 일 (영속·프로젝트 단위).
 - **phase-run** = 긴 다단계 작업을 페이즈마다 컨텍스트를 리셋하며 무인 진행.
 - **phase-loop** = phase-run 에 출하(리뷰→커밋→push→PR)를 끼운 상위 루프 — 위 Phase 2~4 를 통째로 감쌀 수 있다.
+- **log** = 지난 대화를 도구와 상관없이 찾기. 기록은 훅이 모으므로 따로 저장할 필요가 없다.
 
-저장(Tier 1): `~/.hbrness/sessionflow/<project-key>/` → HANDOFF.md, followups/, phases/. 양쪽 MEMORY.md 자동 동기화.
+저장(Tier 1): followup·handoff 는 `~/.hbrness/state/<repo-key>/` (origin remote 기준)에 두고 backend(S3 API, `sfstate.py init --backend …`)와 동기화한다. 대화 기록은 backend 의 `logs/` 에만 쌓인다. phase-run·phase-loop 상태는 `~/.hbrness/sessionflow/<project-key>/` (PC 로컬). 양쪽 MEMORY.md 자동 동기화.
 
 ---
 
@@ -200,8 +207,8 @@ skill 에 `model: sonnet` 이 지정된 기계적 작업은 자동으로 Sonnet 
 
 | 모델 | 대상 skill | 비율 |
 |---|---|---|
-| **Sonnet** (자동) | ghflow 전체(commit 포함), agentbus 전체, xreview 전체, dbflow (init~diff), sessionflow (handoff/followup 계열) | 31/36 (86%) |
-| **Opus** (세션 기본) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/36 (14%) |
+| **Sonnet** (자동) | ghflow 전체(commit 포함), agentbus 전체, xreview 전체, dbflow (init~diff), sessionflow (handoff/followup/log 계열) | 32/37 (86%) |
+| **Opus** (세션 기본) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/37 (14%) |
 
 ---
 
@@ -224,7 +231,7 @@ xreview (교차 코드리뷰)
      ▼
 ghflow (commit · chronicle · create-pr · review-pr)
 
-sessionflow ── 모든 단계에 걸침 (handoff / followup / phase-run / phase-loop)
+sessionflow ── 모든 단계에 걸침 (handoff / followup / phase-run / phase-loop / log)
 agentbus ───── 세션 간 통신 (파이프라인 무관)
 ```
 
