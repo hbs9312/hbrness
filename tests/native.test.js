@@ -104,3 +104,64 @@ test('built native workflows contain the correct caller and install without unre
   assert.throws(() => installer.planInstall({ harness: 'grok', plugin: 'ghflow', printOnly: true }), /--dry-run/);
   assert.throws(() => installer.planUninstall({ harness: 'grok', plugin: 'ghflow', printOnly: true }), /--dry-run/);
 });
+
+test('codex hooks merge into ~/.codex/hooks.json only for plugins that opt in, and leave other hooks alone', (t) => {
+  const hooks = require('../scripts/install/hooks.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hbrness-codex-'));
+  const oldHome = process.env.HOME;
+  process.env.HOME = root;
+  t.after(() => {
+    process.env.HOME = oldHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const file = path.join(root, '.codex', 'hooks.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const other = { hooks: [{ type: 'command', command: 'orca-hook.sh', timeout: 10 }] };
+  fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [other] } }));
+
+  const pluginDir = path.join(root, 'dist dir', 'sessionflow');
+  fs.mkdirSync(path.join(pluginDir, 'hooks'), { recursive: true });
+  fs.copyFileSync(path.join(__dirname, '..', 'plugins', 'sessionflow', 'hooks', 'codex.hooks.json'),
+    path.join(pluginDir, 'hooks', 'hooks.json'));
+  const args = { harness: 'codex', plugin: 'sessionflow', pluginDir };
+
+  assert.equal(hooks.applyHooksInstall(args, { dryRun: true }).status, 'planned');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.Stop.length, 1);
+  const res = hooks.applyHooksInstall(args);
+  assert.equal(res.status, 'installed');
+  assert.ok(res.backup && fs.existsSync(res.backup));
+  hooks.applyHooksInstall(args);  // 다시 깔아도 하나만
+  const merged = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(merged.hooks.Stop[0], other);
+  assert.equal(merged.hooks.Stop.length, 2);
+  assert.equal(merged.hooks.SessionEnd.length, 1);
+  const cmd = merged.hooks.Stop[1].hooks[0].command;
+  assert.ok(cmd.includes(`"${pluginDir}/scripts/sfhook.py" stop --tool codex`), cmd);
+  assert.ok(cmd.endsWith(' # hbrness:sessionflow'));
+  assert.equal(JSON.stringify(merged).includes('_hbrness'), false);  // Codex 가 모르는 key 는 넣지 않는다
+
+  const ghflow = path.join(root, 'ghflow');
+  fs.mkdirSync(path.join(ghflow, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(ghflow, 'hooks', 'hooks.json'), JSON.stringify({ hooks: { SessionStart: [
+    { hooks: [{ type: 'command', command: 'python3 "${CODEX_PLUGIN_ROOT}/hooks/fetch-templates.py"' }] }] } }));
+  assert.equal(hooks.applyHooksInstall({ harness: 'codex', plugin: 'ghflow', pluginDir: ghflow }).status, 'no-hooks');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.SessionStart, undefined);
+
+  // 사용자가 설치된 그룹에 자기 명령을 더했다 — 다시 설치·지워도 그 명령은 남는다
+  const edited = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const mine = { type: 'command', command: 'my-own-hook.sh' };
+  edited.hooks.Stop[1].matcher = 'keep-me';
+  edited.hooks.Stop[1].hooks.push(mine);
+  fs.writeFileSync(file, JSON.stringify(edited));
+  hooks.applyHooksInstall(args);
+  const again = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(again.hooks.Stop[1], { hooks: [mine], matcher: 'keep-me' });
+  assert.equal(again.hooks.Stop.length, 3);
+  assert.equal(JSON.stringify(again).split('# hbrness:sessionflow').length - 1, 2);  // Stop·SessionEnd 하나씩
+
+  assert.deepEqual(hooks.planHooksUninstall({ plugin: 'sessionflow', harness: 'codex' }).events.map((e) => e.event).sort(),
+    ['SessionEnd', 'Stop']);
+  assert.equal(hooks.applyHooksUninstall({ plugin: 'sessionflow', harness: 'codex' }).status, 'removed');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')),
+    { hooks: { Stop: [other, { hooks: [mine], matcher: 'keep-me' }] } });
+});

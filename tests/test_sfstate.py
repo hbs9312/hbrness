@@ -62,8 +62,9 @@ class Env(unittest.TestCase):
         self.tmp.cleanup()
 
     def env(self, pc='a'):
+        # 자격증명은 파일에 — 테스트가 이 PC 의 Keychain 을 건드리지 않게
         return dict(os.environ, **GIT_ENV, HBRNESS_HOME=str(self.base / f'pc-{pc}'),
-                    HBRNESS_STATE_DIR=str(self.base / f'pc-{pc}' / 'state'))
+                    HBRNESS_STATE_DIR=str(self.base / f'pc-{pc}' / 'state'), HBRNESS_CREDENTIALS_STORE='file')
 
     def run_sf(self, *args, pc='a', cwd=None):
         return sh(sys.executable, str(SCRIPT), *args, cwd=cwd or self.project, env=self.env(pc))
@@ -302,9 +303,72 @@ class BackendSyncTests(Env):
         self.assertTrue(xb.exists())
         xa.unlink()
         self.assertIn('SYNC=pushed', self.run_sf('sync', pc='a'))
-        self.assertFalse(self.stored('followups/x.md').exists())
+        self.assertTrue(self.stored('followups/x.md').read_bytes().startswith(b'\0sfstate-tombstone\n'))
         self.run_sf('pull', pc='b')
         self.assertFalse(xb.exists())
+        self.assertIn('SYNC=nochange', self.run_sf('sync', pc='b'))  # tombstone 을 다시 지우지 않는다
+
+    def test_file_made_again_over_a_tombstone(self):
+        self.init('a')
+        self.init('b')
+        xa = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        xa.unlink()
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        self.item('b', 'x', 'made again on b\n')  # 지운 자리에 다시
+        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='b'))
+        self.run_sf('pull', pc='a')
+        self.assertEqual(xa.read_text(), 'made again on b\n')
+        self.init('c')  # 처음 맞추는 PC 도 tombstone 은 받지 않고 살아 있는 파일만 받는다
+        self.assertEqual((Path(self.paths('c')['FOLLOWUPS_DIR']) / 'x.md').read_text(), 'made again on b\n')
+
+    def test_local_edit_wins_over_remote_tombstone(self):
+        self.init('a')
+        self.init('b')
+        xa = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        self.run_sf('pull', pc='b')
+        xb = self.item('b', 'x', 'edited on b\n')
+        xa.unlink()
+        self.run_sf('sync', pc='a')  # a 가 지움
+        self.run_sf('pull', pc='b')  # b 는 고친 파일을 남긴다
+        self.assertEqual(xb.read_text(), 'edited on b\n')
+        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='b'))
+        self.run_sf('pull', pc='a')
+        self.assertEqual(xa.read_text(), 'edited on b\n')
+
+    def test_new_file_on_a_pc_that_never_saw_the_tombstone(self):
+        self.init('a')
+        xa = self.item('a', 'x', 'v1\n')
+        self.run_sf('sync', pc='a')
+        xa.unlink()
+        self.run_sf('sync', pc='a')
+        sfbackend = sfstate.sfbackend
+        cache = sfbackend.Cache(self.base / 'fresh-state', sfbackend.LocalBackend(self.store))
+        f = self.base / 'fresh-state' / self.KEY / 'followups' / 'x.md'
+        f.parent.mkdir(parents=True)
+        f.write_text('fresh\n')
+        rep = cache.push(self.KEY)  # If-None-Match 가 tombstone 에 막히면 그 etag 로 덮는다
+        self.assertEqual(rep['put'], [f'{self.KEY}/followups/x.md'])
+        self.assertEqual(self.stored('followups/x.md').read_text(), 'fresh\n')
+
+    def test_sync_never_sends_delete_object(self):
+        sfbackend = sfstate.sfbackend
+        be = sfbackend.LocalBackend(self.store)
+        be.ensure()
+
+        def no_delete(*a, **k):
+            raise AssertionError('DeleteObject 를 보냈다')
+        be.delete = no_delete
+        cache = sfbackend.Cache(self.base / 'st', be)
+        f = self.base / 'st' / self.KEY / 'followups' / 'x.md'
+        f.parent.mkdir(parents=True)
+        f.write_text('v1\n')
+        cache.push(self.KEY)
+        f.unlink()
+        self.assertEqual(cache.push(self.KEY)['deleted'], [f'{self.KEY}/followups/x.md'])
 
     def test_delete_does_not_drop_newer_edit_from_other_pc(self):
         self.init('a')
@@ -607,6 +671,166 @@ class EncryptionTests(Env):
         (self.store / '.sfbackend').write_text('{"broken')
         with self.assertRaises(sfbackend.BackendError):
             sfbackend.LocalBackend(self.store).identity()
+
+
+class CredentialStoreTests(unittest.TestCase):
+    """자격증명을 Keychain·secret-tool 에 둔다. 비밀값은 argv 에 나오지 않는다. 이 PC 의 Keychain 은 건드리지 않는다
+    (임시 keychain 파일을 쓴다)."""
+
+    CREDS = {'access_key_id': 'AKIDTEST', 'secret_access_key': 'very "secret" value/+='}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name).resolve()
+        self.path = self.home / 'credentials.json'
+        self.sfb = sfstate.sfbackend
+        self.saved_env = {k: os.environ.get(k) for k in ('HBRNESS_HOME', 'HBRNESS_KEYCHAIN', 'HBRNESS_CREDENTIALS_STORE',
+                                                         'HBRNESS_S3_ACCESS_KEY_ID', 'HBRNESS_S3_SECRET_ACCESS_KEY')}
+        for k in self.saved_env:
+            os.environ.pop(k, None)
+        os.environ['HBRNESS_HOME'] = str(self.home)
+        self.argv = []
+        self.real_run = self.sfb.subprocess.run
+
+        def spy(args, *a, **k):
+            self.argv.append(list(args))
+            return self.real_run(args, *a, **k)
+        self.sfb.subprocess.run = spy
+
+    def tearDown(self):
+        self.sfb.subprocess.run = self.real_run
+        for k, v in self.saved_env.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+        self.tmp.cleanup()
+
+    def assert_secret_never_in_argv(self):
+        self.assertTrue(self.argv)
+        for args in self.argv:
+            self.assertFalse(any(self.CREDS['secret_access_key'] in str(x) for x in args), args)
+
+    @unittest.skipUnless(sys.platform == 'darwin' and __import__('shutil').which('security'), 'macOS Keychain')
+    def test_keychain_round_trip(self):
+        kc = self.home / 'test.keychain-db'
+        made = subprocess.run(['security', 'create-keychain', '-p', 'pw', str(kc)], capture_output=True)
+        if made.returncode != 0:  # sandbox 등에서 keychain 을 만들 수 없다
+            self.skipTest(f'security create-keychain 실패 (exit {made.returncode})')
+        try:
+            sh('security', 'unlock-keychain', '-p', 'pw', str(kc))
+            os.environ['HBRNESS_KEYCHAIN'] = str(kc)
+            self.path.write_text('{"access_key_id": "old", "secret_access_key": "old"}')
+            self.assertEqual(self.sfb.stored_credentials(self.path, 'keychain'), {})
+            self.sfb.save_credentials('keychain', self.path, self.CREDS)
+            self.assertEqual(self.sfb.stored_credentials(self.path, 'keychain'), self.CREDS)
+            self.assertFalse(self.path.exists())  # 평문 파일은 치운다
+            self.sfb.save_credentials('keychain', self.path, {**self.CREDS, 'access_key_id': 'NEW'})  # 덮어쓴다
+            self.assertEqual(self.sfb.load_credentials(self.path, 'keychain')['access_key_id'], 'NEW')
+            self.assert_secret_never_in_argv()
+            self.sfb.forget_credentials('keychain', self.path)
+            self.assertEqual(self.sfb.stored_credentials(self.path, 'keychain'), {})
+            real_secret = self.sfb._run_secret
+            # 저장이 안 돼도 security -i 는 exit 0 이다 — 다시 읽어 알아채는지 (실제로는 아무것도 쓰지 않는다)
+            self.sfb._run_secret = lambda args, data=b'': (real_secret(args, data) if args[1] != '-i'
+                                                          else subprocess.CompletedProcess(args, 0, b'', b''))
+            try:
+                with self.assertRaises(self.sfb.BackendError):
+                    self.sfb.save_credentials('keychain', self.path, self.CREDS)
+            finally:
+                self.sfb._run_secret = real_secret
+            os.environ['HBRNESS_KEYCHAIN'] = str(self.home / 'missing.keychain-db')
+            with self.assertRaises(self.sfb.BackendError):  # 없는 keychain 을 주면 기본 keychain 에 쓰지 않고 멈춘다
+                self.sfb.save_credentials('keychain', self.path, self.CREDS)
+        finally:
+            subprocess.run(['security', 'delete-keychain', str(kc)], capture_output=True)
+
+    def fake_secret_tool(self):
+        store = self.home / 'secrets.json'
+        exe = self.home / 'secret-tool'
+        exe.write_text(f"""#!{sys.executable}
+import json, sys
+f = {str(store)!r}
+try:
+    db = json.load(open(f))
+except OSError:
+    db = {{}}
+cmd, rest = sys.argv[1], sys.argv[2:]
+attrs = [a for a in rest if not a.startswith('--')]
+key = ' '.join(attrs)
+if cmd == 'store':
+    db[key] = sys.stdin.read()
+elif cmd == 'lookup':
+    if key not in db:
+        sys.exit(1)
+    sys.stdout.write(db[key])
+elif cmd == 'clear':
+    db.pop(key, None)
+json.dump(db, open(f, 'w'))
+""")
+        exe.chmod(0o755)
+        real = self.sfb.which
+        self.sfb.which = lambda name: str(exe) if name == 'secret-tool' else real(name)
+        self.addCleanup(setattr, self.sfb, 'which', real)
+
+    def test_secret_tool_round_trip(self):
+        self.fake_secret_tool()
+        self.assertEqual(self.sfb.stored_credentials(self.path, 'secret-tool'), {})
+        self.sfb.save_credentials('secret-tool', self.path, self.CREDS)
+        self.assertEqual(self.sfb.stored_credentials(self.path, 'secret-tool'), self.CREDS)
+        self.assert_secret_never_in_argv()
+
+    def test_init_moves_saved_credentials_and_cleans_the_old_place(self):
+        import types
+        self.fake_secret_tool()
+        self.sfb.save_config(self.path, self.CREDS)
+        (self.home / 'backend.json').write_text('{"type": "s3", "bucket": "b"}')
+        a = types.SimpleNamespace(credentials_store='secret-tool')
+        cfg = {'type': 's3', 'bucket': 'b'}
+        self.assertEqual(sfstate._init_credentials(a, cfg, None), 'secret-tool')
+        self.assertFalse(self.path.exists())
+        self.sfb.save_config(self.home / 'backend.json', cfg)
+        be = sfstate.load_backend()
+        self.assertEqual(be.creds, self.CREDS)  # 훅 같은 다음 명령도 같은 곳에서 읽는다
+        a.credentials_store = 'file'  # 되돌리면 파일로 옮기고 secret-tool 에서는 지운다
+        sfstate._init_credentials(a, cfg, None)
+        self.assertEqual(json.loads(self.path.read_text()), self.CREDS)
+        self.assertEqual(self.sfb.stored_credentials(self.path, 'secret-tool'), {})
+
+    def test_keychain_paths_the_interactive_parser_would_split_are_refused(self):
+        bad = self.home / 'with space'
+        bad.mkdir()
+        kc = bad / 'test.keychain-db'
+        kc.write_bytes(b'')
+        os.environ['HBRNESS_KEYCHAIN'] = str(kc)
+        with self.assertRaises(self.sfb.BackendError):
+            self.sfb.save_credentials('keychain', self.path, self.CREDS)
+        self.assertEqual(self.argv, [])  # security 를 부르기도 전에 멈춘다
+
+    def test_failed_cleanup_of_the_old_place_is_reported(self):
+        import contextlib
+        import io
+        import types
+        self.fake_secret_tool()
+        self.sfb.save_credentials('secret-tool', self.path, self.CREDS)
+        (self.home / 'backend.json').write_text('{"type": "s3", "bucket": "b", "credentials": "secret-tool"}')
+        exe = self.home / 'secret-tool'
+        exe.write_text(exe.read_text().replace("elif cmd == 'clear':", "elif cmd == 'clear':\n    sys.exit(1)"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            store = sfstate._init_credentials(types.SimpleNamespace(credentials_store='file'), {'type': 's3'}, None)
+        self.assertEqual(store, 'file')
+        self.assertEqual(json.loads(self.path.read_text()), self.CREDS)
+        self.assertIn('CREDENTIALS_WARN=', out.getvalue())
+        with self.assertRaises(self.sfb.BackendError):
+            self.sfb.forget_credentials('secret-tool', self.path)
+
+    def test_auto_store_follows_the_platform_and_env(self):
+        os.environ['HBRNESS_CREDENTIALS_STORE'] = 'file'
+        self.assertEqual(self.sfb.auto_credentials_store(), 'file')
+        os.environ.pop('HBRNESS_CREDENTIALS_STORE')
+        expected = 'keychain' if sys.platform == 'darwin' and self.sfb.which('security') else None
+        if expected:
+            self.assertEqual(self.sfb.auto_credentials_store(), expected)
 
 
 class S3UnitTests(unittest.TestCase):

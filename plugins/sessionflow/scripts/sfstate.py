@@ -4,7 +4,8 @@ Terraform backend 처럼 원격 key-value 저장소(backend)로 여러 PC 사이
 
 $HBRNESS_HOME/backend.json 이 backend 를 정한다 (sfbackend.py). 없으면 이 PC 에만 저장한다.
   local   디렉토리 하나를 원격처럼 쓴다 (테스트·오프라인용)
-  s3      S3 API 저장소 (AWS S3·R2·MinIO 등). 자격증명은 $HBRNESS_HOME/credentials.json (mode 600).
+  s3      S3 API 저장소 (AWS S3·R2·MinIO 등). 자격증명은 macOS Keychain / Linux secret-tool / 
+          $HBRNESS_HOME/credentials.json (mode 600) 중 init 이 고른 곳 (--credentials-store).
 새 저장소는 age 로 암호화한다 — 푸는 키는 $HBRNESS_HOME/age.key (mode 600, PC 마다 한 번 복사).
 
 저장 위치 ($HBRNESS_STATE_DIR, 기본 ~/.hbrness/state — 원격의 로컬 캐시):
@@ -40,6 +41,7 @@ PC 로컬 상태라 여기서 다루지 않는다 — 계속 ~/.hbrness/sessionf
   init        --backend local --path D
               --backend s3 --bucket B [--endpoint URL] [--prefix P] [--region R]
                            [--path-style | --virtual-host] [--credentials-stdin]
+                           [--credentials-store auto|keychain|secret-tool|file]
               [--encrypt | --no-encrypt] [--accept-encryption-change]
                                       backend.json 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다.
                                       예전 git state repo clone 이 있으면 .git 을 옆으로 치우고 내용을 올린다.
@@ -994,11 +996,44 @@ def _init_config(a):
     if new_creds and env:
         print("init: HBRNESS_S3_* 환경변수가 있으면 credentials.json 보다 그쪽을 먼저 쓴다 — "
               "stdin 자격증명은 저장만 하고 지금은 환경변수로 맞춘다", file=sys.stderr)
-    # 이후 명령(load_backend)과 같은 순서로 고른다: 환경변수 묶음 → stdin(곧 저장될 파일) → 저장된 파일
-    creds = env or new_creds or sfbackend.load_credentials(sfbackend.credentials_file(backend_config_file()))
+    # 이후 명령(load_backend)과 같은 순서로 고른다: 환경변수 묶음 → stdin(곧 저장될 값) → 저장된 값
+    creds = env or new_creds or sfbackend.load_credentials(creds_file(), previous_credentials_store())
     be = sfbackend.S3Backend(cfg, creds)
     be.key_path = key_file()
     return cfg, be, new_creds
+
+
+def creds_file() -> Path:
+    return sfbackend.credentials_file(backend_config_file())
+
+
+def previous_credentials_store() -> str:
+    try:
+        prev = sfbackend.load_config(backend_config_file()) or {}
+    except sfbackend.BackendError:
+        prev = {}
+    return prev.get("credentials") or "file"
+
+
+def _init_credentials(a, cfg, new_creds):
+    """s3 자격증명을 둘 곳을 정하고(auto 면 이 PC 에 맞게), 새로 받았거나 둘 곳이 바뀌었으면 거기에 저장한다.
+    반환: 둔 곳 (local backend 면 None)."""
+    if cfg["type"] != "s3":
+        return None
+    store = a.credentials_store if a.credentials_store != "auto" else sfbackend.auto_credentials_store()
+    prev = previous_credentials_store()
+    creds = new_creds
+    if not creds and store != prev:  # 저장된 것을 새 자리로 옮긴다
+        creds = sfbackend.stored_credentials(creds_file(), prev)
+    if creds:
+        sfbackend.save_credentials(store, creds_file(), creds)
+        if store != prev and prev != "file":  # 예전 자리(Keychain 등)에 남은 것을 치운다
+            try:
+                sfbackend.forget_credentials(prev, creds_file())
+            except sfbackend.BackendError as e:
+                print(f"CREDENTIALS_WARN={e} — 새 자리({store})로는 옮겼다. 예전 자리에 남은 비밀값은 직접 지운다")
+    cfg["credentials"] = store
+    return store
 
 
 def _same_place(prev, cfg) -> bool:
@@ -1068,8 +1103,11 @@ def cmd_init(a):
         cfg["encryption"] = enc
     root = state_root()
     with state_lock():
-        if new_creds:
-            sfbackend.save_config(sfbackend.credentials_file(backend_config_file()), new_creds)
+        try:
+            store = _init_credentials(a, cfg, new_creds)
+        except sfbackend.BackendError as e:
+            print(f"init: {e}", file=sys.stderr)
+            sys.exit(1)
         sfbackend.save_config(backend_config_file(), cfg)
         root.mkdir(parents=True, exist_ok=True)
         archived = _archive_git_clone(root)
@@ -1087,6 +1125,8 @@ def cmd_init(a):
     print(f"STATE_ROOT={root}")
     print(f"BACKEND={be.describe()}")
     print(f"ENCRYPTION={encryption_line(enc, be.key_path)}")
+    if store:
+        print(f"CREDENTIALS={store}")
     if enc and len(enc["recipients"]) > 1:
         print("ENCRYPTION_WARN=공개키가 여럿이다 — init 은 하나만 만든다. 모두 아는 키인지 확인한다 "
               "(모르는 키가 있으면 그 키의 주인도 기록을 풀 수 있다)")
@@ -1135,6 +1175,8 @@ def cmd_doctor(a):
         print(f"  {Ctx(None).sync_reason() or 'backend.json 이 없다'}")
         sys.exit(1)
     print(f"BACKEND={be.describe()}")
+    if isinstance(be, sfbackend.S3Backend):
+        print(f"CREDENTIALS={'env' if sfbackend.env_credentials() else previous_credentials_store()}")
     failed = False
     try:
         print(f"STORE=ok ({be.identity().rsplit('#', 1)[-1]})")
@@ -1179,8 +1221,8 @@ def cmd_doctor(a):
             if status == 412:
                 print("DELETE_IF_MATCH=ok")
             else:
-                print("DELETE_IF_MATCH=unsupported (저장소가 무시한다 — 지우기 직전에 HEAD 로 etag 를 확인해서 "
-                      "경합 창이 아주 짧게 남는다)")
+                print("DELETE_IF_MATCH=unsupported (저장소가 무시한다 — 동기화의 삭제는 tombstone 을 If-Match PUT 으로 "
+                      "하므로 상관없다)")
         else:
             try:
                 be.delete(key, if_match="0" * 32)
@@ -1245,7 +1287,9 @@ def main(argv=None):
     g.add_argument("--path-style", dest="path_style", action="store_true", default=None)
     g.add_argument("--virtual-host", dest="path_style", action="store_false")
     sp.add_argument("--credentials-stdin", action="store_true",
-                    help="s3: 자격증명을 stdin 으로 받아 credentials.json(mode 600)에 저장한다")
+                    help="s3: 자격증명을 stdin 으로 받아 --credentials-store 가 정한 곳에 저장한다")
+    sp.add_argument("--credentials-store", choices=("auto", *sfbackend.CRED_STORES), default="auto",
+                    help="s3: 자격증명을 둘 곳 (auto: macOS Keychain → Linux secret-tool → credentials.json)")
     g = sp.add_mutually_exclusive_group()
     g.add_argument("--encrypt", dest="encrypt", action="store_true", default=None,
                    help="age 로 암호화한다 (새 저장소의 기본값)")

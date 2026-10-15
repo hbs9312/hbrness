@@ -11,6 +11,10 @@ Terraform 의 backend 와 같은 구조다. 원격은 key → 내용 저장소�
                         이미 있던 파일은 If-Match(manifest 의 etag), 새 파일은 If-None-Match.
   충돌                  다른 PC 가 같은 파일을 먼저 바꿨으면 원격본을 원래 자리에 받고,
                         이 PC 의 버전은 <state>/_conflicts/ 에 남긴다.
+  삭제                  지운 파일은 object 를 지우지 않고 tombstone 으로 덮어쓴다 (If-Match PUT).
+                        DeleteObject 의 If-Match 를 무시하는 저장소(MinIO 등)에서도 그사이 다른 PC 가
+                        고친 버전을 지우지 않는다. pull 은 tombstone 을 삭제로 읽고, 그 자리에 다시 만든
+                        파일은 tombstone 의 etag 로 If-Match PUT 한다. tombstone 은 지우지 않는다 (작다).
 
 동기화하지 않는 것: 최상위의 '_'·'.' 로 시작하는 디렉토리(_local, _conflicts, .sfstate, .git),
 최상위 파일(README.md 등), INDEX.md(각 PC 가 다시 만드는 생성물), '.' 로 시작하는 파일.
@@ -20,10 +24,13 @@ Terraform 의 backend 와 같은 구조다. 원격은 key → 내용 저장소�
   {"type": "s3", "endpoint": "https://…", "bucket": "b", "prefix": "hbrness/", "region": "auto",
    "path_style": true}                     S3 API 를 쓰는 저장소 (AWS S3·R2·MinIO 등). SigV4 서명을 직접 한다.
 
-s3 자격증명은 backend.json 옆의 credentials.json(mode 600)에 둔다:
-  {"access_key_id": "…", "secret_access_key": "…", "session_token": "…(선택)"}
+s3 자격증명 {"access_key_id": "…", "secret_access_key": "…", "session_token": "…(선택)"} 은 backend.json 의
+"credentials" 가 정한 곳에 둔다:
+  keychain      macOS Keychain (security CLI, 서비스 hbrness-sfstate). 비밀값은 stdin 으로만 넘긴다.
+  secret-tool   Linux Secret Service (libsecret 의 secret-tool). 비밀값은 stdin 으로만 넘긴다.
+  file          backend.json 옆의 credentials.json (mode 600). 값이 없으면 이것.
 환경변수 HBRNESS_S3_ACCESS_KEY_ID 와 HBRNESS_S3_SECRET_ACCESS_KEY 가 둘 다 있으면 (HBRNESS_S3_SESSION_TOKEN 과 함께)
-한 묶음으로 그쪽을 먼저 쓴다. 파일 값과 섞지 않는다.
+한 묶음으로 그쪽을 먼저 쓴다. 저장된 값과 섞지 않는다.
 
 저장소마다 표시 object(<prefix>.sfbackend, local 은 <dir>/.sfbackend)에 저장소 ID 를 적어 둔다.
 표시가 없으면 원격에 닿지 못한 것으로 보고 실패한다. manifest 는 이 ID 에 묶인다.
@@ -38,6 +45,7 @@ s3 자격증명은 backend.json 옆의 credentials.json(mode 600)에 둔다:
 from __future__ import annotations
 
 import contextlib
+import base64
 import datetime as dt
 import fcntl
 import hashlib
@@ -49,6 +57,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,6 +69,7 @@ REMOTE_PREFIX = "repos/"
 CONFLICT_DIR = "_conflicts"
 META_DIR = ".sfstate"
 SKIP_FILES = {"INDEX.md"}
+TOMBSTONE = b"\0sfstate-tombstone\n"  # 지운 파일 자리에 남기는 object 의 첫 줄 (글 파일에는 NUL 이 없다)
 AGE_MAGIC = b"age-encryption.org/"  # age 로 암호화한 내용의 첫 줄
 AGE_RECIPIENT = re.compile(r"age1[0-9a-z]{20,}")
 # GUI 로 띄운 에이전트의 훅은 PATH 가 짧다 — PATH 에 없으면 흔한 설치 자리도 본다
@@ -644,12 +654,123 @@ def env_credentials() -> dict:
     return {k: v for k, v in env.items() if v}
 
 
-def load_credentials(path: Path | None) -> dict:
-    """환경변수 묶음이 있으면 그것을, 없으면 credentials.json 을 쓴다. path 가 None 이면 파일은 보지 않는다."""
-    env = env_credentials()
-    if env:
-        return env
-    if path is None or not path.is_file():
+CRED_STORES = ("keychain", "secret-tool", "file")
+CRED_SERVICE = "hbrness-sfstate"
+
+
+def auto_credentials_store() -> str:
+    """macOS 는 Keychain, Secret Service 가 있는 Linux 는 secret-tool, 아니면 파일.
+    HBRNESS_CREDENTIALS_STORE 로 정해 둘 수 있다 (테스트는 file 로 둔다)."""
+    forced = os.environ.get("HBRNESS_CREDENTIALS_STORE", "")
+    if forced in CRED_STORES:
+        return forced
+    if sys.platform == "darwin" and which("security"):
+        return "keychain"
+    if which("secret-tool") and os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        return "secret-tool"
+    return "file"
+
+
+def _cred_account(path: Path) -> str:
+    """HBRNESS_HOME 마다 따로 — credentials.json 이 있을 자리(path)의 디렉토리로 정한다. 공백 없는 이름."""
+    return "home-" + hashlib.sha256(str(path.parent.expanduser().resolve()).encode()).hexdigest()[:16]
+
+
+def _run_secret(args, data: bytes = b"") -> subprocess.CompletedProcess:
+    exe = which(args[0])
+    if not exe:
+        raise BackendError(f"{args[0]} 가 없다 — init --credentials-store file 로 바꿀 수 있다")
+    try:
+        return subprocess.run([exe, *args[1:]], input=data, capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise BackendError(f"{args[0]} 를 돌리지 못했다: {e}") from None
+
+
+def _keychain() -> list:
+    """HBRNESS_KEYCHAIN: 기본 keychain 대신 쓸 keychain 파일 (테스트용). security 는 없는 파일을 주면 말없이 기본
+    keychain 에 쓰므로, 정해 놓고 파일이 없으면 멈춘다."""
+    kc = os.environ.get("HBRNESS_KEYCHAIN")
+    if kc and re.search(r"[\s\"'\\]", kc):  # security -i 의 명령줄 파서를 그대로 지나가지 못한다
+        raise BackendError(f"HBRNESS_KEYCHAIN 경로에 공백·따옴표·역슬래시가 있으면 쓸 수 없다: {kc!r}")
+    if kc and not Path(kc).is_file():
+        raise BackendError(f"HBRNESS_KEYCHAIN 의 keychain 파일이 없다: {kc}")
+    return [kc] if kc else []
+
+
+def _stored_credentials(store: str, path: Path) -> dict:
+    acct = _cred_account(path)
+    if store == "keychain":
+        p = _run_secret(["security", "find-generic-password", "-a", acct, "-s", CRED_SERVICE, "-w", *_keychain()])
+        if p.returncode == 44:  # 없다
+            return {}
+    else:
+        p = _run_secret(["secret-tool", "lookup", "service", CRED_SERVICE, "account", acct])
+        if p.returncode != 0 and not p.stdout.strip() and not p.stderr.strip():
+            return {}
+    if p.returncode != 0:
+        err = p.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise BackendError(f"{store} 에서 자격증명을 읽지 못했다 ({err[-1] if err else f'exit {p.returncode}'}) — "
+                           "잠겨 있으면 풀고, 아니면 init --credentials-store file 로 바꾼다")
+    try:
+        data = json.loads(base64.b64decode(p.stdout.strip(), validate=True))
+    except (ValueError, TypeError) as e:
+        raise BackendError(f"{store} 의 자격증명을 읽지 못했다: {e}") from None
+    return {k: str(v) for k, v in data.items() if k in CRED_KEYS and v} if isinstance(data, dict) else {}
+
+
+def save_credentials(store: str, path: Path, creds: dict):
+    """자격증명을 store 에 둔다. path 는 credentials.json 자리 (file 이면 그 파일, 아니면 계정 이름을 정한다).
+    Keychain·secret-tool 에 두면 남아 있던 credentials.json 은 지운다 — 디스크에 평문으로 남기지 않게."""
+    if store == "file":
+        save_config(path, creds)
+        return
+    blob = base64.b64encode(json.dumps(creds).encode())
+    acct = _cred_account(path)
+    if store == "keychain":
+        # security 는 argv 가 다른 사용자에게 보인다 — 명령을 stdin(-i)으로, 값은 hex(-X)로 넘긴다.
+        # -i 는 실패해도 exit 0 이라 다시 읽어 맞는지 본다.
+        line = " ".join(["add-generic-password", "-U", "-a", acct, "-s", CRED_SERVICE, "-X", blob.hex(), *_keychain()])
+        _run_secret(["security", "-i"], (line + "\n").encode())
+    elif store == "secret-tool":
+        p = _run_secret(["secret-tool", "store", "--label=hbrness sfstate", "service", CRED_SERVICE, "account", acct], blob)
+        if p.returncode != 0:
+            raise BackendError(f"secret-tool 에 저장하지 못했다: {p.stderr.decode('utf-8', 'replace').strip()}")
+    else:
+        raise BackendError(f"모르는 자격증명 저장소: {store!r}")
+    if _stored_credentials(store, path) != {k: v for k, v in creds.items() if v}:
+        raise BackendError(f"{store} 에 자격증명을 저장하지 못했다 (잠겨 있거나 접근이 막혔다) — "
+                           "init --credentials-store file 로 바꿀 수 있다")
+    path.unlink(missing_ok=True)
+
+
+def forget_credentials(store: str, path: Path):
+    """store 에 둔 자격증명을 지운다 (둘 곳을 바꾼 뒤 예전 자리를 치울 때). 없으면 그만이다."""
+    acct = _cred_account(path)
+    if store == "file":
+        path.unlink(missing_ok=True)
+        return
+    if store == "keychain":
+        p = _run_secret(["security", "delete-generic-password", "-a", acct, "-s", CRED_SERVICE, *_keychain()])
+        ok = p.returncode in (0, 44)  # 44: 없다
+    else:
+        p = _run_secret(["secret-tool", "clear", "service", CRED_SERVICE, "account", acct])
+        ok = p.returncode == 0
+    if not ok:
+        err = p.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise BackendError(f"{store} 의 자격증명(서비스 {CRED_SERVICE}, 계정 {acct})을 지우지 못했다 "
+                           f"({err[-1] if err else f'exit {p.returncode}'})")
+
+
+def load_credentials(path: Path | None, store: str = "file") -> dict:
+    """환경변수 묶음이 있으면 그것을, 없으면 store 에 둔 자격증명을 쓴다. path 가 None 이면 저장된 것은 보지 않는다."""
+    return env_credentials() or (stored_credentials(path, store) if path is not None else {})
+
+
+def stored_credentials(path: Path, store: str = "file") -> dict:
+    """store 에 둔 자격증명 (환경변수는 보지 않는다). 없으면 {}."""
+    if store != "file":
+        return _stored_credentials(store, path)
+    if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -667,7 +788,7 @@ def make_backend(cfg: dict, creds_path: Path | None = None, key_path: Path | Non
             raise BackendError("local backend 에 path 가 없다")
         be = LocalBackend(cfg["path"])
     elif kind == "s3":
-        be = S3Backend(cfg, load_credentials(creds_path))
+        be = S3Backend(cfg, load_credentials(creds_path, cfg.get("credentials") or "file"))
     else:
         raise BackendError(f"모르는 backend type: {kind!r}")
     be.encryption = cfg.get("encryption") or None
@@ -736,6 +857,21 @@ def _read(path: Path):
         return None
 
 
+def tombstone() -> bytes:
+    info = {"deleted": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "host": socket.gethostname().split(".")[0]}
+    return TOMBSTONE + json.dumps(info).encode() + b"\n"
+
+
+def is_tombstone(data: bytes) -> bool:
+    return data.startswith(TOMBSTONE)
+
+
+def live(ent) -> bool:
+    """manifest 항목이 살아 있는 파일인가 (tombstone 을 맞춘 항목은 {"etag", "deleted": true})."""
+    return bool(ent) and not ent.get("deleted")
+
+
 def _syncable(rel: str) -> bool:
     parts = rel.split("/")
     return (len(parts) >= 2 and not parts[0].startswith(("_", "."))
@@ -765,7 +901,7 @@ class Cache:
     def save(self):
         self.manifest_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.manifest_file.with_name("manifest.json.tmp")
-        tmp.write_text(json.dumps({"version": 1, "store": self.store, "entries": self.entries},
+        tmp.write_text(json.dumps({"version": 2, "store": self.store, "entries": self.entries},
                                   ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp, self.manifest_file)
 
@@ -773,7 +909,7 @@ class Cache:
         """로컬 파일이 마지막으로 맞춘 원격 버전과 같은가."""
         ent = self.entries.get(rel)
         data = _read(self.root / rel)
-        return bool(ent) and data is not None and sha256(data) == ent["sha256"]
+        return live(ent) and data is not None and sha256(data) == ent["sha256"]
 
     def local_files(self, rel_prefix: str = "") -> dict:
         """동기화 대상 로컬 파일. 읽지 못한 디렉토리가 있으면 OSError — 빠진 파일을 삭제로 읽으면 안 된다."""
@@ -865,23 +1001,29 @@ class Cache:
                     continue
                 data, etag = r
                 local = _read(self.root / rel)
+                if is_tombstone(data):  # 다른 PC 가 지웠다
+                    self._gone(rel, ent, local, rep)
+                    self.entries[rel] = {"etag": etag, "deleted": True}
+                    continue
                 # 이 PC 에서도 바뀌었나: manifest 에 없는데 파일이 있거나, 맞춘 뒤로 내용이 달라졌다
-                changed_here = local is not None and (not ent or sha256(local) != ent["sha256"])
+                changed_here = local is not None and (not live(ent) or sha256(local) != ent["sha256"])
                 if changed_here and local != data:
                     self._accept(rel, data, etag, local, rep, set_aside=True)
                 else:
                     if local != data:
                         rep["got"].append(rel)
                     self._accept(rel, data, etag, local, rep)
-            for rel in [r for r in self.entries if r not in remote]:
-                ent = self.entries.pop(rel)
-                local = _read(self.root / rel)
-                if local is not None and sha256(local) == ent["sha256"]:
-                    self._remove(rel)
-                    rep["removed"].append(rel)
-                # 로컬에서 고친 파일은 남긴다 — manifest 에서 빠졌으니 다음 push 가 새 파일로 올린다
+            for rel in [r for r in self.entries if r not in remote]:  # object 째 없어졌다 (1.5 까지의 삭제 등)
+                self._gone(rel, self.entries.pop(rel), _read(self.root / rel), rep)
         finally:
             self.save()
+
+    def _gone(self, rel: str, ent, local, rep: dict):
+        """원격에서 지워졌다. 맞춘 그대로인 로컬 사본만 지운다. 이 PC 에서 고친 파일은 남긴다 — 다음 push 가
+        다시 올린다 (tombstone 이면 그 etag 로, object 째 없으면 새 파일로)."""
+        if local is not None and live(ent) and sha256(local) == ent["sha256"]:
+            self._remove(rel)
+            rep["removed"].append(rel)
 
     def push(self, rel_prefix: str = "") -> dict:
         rep = {"put": [], "deleted": [], "got": [], "conflicts": []}
@@ -901,35 +1043,40 @@ class Cache:
                 data = path.read_bytes()
                 h = sha256(data)
                 ent = self.entries.get(rel)
-                if ent and ent["sha256"] == h:
+                if live(ent) and ent["sha256"] == h:
                     continue
                 key = REMOTE_PREFIX + rel
                 try:
-                    if ent:
+                    if ent:  # 살아 있는 버전이든 tombstone 이든 맞춘 그 etag 에서 바꾼다
                         etag = self.backend.put(key, data, if_match=ent["etag"])
                     else:
                         etag = self.backend.put(key, data, if_none_match=True)
                 except PreconditionFailed:
                     r = self.backend.get(key)
-                    if r is None:  # 다른 PC 가 지웠다 — 이 PC 에서 고친 내용을 새 파일로 올린다
+                    if r is None:  # object 째 없어졌다 — 이 PC 의 내용을 새 파일로 올린다
                         etag = self.backend.put(key, data, if_none_match=True)
+                    elif is_tombstone(r[0]):  # 다른 PC 가 지웠다 — 이 PC 에서 고친(만든) 내용을 다시 올린다
+                        etag = self.backend.put(key, data, if_match=r[1])
                     else:
                         self._accept(rel, r[0], r[1], data, rep, set_aside=r[0] != data)
                         continue
                 self.entries[rel] = {"etag": etag, "sha256": h}
                 rep["put"].append(rel)
-            for rel in sorted(r for r in self.entries if r.startswith(pre) and r not in files):
+            for rel in sorted(r for r in self.entries if r.startswith(pre) and r not in files and live(self.entries[r])):
                 key = REMOTE_PREFIX + rel
                 try:
-                    if self.backend.delete(key, if_match=self.entries[rel]["etag"]):
-                        rep["deleted"].append(rel)
+                    etag = self.backend.put(key, tombstone(), if_match=self.entries[rel]["etag"])
                 except PreconditionFailed:
-                    # 지우기 전에 다른 PC 가 고쳤다 — 지우지 않고 그 버전을 받는다
                     r = self.backend.get(key)
-                    if r is not None:
+                    if r is None:  # 이미 object 째 없다
+                        del self.entries[rel]
+                    elif is_tombstone(r[0]):  # 다른 PC 가 먼저 지웠다
+                        self.entries[rel] = {"etag": r[1], "deleted": True}
+                    else:  # 지우기 전에 다른 PC 가 고쳤다 — 지우지 않고 그 버전을 받는다
                         self._accept(rel, r[0], r[1], None, rep)
                         rep["got"].append(rel)
-                        continue
-                del self.entries[rel]
+                    continue
+                self.entries[rel] = {"etag": etag, "deleted": True}
+                rep["deleted"].append(rel)
         finally:
             self.save()

@@ -94,7 +94,7 @@ followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고, `scripts/sf
 ```
 ~/.hbrness/
 ├── backend.json                          # backend 설정 (Terraform 의 backend 블록 역할)
-├── credentials.json                      # s3 자격증명 (mode 600, state 밖)
+├── credentials.json                      # s3 자격증명 — Keychain·secret-tool 을 못 쓸 때만 (mode 600, state 밖)
 ├── age.key                               # 저장소를 푸는 age 키 (mode 600, PC 마다 한 번 복사)
 └── state/                                # 원격의 로컬 캐시 (PC 마다 하나)
     ├── <host>/<owner>/<repo>/            # 저장소 키 = origin remote URL 정규화 (예: github.com/hbs9312/hbrness)
@@ -118,7 +118,7 @@ followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고, `scripts/sf
 - **브랜치 기준 핸드오프**: 워크트리 폴더 이름은 PC 마다 다르지만 브랜치는 push 하면 같다. git 은 한 브랜치를 두 워크트리에 동시에 체크아웃하지 못하게 막으니 한 PC 안에서도 겹치지 않는다.
 - **동기화**: 스킬이 읽기 전에 `sfstate.py prepare`(pull), 쓰고 나서 `sfstate.py sync`. pull 은 원격 목록에서 etag 가 바뀐 것만 받고, sync 는 로컬에서 내용이 바뀐 파일만 올린다.
 - **conditional write**: 이미 있던 파일은 `If-Match`(manifest 의 etag), 새 파일은 `If-None-Match: *` 로 올린다. 그사이 다른 PC 가 같은 파일을 바꿨으면 원격이 거절한다. 그러면 원격본을 원래 자리에 받고 이 PC 의 버전은 `_conflicts/` 에 남긴 뒤 `CONFLICT=` 로 알린다. 항목마다 파일이 따로라 두 PC 가 다른 항목을 고치면 충돌하지 않는다. lock 은 쓰지 않는다 — Terraform 은 state 가 파일 하나라 lock 이 필요하지만 여기는 파일 단위로 충돌을 가린다.
-- **삭제**: 원격 삭제도 etag 를 확인한다. 그사이 다른 PC 가 고친 파일은 지우지 않고 그 버전을 받는다. DeleteObject 의 `If-Match` 를 무시하는 저장소(예: MinIO)에서는 지우기 직전에 HEAD 로 확인해서 아주 짧은 경합 창이 남는다 — `doctor` 가 알려 준다.
+- **삭제**: 지운 파일은 object 를 지우지 않고 tombstone 으로 덮어쓴다 — 맞춘 etag 로 `If-Match` PUT 이라, 그사이 다른 PC 가 고친 파일은 지우지 않고 그 버전을 받는다. DeleteObject 의 `If-Match` 를 무시하는 저장소(예: MinIO)에서도 경합 창이 없다. 다른 PC 의 pull 은 tombstone 을 삭제로 읽어 맞춘 그대로인 로컬 사본만 지우고, 이 PC 에서 고친 파일은 남겨 다음 sync 가 다시 올린다. 지운 자리에 다시 만든 파일은 tombstone 의 etag 로 `If-Match` PUT 한다. tombstone 은 작아서 지우지 않는다.
 - **암호화**: 새 저장소는 `init` 이 age 로 암호화하도록 정한다. 표시(`.sfbackend`)에 age 공개키를 적고, 그 저장소의 object(followup·handoff·대화 기록·meta)는 모두 암호화해 올리고 풀어서 읽는다 — 저장소 운영자(R2·S3)는 내용을 못 본다. 암호화는 공개키로 하고 푸는 키는 `~/.hbrness/age.key` 에만 있다. `init` 이 같은 설정을 `backend.json` 에도 적어 두고 매번 표시와 맞춰 보므로, 누가 표시를 고쳐 암호화를 빼거나 공개키를 바꿔치기하면 올리지 않고 실패한다. `age` CLI 가 있어야 한다 (`brew install age` · `apt install age`). 이미 만든 평문 저장소를 암호화로 바꾸지는 않는다 — 새 bucket 이나 `--prefix` 로 `init` 한다. 그래서 암호화한 저장소에서 암호문이 아닌 object 는 받지 않고 실패한다(망가졌거나 누가 넣은 내용이 로컬 사본을 덮지 않게). 암호화한 저장소를 쓰던 PC 가 평문 저장소로 `init` 하려면 `--no-encrypt` 를 붙여야 한다.
 - **원격에 닿지 못하면**: 저장소 표시(`.sfbackend`)를 읽지 못하면 빈 저장소로 보지 않고 실패한다. 빈 목록으로 읽으면 pull 이 로컬 사본을 전부 지우기 때문이다. manifest 는 저장소 ID 에 묶여 있어서, 같은 자리에 저장소를 새로 만들면 예전 manifest 를 버리고 로컬 파일을 다시 올린다. 로컬 디렉토리를 읽다 에러가 나도 빠진 파일을 삭제로 읽지 않고 sync 를 멈춘다.
 - **turn 끝에 받아오기**: 각 도구의 Stop hook 에 `python3 <sessionflow>/scripts/sfstate.py pull --background` 를 걸면 turn 이 끝날 때마다 다른 PC 의 변경을 받아 온다. 바로 돌아오고 뒤에서 pull 하므로 turn 종료를 붙잡지 않으며, 이미 pull 이 돌고 있으면 건너뛴다. 끝나면 `paths` 의 `PULL_STAMP` 파일(`state/.sfstate/pulled`)을 갱신해, 표시 쪽(statusline 등)이 mtime 으로 다시 그릴 때를 안다. hook 의 cwd 를 `--dir` 로 넘기면 그 저장소의 INDEX.md 도 다시 만든다. 받기만 하고 올리지는 않는다.
@@ -127,7 +127,8 @@ followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고, `scripts/sf
 ### backend 정하기 (새 PC 도 같다)
 
 ```bash
-# S3 API 저장소 — AWS S3·Cloudflare R2·MinIO 등. 자격증명은 stdin 으로 넘겨 credentials.json(mode 600)에 저장한다.
+# S3 API 저장소 — AWS S3·Cloudflare R2·MinIO 등. 자격증명은 stdin 으로 넘긴다 — macOS 는 Keychain, Linux 는
+# secret-tool(Secret Service), 둘 다 없으면 credentials.json(mode 600)에 둔다 (--credentials-store 로 고른다).
 printf '%s\n%s\n' "$ACCESS_KEY_ID" "$SECRET_ACCESS_KEY" | \
   python3 <sessionflow>/scripts/sfstate.py init --backend s3 \
     --endpoint https://<account>.r2.cloudflarestorage.com --region auto \
@@ -146,6 +147,7 @@ python3 <sessionflow>/scripts/sfstate.py status
 
 - `init` 은 `backend.json` 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다. 다른 PC 에서 이미 올린 내용이 있으면 먼저 받는다.
 - 새 저장소면 `init` 이 age 로 암호화하도록 정하고, `~/.hbrness/age.key` 가 없으면 만들어 `AGE_KEY_CREATED=` 로 알린다. **이 파일을 잃으면 올린 기록을 아무도 풀 수 없으니 따로 보관한다.** 암호화하지 않으려면 `--no-encrypt`. 이미 있는 저장소는 그 설정을 따른다 — 암호화한 저장소에 키 없이 `init` 하면 키를 복사하라고 하고 멈춘다(설정을 남기지 않는다). 같은 저장소를 다시 `init` 할 때 표시의 암호화 설정이 이 PC 가 쓰던 것과 다르면(암호화가 빠졌거나 공개키가 바뀌거나 늘었으면) 멈춘다 — 바뀐 이유를 확인한 뒤에만 `--accept-encryption-change` 로 받아들인다. 공개키가 여럿이면 `ENCRYPTION_WARN=` 으로 알린다.
+- 자격증명은 `--credentials-store auto|keychain|secret-tool|file`(기본 auto: macOS Keychain → Linux secret-tool → 파일)가 정한 곳에 두고 `backend.json` 의 `credentials` 에 적는다. Keychain·secret-tool 에 넘길 때는 비밀값을 명령줄이 아닌 stdin 으로만 넘기고, 둔 뒤 다시 읽어 맞는지 본다. 그쪽에 두면 남아 있던 `credentials.json` 은 지운다. 둘 곳을 바꿔 다시 `init` 하면 저장된 것을 옮기고 예전 자리를 치운다. SSH 로 접속해 Keychain 이 잠겨 있으면 읽지 못한다고 알린다 — 그런 PC 는 `--credentials-store file`.
 - AWS 가 아닌 저장소는 `--endpoint` 를 준다. endpoint 가 있으면 path-style(`<endpoint>/<bucket>/<key>`)이 기본이고, `--virtual-host` 로 바꿀 수 있다. 환경변수 `HBRNESS_S3_ACCESS_KEY_ID` 와 `HBRNESS_S3_SECRET_ACCESS_KEY` 가 둘 다 있으면 (`HBRNESS_S3_SESSION_TOKEN` 과 함께) 한 묶음으로 `credentials.json` 보다 먼저 쓴다. 파일 값과 섞지 않는다. `--credentials-stdin` 으로 준 자격증명은 저장된 것을 통째로 바꾼다 (환경변수 묶음이 있으면 init 도 그쪽으로 맞춘다).
 - bucket versioning 을 켜 두면 지운 항목·덮어쓴 버전을 되살릴 수 있다.
 - backend 가 없으면 스킬은 `~/.hbrness/state/` 에 로컬로만 기록하고 그 사실을 알린다. 나중에 `init` 하면 그대로 올라간다.
@@ -209,15 +211,7 @@ python3 <sessionflow>/scripts/sfstate.py migrate-all
 ```
 
 - **훅**: `scripts/sfhook.py` 가 Stop(turn 끝)과 SessionEnd(세션 끝)에 붙는다. 바로 돌아오고 아무것도 출력하지 않는다. 실제 일은 떼어 낸 프로세스가 한다 — Stop 에서는 followup/handoff pull(`sfstate.py pull`)과 log 수집(`sflog.py collect`), SessionEnd 에서는 마지막 수집(쓰다 만 마지막 줄까지)을 한다.
-- **훅 등록**: Claude Code·Grok·Devin 은 플러그인에 들어 있는 `hooks/<harness>.hooks.json` 이 설치될 때 같이 등록된다. Codex 는 hbrness installer 가 훅을 넣지 못하므로 `~/.codex/hooks.json` 에 직접 넣는다:
-
-  ```json
-  "Stop":       [{"hooks": [{"type": "command", "timeout": 10,
-                  "command": "python3 \"$HOME/.codex/skills/sessionflow-handoff/../../scripts/sfhook.py\" stop --tool codex"}]}],
-  "SessionEnd": [{"hooks": [{"type": "command", "timeout": 10,
-                  "command": "python3 \"$HOME/.codex/skills/sessionflow-handoff/../../scripts/sfhook.py\" session-end --tool codex"}]}]
-  ```
-
+- **훅 등록**: 플러그인의 `hooks/<harness>.hooks.json` 이 설치될 때 같이 등록된다. Claude Code·Grok·Devin 은 플러그인째, Codex 는 `hbrness install codex sessionflow` 가 `~/.codex/hooks.json` 의 `Stop`·`SessionEnd` 에 병합한다 (명령 끝의 `# hbrness:sessionflow` 로 제 것을 알아보고, 다시 설치하면 바꾸고, `uninstall` 하면 그것만 뺀다. 원래 파일은 `.hbrness-bak.<시각>` 으로 남긴다). Codex 는 새 훅을 쓰기 전에 신뢰할지 물을 수 있다. Codex 병합은 자기 `codex.hooks.json` 에 `"_hbrness": {"merge": true}` 를 적은 플러그인만 한다 — 다른 플러그인의 어댑터 공통 훅(ghflow 템플릿 받기 등)은 넣지 않는다.
 - **자리**: 세션을 처음 수집할 때의 cwd 로 저장소 키를 정하고, 세션 내내 그 자리에 모은다(도중에 `cd` 해도 한 세션은 한 곳에). 올린 위치(offset)는 `~/.hbrness/logs/sessions/<tool>-<session>.json` 에 적고 저장소 ID 에 묶는다 — backend 를 바꾸면 그 세션을 처음부터 다시 올린다. transcript 가 사라져도 세션이 끝났다는 것(`ended`)은 올린다. transcript 가 줄었거나 앞부분이 바뀌면(다시 쓰임 — Devin 은 이미 올린 step 이 바뀌었으면) 세대를 하나 올려 처음부터 `g<세대>-NNNNNN.jsonl.gz` 로 올리고 `meta.json` 의 `generation`·`rewrites` 를 올린다. show·search 는 `meta.json` 의 `generation` 세대만 읽어서 같은 내용이 두 번 나오지 않는다(그 세대가 비었으면 빈 기록). 진행 기록 없이 처음 올릴 때(새 세션·backend 를 바꿨다 돌아옴·상태 파일을 잃음)는 그 자리에 이미 있는 세대보다 하나 위에서 시작한다. 반쯤 쓴 Devin JSON 은 그 차례에 건너뛴다. 예전 세대는 지우지 않는다(lifecycle 규칙이 치운다).
 - **비밀값 가리기**: 저장소 암호화와 따로, 올리기 전에 가린다. private key 블록(age 키 포함), AWS access key, GitHub·GitLab·Anthropic·OpenAI·Stripe·Slack·npm·PyPI·Hugging Face·Shopify·DigitalOcean·SendGrid·Google·Groq·xAI·Databricks·Linear·Notion·Sentry·Atlassian 토큰, JWT, `Bearer …`, URL 안의 비밀번호(`postgres://app:<여기>@db`), `password=…`·`SECRET_KEY=…`·`DB_PASSWORD="…"`·`"api_key": "…"` 꼴의 값을 `[REDACTED:<종류>]` 로 바꾼다. `.env` 꼴 줄(`NAME=value`, `export`·줄 번호가 붙어도)은 이름과 상관없이 값이 무작위 문자열처럼 보이면(글자·숫자가 섞이고 글자당 엔트로피 3 bit 이상) 가린다. `true`·`null` 같은 설정값은 두고, 따옴표로 묶인 값은 짧거나 공백이 있어도 닫는 따옴표까지 통째로 가린다. `gitleaks` 가 설치돼 있으면 가린 결과를 한 번 더 훑어 찾은 것도 가린다 (저장소의 `.gitleaks.toml` 은 쓰지 않는다). transcript 는 줄마다 JSON 으로 풀어서 문자열 값을 검사하고(escape 에 가려지지 않게), `password`·`api_key`·`client_secret` 같은 이름의 key 값은 숫자여도 가린다. 가린 줄만 다시 직렬화하므로 JSON 이 깨지지 않고, segment 는 줄 중간에서 자르지 않는다. `~/.hbrness/redact.txt` 에 한 줄에 정규식 하나씩 더할 수 있다. 패턴에 안 걸리는 비밀값은 그대로 올라가므로 bucket 은 공개하지 않는다.
 - **보관 기간**: 기록은 계속 쌓인다. bucket lifecycle 규칙으로 `<prefix>logs/` 에 만료를 건다(예: 180일). `sfstate.py doctor` 가 규칙이 없으면 `LOGS_LIFECYCLE=none` 으로 알린다.

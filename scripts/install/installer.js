@@ -341,7 +341,7 @@ function applyInstallUserLevel({ plan, results, dryRun, skipHooks, harness, plug
         );
         results.push({
           action: 'hooks',
-          target: '~/.claude/settings.json',
+          target: hookLabel(harness),
           plugin,
           events: hookRes.events,
           backup: hookRes.backup,
@@ -350,13 +350,18 @@ function applyInstallUserLevel({ plan, results, dryRun, skipHooks, harness, plug
       } catch (err) {
         results.push({
           action: 'hooks',
-          target: '~/.claude/settings.json',
+          target: hookLabel(harness),
           status: 'error',
           error: err.message,
         });
       }
     }
   }
+}
+
+function hookLabel(harness) {
+  const store = hooksModule.hookStore(harness);
+  return store ? store.label : harness;
 }
 
 function planUninstallUserLevel({ harness, plugin }) {
@@ -389,8 +394,9 @@ function planUninstallUserLevel({ harness, plugin }) {
     }
   }
 
-  const hooksPlan =
-    harness === 'claude' ? hooksModule.planHooksUninstall({ plugin }) : { events: [] };
+  const hooksPlan = hooksModule.hookStore(harness)
+    ? hooksModule.planHooksUninstall({ plugin, harness })
+    : { events: [] };
 
   return { ops, mode: 'user-level', hooksPlan };
 }
@@ -410,12 +416,12 @@ function applyUninstallUserLevel({ plan, results, dryRun, skipHooks, harness, pl
       results.push({ ...op, status: 'error', error: err.message });
     }
   }
-  if (!skipHooks && harness === 'claude' && plan.hooksPlan && plan.hooksPlan.events.length > 0) {
+  if (!skipHooks && hooksModule.hookStore(harness) && plan.hooksPlan && plan.hooksPlan.events.length > 0) {
     try {
-      const hookRes = hooksModule.applyHooksUninstall({ plugin }, { dryRun });
+      const hookRes = hooksModule.applyHooksUninstall({ plugin, harness }, { dryRun });
       results.push({
         action: 'hooks',
-        target: '~/.claude/settings.json',
+        target: hookLabel(harness),
         plugin,
         events: hookRes.events,
         backup: hookRes.backup,
@@ -424,7 +430,7 @@ function applyUninstallUserLevel({ plan, results, dryRun, skipHooks, harness, pl
     } catch (err) {
       results.push({
         action: 'hooks',
-        target: '~/.claude/settings.json',
+        target: hookLabel(harness),
         status: 'error',
         error: err.message,
       });

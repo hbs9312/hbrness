@@ -228,7 +228,7 @@ class CollectEnv(unittest.TestCase):
 
     def env(self, **extra):
         return dict(os.environ, **GIT_ENV, HBRNESS_HOME=str(self.home), HBRNESS_STATE_DIR=str(self.home / 'state'),
-                    GROK_HOME=str(self.base / 'grok'), **extra)
+                    GROK_HOME=str(self.base / 'grok'), HBRNESS_CREDENTIALS_STORE='file', **extra)
 
     def collect(self, tool, session, transcript='', final=False):
         args = [sys.executable, str(SFLOG), 'collect', '--tool', tool, '--session', session,
@@ -1266,7 +1266,11 @@ class BuildHookTests(unittest.TestCase):
             self.assertIn('--tool grok', (out['grok'] / 'hooks/hooks.json').read_text())
             devin = json.loads((out['devin'] / 'hooks.json').read_text())
             self.assertEqual(sorted(devin), ['SessionEnd', 'Stop'])
-            self.assertFalse((out['codex'] / 'hooks/hooks.json').exists())  # ghflow 훅이 섞여 들어가지 않는다
+            codex = json.loads((out['codex'] / 'hooks/hooks.json').read_text())  # 자기 codex.hooks.json — ghflow 훅이 아니다
+            self.assertEqual(sorted(codex['hooks']), ['SessionEnd', 'Stop'])
+            self.assertTrue(codex['_hbrness']['merge'])
+            self.assertIn('${CODEX_PLUGIN_ROOT}/scripts/sfhook.py', json.dumps(codex))
+            self.assertNotIn('fetch-templates', json.dumps(codex))
             for o in out.values():
                 self.assertEqual(list(o.glob('hooks/*.hooks.json')), [])
 

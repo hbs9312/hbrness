@@ -5,6 +5,8 @@ const {
   backupSettings,
   writeSettings,
 } = require('./settings.js');
+const { parseJsonc } = require('./jsonc.js');
+const { codexRoot } = require('./paths.js');
 
 const SENTINEL = '_hbrness';
 
@@ -35,7 +37,67 @@ function resolvePaths(obj, varName, replacement) {
   return JSON.parse(replaced);
 }
 
-function markOwnership(group, plugin) {
+/**
+ * Where a harness keeps user-level hooks. Claude: ~/.claude/settings.json (hooks section).
+ * Codex: ~/.codex/hooks.json ({"hooks": {...}}).
+ */
+function codexHooksPath() {
+  return path.join(codexRoot(), 'hooks.json');
+}
+
+function readCodexHooks() {
+  const file = codexHooksPath();
+  if (!fs.existsSync(file)) return {};
+  try {
+    return parseJsonc(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new Error(`failed to parse ${file}: ${err.message}`);
+  }
+}
+
+function backupCodexHooks() {
+  const file = codexHooksPath();
+  if (!fs.existsSync(file)) return null;
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').replace(/T/, '-').replace(/Z$/, '');
+  const backupPath = `${file}.hbrness-bak.${ts}`;
+  fs.copyFileSync(file, backupPath);
+  return backupPath;
+}
+
+function writeCodexHooks(obj) {
+  const file = codexHooksPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+function hookStore(harness) {
+  if (harness === 'claude') {
+    return { label: '~/.claude/settings.json', read: readSettings, backup: backupSettings, write: writeSettings };
+  }
+  if (harness === 'codex') {
+    return { label: '~/.codex/hooks.json', read: readCodexHooks, backup: backupCodexHooks, write: writeCodexHooks };
+  }
+  return null;
+}
+
+/**
+ * Codex may reject unknown keys in hooks.json, so ownership is a trailing shell comment on each
+ * command instead of a sentinel key: `... # hbrness:<plugin>`.
+ */
+function codexMarker(plugin) {
+  return ` # hbrness:${plugin}`;
+}
+
+function markOwnership(group, plugin, harness = 'claude') {
+  if (harness === 'codex') {
+    return {
+      ...group,
+      hooks: (group.hooks || []).map((h) =>
+        typeof h.command === 'string' ? { ...h, command: h.command + codexMarker(plugin) } : h),
+    };
+  }
   return {
     ...group,
     [SENTINEL]: { plugin, installedAt: new Date().toISOString() },
@@ -43,11 +105,37 @@ function markOwnership(group, plugin) {
 }
 
 function isOwnedBy(group, plugin) {
-  return (
-    group &&
-    group[SENTINEL] &&
-    group[SENTINEL].plugin === plugin
-  );
+  return Boolean(group && group[SENTINEL] && group[SENTINEL].plugin === plugin);
+}
+
+function isOwnedCommand(hook, plugin) {
+  return Boolean(hook) && typeof hook.command === 'string' && hook.command.endsWith(codexMarker(plugin));
+}
+
+/**
+ * Remove this plugin's hooks from one event's groups. Claude: whole groups carrying the sentinel.
+ * Codex: only the commands carrying the marker — the user may have added their own command to the
+ * same group; the group (matcher etc.) stays unless it ends up empty.
+ * Returns { kept, removed } where removed counts groups (claude) or commands (codex).
+ */
+function stripOwned(groups, plugin, harness) {
+  if (harness !== 'codex') {
+    const kept = groups.filter((g) => !isOwnedBy(g, plugin));
+    return { kept, removed: groups.length - kept.length };
+  }
+  const kept = [];
+  let removed = 0;
+  for (const g of groups) {
+    if (!g || !Array.isArray(g.hooks)) {
+      kept.push(g);
+      continue;
+    }
+    const hooks = g.hooks.filter((h) => !isOwnedCommand(h, plugin));
+    removed += g.hooks.length - hooks.length;
+    if (hooks.length === g.hooks.length) kept.push(g);
+    else if (hooks.length > 0) kept.push({ ...g, hooks });
+  }
+  return { kept, removed };
 }
 
 /**
@@ -56,14 +144,19 @@ function isOwnedBy(group, plugin) {
  * supported === false means the harness has no hook-merge strategy here.
  */
 function planHooksInstall({ harness, plugin, pluginDir }) {
-  if (harness !== 'claude') {
+  if (!hookStore(harness)) {
     return {
       supported: false,
-      reason: `hook merging is only implemented for claude (not ${harness})`,
+      reason: `hook merging is only implemented for claude and codex (not ${harness})`,
     };
   }
   const pluginHooks = loadPluginHooks(pluginDir);
   if (!pluginHooks || !pluginHooks.hooks) {
+    return { supported: true, events: [], resolvedHooks: {} };
+  }
+  // Codex: only plugins that declare their own codex.hooks.json with {"_hbrness": {"merge": true}}.
+  // Adapter-wide hooks (e.g. ghflow's template fetch) stay out of ~/.codex/hooks.json.
+  if (harness === 'codex' && !(pluginHooks[SENTINEL] && pluginHooks[SENTINEL].merge === true)) {
     return { supported: true, events: [], resolvedHooks: {} };
   }
   const varName = HARNESS_ROOT_VAR[harness];
@@ -88,8 +181,9 @@ function applyHooksInstall({ harness, plugin, pluginDir }, { dryRun = false } = 
     return { status: 'planned', events: plan.events };
   }
 
-  const settings = readSettings();
-  const backup = backupSettings();
+  const store = hookStore(harness);
+  const settings = store.read();
+  const backup = store.backup();
   settings.hooks = settings.hooks || {};
 
   for (const [event, groups] of Object.entries(plan.resolvedHooks)) {
@@ -97,33 +191,37 @@ function applyHooksInstall({ harness, plugin, pluginDir }, { dryRun = false } = 
       ? settings.hooks[event]
       : [];
     // Re-install semantics: drop prior hbrness entries for this plugin under this event, then append new.
-    const kept = existing.filter((g) => !isOwnedBy(g, plugin));
+    const { kept } = stripOwned(existing, plugin, harness);
     for (const g of groups) {
-      kept.push(markOwnership(g, plugin));
+      kept.push(markOwnership(g, plugin, harness));
     }
     settings.hooks[event] = kept;
   }
 
-  writeSettings(settings);
-  return { status: 'installed', events: plan.events, backup };
+  store.write(settings);
+  return { status: 'installed', events: plan.events, backup, target: store.label };
 }
 
 /** Plan removing a plugin's hooks from user settings. */
-function planHooksUninstall({ plugin }) {
-  const settings = readSettings();
+function planHooksUninstall({ plugin, harness = 'claude' }) {
+  const store = hookStore(harness);
+  if (!store) return { events: [] };
+  const settings = store.read();
   if (!settings.hooks) return { events: [] };
   const events = [];
   for (const [event, groups] of Object.entries(settings.hooks)) {
     if (!Array.isArray(groups)) continue;
-    const matched = groups.filter((g) => isOwnedBy(g, plugin)).length;
-    if (matched > 0) events.push({ event, groupCount: matched });
+    const { removed } = stripOwned(groups, plugin, harness);
+    if (removed > 0) events.push({ event, groupCount: removed });
   }
   return { events };
 }
 
 /** Apply the removal of a plugin's hooks. */
-function applyHooksUninstall({ plugin }, { dryRun = false } = {}) {
-  const settings = readSettings();
+function applyHooksUninstall({ plugin, harness = 'claude' }, { dryRun = false } = {}) {
+  const store = hookStore(harness);
+  if (!store) return { status: 'no-hooks', events: [] };
+  const settings = store.read();
   if (!settings.hooks) return { status: 'no-hooks', events: [] };
 
   const events = [];
@@ -133,15 +231,7 @@ function applyHooksUninstall({ plugin }, { dryRun = false } = {}) {
       newHooks[event] = groups;
       continue;
     }
-    const kept = [];
-    let removed = 0;
-    for (const g of groups) {
-      if (isOwnedBy(g, plugin)) {
-        removed += 1;
-      } else {
-        kept.push(g);
-      }
-    }
+    const { kept, removed } = stripOwned(groups, plugin, harness);
     if (removed > 0) events.push({ event, groupCount: removed });
     if (kept.length > 0) newHooks[event] = kept;
   }
@@ -149,14 +239,16 @@ function applyHooksUninstall({ plugin }, { dryRun = false } = {}) {
   if (events.length === 0) return { status: 'no-match', events: [] };
   if (dryRun) return { status: 'planned', events };
 
-  const backup = backupSettings();
+  const backup = store.backup();
   settings.hooks = newHooks;
-  writeSettings(settings);
-  return { status: 'removed', events, backup };
+  store.write(settings);
+  return { status: 'removed', events, backup, target: store.label };
 }
 
 module.exports = {
   SENTINEL,
+  hookStore,
+  codexHooksPath,
   loadPluginHooks,
   planHooksInstall,
   applyHooksInstall,

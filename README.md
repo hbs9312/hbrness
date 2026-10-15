@@ -92,7 +92,9 @@ Runtime differences:
   repository's origin remote and synced across machines through an S3-API
   backend with conditional writes, encrypted with age by default
   (`sessionflow/scripts/sfstate.py init --backend s3 …`, then `sfstate.py doctor`;
-  copy `~/.hbrness/age.key` to each machine). The skills also
+  copy `~/.hbrness/age.key` to each machine; S3 credentials go to the macOS
+  Keychain or Linux secret-tool when available). `install codex sessionflow`
+  merges its Stop/SessionEnd hooks into `~/.codex/hooks.json`. The skills also
   maintain the Claude/Codex memory indexes. This does not create a native
   Grok/Devin automatic-memory integration.
 
