@@ -196,14 +196,15 @@ python3 <sessionflow>/scripts/sfstate.py migrate-all
 | Claude Code | `~/.claude/projects/<key>/<session>.jsonl` | `transcript_path` | 늘어난 줄만 segment 로 |
 | Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `transcript_path` | 늘어난 줄만 segment 로 |
 | Grok Build | `~/.grok/sessions/<URL 인코딩한 cwd>/<session>/chat_history.jsonl` | `sessionId`·`cwd` (경로는 sflog 가 찾는다) | 늘어난 줄만 segment 로 |
-| Devin CLI | `~/.local/share/devin/cli/transcripts/<이름>.json` | `transcript_path` | 바뀌었으면 통째로 다시 |
+| Devin CLI | `~/.local/share/devin/cli/transcripts/<이름>.json` | `transcript_path` | steps 를 한 줄에 하나씩 JSONL 로 바꿔 늘어난 step 만 (마지막 step 은 세션 끝에) |
 
 ```
 <bucket>/<prefix>/logs/<repo-key|_norepo>/<tool>/<session-id>/
-├── meta.json             # 도구·세션·저장소·브랜치·cwd·host·시작/갱신/끝 시각·segment 수
-├── 000001.jsonl.gz       # JSONL: 지난번에 올린 곳 뒤로 늘어난 완성된 줄 (S3 object 는 이어 쓸 수 없어서)
+├── meta.json             # 도구·세션·저장소·브랜치·cwd·host·시작/갱신/끝 시각·segment 수·세대
+├── 000001.jsonl.gz       # 1세대: 지난번에 올린 곳 뒤로 늘어난 완성된 줄·step (S3 object 는 이어 쓸 수 없어서)
 ├── 000002.jsonl.gz
-└── transcript.json.gz    # JSON 한 덩어리(Devin): 최신본
+├── g2-000001.jsonl.gz    # transcript 가 다시 쓰인 뒤의 2세대 — 읽을 때는 meta 의 generation 세대만
+└── transcript.json.gz    # steps 가 없는 JSON 한 덩어리의 최신본 (1.3 까지의 Devin)
 ```
 
 - **훅**: `scripts/sfhook.py` 가 Stop(turn 끝)과 SessionEnd(세션 끝)에 붙는다. 바로 돌아오고 아무것도 출력하지 않는다. 실제 일은 떼어 낸 프로세스가 한다 — Stop 에서는 followup/handoff pull(`sfstate.py pull`)과 log 수집(`sflog.py collect`), SessionEnd 에서는 마지막 수집(쓰다 만 마지막 줄까지)을 한다.
@@ -216,7 +217,7 @@ python3 <sessionflow>/scripts/sfstate.py migrate-all
                   "command": "python3 \"$HOME/.codex/skills/sessionflow-handoff/../../scripts/sfhook.py\" session-end --tool codex"}]}]
   ```
 
-- **자리**: 세션을 처음 수집할 때의 cwd 로 저장소 키를 정하고, 세션 내내 그 자리에 모은다(도중에 `cd` 해도 한 세션은 한 곳에). 올린 위치(offset)는 `~/.hbrness/logs/sessions/<tool>-<session>.json` 에 적고 저장소 ID 에 묶는다 — backend 를 바꾸면 그 세션을 처음부터 다시 올린다. transcript 가 사라져도 세션이 끝났다는 것(`ended`)은 올린다. transcript 가 줄었거나 앞부분이 바뀌면(다시 쓰임) 처음부터 새 segment 로 잇고 `meta.json` 의 `rewrites` 를 올린다.
+- **자리**: 세션을 처음 수집할 때의 cwd 로 저장소 키를 정하고, 세션 내내 그 자리에 모은다(도중에 `cd` 해도 한 세션은 한 곳에). 올린 위치(offset)는 `~/.hbrness/logs/sessions/<tool>-<session>.json` 에 적고 저장소 ID 에 묶는다 — backend 를 바꾸면 그 세션을 처음부터 다시 올린다. transcript 가 사라져도 세션이 끝났다는 것(`ended`)은 올린다. transcript 가 줄었거나 앞부분이 바뀌면(다시 쓰임 — Devin 은 이미 올린 step 이 바뀌었으면) 세대를 하나 올려 처음부터 `g<세대>-NNNNNN.jsonl.gz` 로 올리고 `meta.json` 의 `generation`·`rewrites` 를 올린다. show·search 는 `meta.json` 의 `generation` 세대만 읽어서 같은 내용이 두 번 나오지 않는다(그 세대가 비었으면 빈 기록). 진행 기록 없이 처음 올릴 때(새 세션·backend 를 바꿨다 돌아옴·상태 파일을 잃음)는 그 자리에 이미 있는 세대보다 하나 위에서 시작한다. 반쯤 쓴 Devin JSON 은 그 차례에 건너뛴다. 예전 세대는 지우지 않는다(lifecycle 규칙이 치운다).
 - **비밀값 가리기**: 저장소 암호화와 따로, 올리기 전에 가린다. private key 블록(age 키 포함), AWS access key, GitHub·GitLab·Anthropic·OpenAI·Stripe·Slack·npm·PyPI·Hugging Face·Shopify·DigitalOcean·SendGrid·Google·Groq·xAI·Databricks·Linear·Notion·Sentry·Atlassian 토큰, JWT, `Bearer …`, URL 안의 비밀번호(`postgres://app:<여기>@db`), `password=…`·`SECRET_KEY=…`·`DB_PASSWORD="…"`·`"api_key": "…"` 꼴의 값을 `[REDACTED:<종류>]` 로 바꾼다. `.env` 꼴 줄(`NAME=value`, `export`·줄 번호가 붙어도)은 이름과 상관없이 값이 무작위 문자열처럼 보이면(글자·숫자가 섞이고 글자당 엔트로피 3 bit 이상) 가린다. `true`·`null` 같은 설정값은 두고, 따옴표로 묶인 값은 짧거나 공백이 있어도 닫는 따옴표까지 통째로 가린다. `gitleaks` 가 설치돼 있으면 가린 결과를 한 번 더 훑어 찾은 것도 가린다 (저장소의 `.gitleaks.toml` 은 쓰지 않는다). transcript 는 줄마다 JSON 으로 풀어서 문자열 값을 검사하고(escape 에 가려지지 않게), `password`·`api_key`·`client_secret` 같은 이름의 key 값은 숫자여도 가린다. 가린 줄만 다시 직렬화하므로 JSON 이 깨지지 않고, segment 는 줄 중간에서 자르지 않는다. `~/.hbrness/redact.txt` 에 한 줄에 정규식 하나씩 더할 수 있다. 패턴에 안 걸리는 비밀값은 그대로 올라가므로 bucket 은 공개하지 않는다.
 - **보관 기간**: 기록은 계속 쌓인다. bucket lifecycle 규칙으로 `<prefix>logs/` 에 만료를 건다(예: 180일). `sfstate.py doctor` 가 규칙이 없으면 `LOGS_LIFECYCLE=none` 으로 알린다.
 - **읽기**: `/log` 스킬(`sflog.py list|show|search|save`). 도구마다 다른 transcript 를 읽을 때 같은 사건 목록(user / assistant / 도구 호출 / 결과)으로 바꾼다 — 도구가 끼워 넣은 환경·지침 블록과 thinking 은 뺀다. 읽은 object 는 `~/.hbrness/logs/cache/` 에 etag 와 함께 두고 바뀐 것만 다시 받는다. `meta.json` 의 `title` 은 첫 사용자 말(인자 없는 슬래시 명령은 건너뜀)이고, 비밀값을 가린 뒤 올린다.

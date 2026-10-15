@@ -6,12 +6,20 @@
 그리고 세션이 끝날 때 부른다.
 
 원격 key (backend 의 logs/ 아래, followup/handoff 의 repos/ 와 따로):
-  logs/<repo-key|_norepo>/<tool>/<session-id>/meta.json          세션 정보 (도구·저장소·브랜치·시각…)
-  logs/<repo-key|_norepo>/<tool>/<session-id>/000001.jsonl.gz    JSONL transcript 를 늘어난 만큼씩 (Claude·Codex·Grok)
-  logs/<repo-key|_norepo>/<tool>/<session-id>/transcript.json.gz JSON 한 덩어리 transcript 의 최신본 (Devin)
+  logs/<repo-key|_norepo>/<tool>/<session-id>/meta.json            세션 정보 (도구·저장소·브랜치·시각·세대…)
+  logs/<repo-key|_norepo>/<tool>/<session-id>/000001.jsonl.gz      transcript 를 늘어난 만큼씩 (1세대)
+  logs/<repo-key|_norepo>/<tool>/<session-id>/g2-000001.jsonl.gz   transcript 가 다시 쓰인 뒤 (2세대부터)
+  logs/<repo-key|_norepo>/<tool>/<session-id>/transcript.json.gz   JSON 한 덩어리 transcript 의 최신본 (steps 가 없는 JSON, 1.3 까지의 Devin)
 
 S3 object 는 뒤에 이어 쓸 수 없어서, JSONL 은 지난번에 올린 곳(offset) 뒤로 늘어난 줄만 segment 로 올린다.
-offset 은 ~/.hbrness/logs/sessions/<tool>-<session>.json 에 적는다.
+Devin 처럼 JSON 한 덩어리를 통째로 다시 쓰는 transcript 는 steps 를 한 줄에 하나씩 JSONL 로 바꿔 늘어난 step 만
+올린다. 진행은 ~/.hbrness/logs/sessions/<tool>-<session>.json 에 적는다.
+
+세대: transcript 가 줄었거나 앞부분이 달라졌으면(압축·재시작 등, Devin 은 이미 올린 step 이 바뀌었으면) 다시 쓰인
+것이다. 그때는 세대를 하나 올려 처음부터 새 segment 로 올리고, 읽을 때는 meta.json 의 generation 세대만 쓴다 —
+예전 세대를 이어 붙여 같은 내용이 두 번 나오지 않게 (빈 세대면 빈 기록이다). 진행 기록 없이 처음 올릴 때(새
+세션·backend 를 바꿨다 돌아옴·상태 파일을 잃음)는 그 자리에 이미 있는 세대보다 하나 위에서 시작한다. 예전
+세대는 지우지 않는다 (bucket lifecycle 이 치운다).
 
   logs/<repo-key|_norepo>/manual/<id>/transcript.md              훅이 없는 곳에서 save 로 남긴 기록
 
@@ -66,6 +74,7 @@ import sfstate  # noqa: E402
 TOOLS = ("claude", "codex", "grok", "devin")
 SEGMENT_MAX = 8 * 1024 * 1024  # 한 segment 에 넣는 원문 상한. 처음 붙는 긴 세션도 나눠 올린다.
 HEAD_LEN = 4096  # 파일이 다시 쓰였는지 볼 때 비교하는 앞부분 길이
+SEGMENT_NAME = re.compile(r"(?:g([1-9]\d*)-)?(\d{6})\.jsonl\.gz")  # 1세대는 g 없이
 LOG_KEEP = 256 * 1024  # collect.log 상한
 
 # 패턴 앞 경계: 보통의 단어 경계, 또는 JSON escape(\n·\t …) 바로 뒤 — 문자열 안에 JSON 이 한 번 더 들어 있을 때.
@@ -375,15 +384,32 @@ def remote_dir(st: dict, tool: str, session: str, cwd: str) -> str:
 # 올리기
 # ─────────────────────────────────────────────────────────────────────────────
 
+def segment_key(prefix: str, st: dict, seq: int) -> str:
+    gen = int(st.get("gen", 1))
+    return f"{prefix}/{seq:06d}.jsonl.gz" if gen == 1 else f"{prefix}/g{gen}-{seq:06d}.jsonl.gz"
+
+
+def new_generation(st: dict):
+    """transcript 가 다시 쓰였다 — 다음 segment 부터 새 세대로 처음부터 올린다. 이번 세대에 아직 올린 게 없으면
+    (다시 쓰인 걸 알아챈 뒤 아직 못 올렸으면) 그 세대를 그대로 쓴다."""
+    for k in ("offset", "head_len", "head_sha256", "steps_sent", "steps_sha256"):
+        st.pop(k, None)
+    if int(st.get("seq", 0)):
+        st["gen"] = int(st.get("gen", 1)) + 1
+        st["seq"] = 0
+        st["rewrites"] = int(st.get("rewrites", 0)) + 1
+        st["meta_dirty"] = True
+
+
 def upload_jsonl(be, st: dict, src: Path, prefix: str, final: bool, extra) -> int:
     """지난 offset 뒤로 늘어난 완성된 줄을 segment 로 올린다. 반환: 올린 segment 수."""
     size = src.stat().st_size
     offset = int(st.get("offset", 0))
     with open(src, "rb") as fh:
-        # 파일이 다시 쓰였으면(압축·재시작 등) 처음부터 새 segment 로 잇는다. 줄었거나 앞부분이 달라졌으면 그렇다.
+        # 줄었거나 앞부분이 달라졌으면 다시 쓰인 것이다 (압축·재시작 등) — 새 세대로 처음부터
         head_len = int(st.get("head_len", 0))
         if size < offset or (head_len and hashlib.sha256(fh.read(head_len)).hexdigest() != st.get("head_sha256")):
-            st["rewrites"] = int(st.get("rewrites", 0)) + 1
+            new_generation(st)
             offset, head_len = 0, 0
         sent = upload_lines(be, st, fh, size, offset, prefix, final, extra)
         if st["offset"] and head_len < HEAD_LEN:
@@ -423,11 +449,50 @@ def upload_lines(be, st, fh, size, offset, prefix, final, extra) -> int:
             break  # 아직 쓰는 중인 줄 — 다음에 올린다
         seq = int(st.get("seq", 0)) + 1
         st["meta_dirty"] = True  # 올린 뒤 meta.json 이 실패해도 다음 수집이 다시 쓴다
-        be.put(f"{prefix}/{seq:06d}.jsonl.gz", gzip.compress(scrub(chunk, extra, redact_jsonl), mtime=0))
+        be.put(segment_key(prefix, st, seq), gzip.compress(scrub(chunk, extra, redact_jsonl), mtime=0))
         offset += len(chunk)
         st["seq"], st["offset"] = seq, offset
         sent += 1
     st["offset"] = offset
+    return sent
+
+
+def json_line(obj) -> bytes:
+    try:
+        return json.dumps(obj, ensure_ascii=False).encode("utf-8") + b"\n"
+    except UnicodeEncodeError:  # 짝 없는 surrogate — escape 해 둔다
+        return json.dumps(obj).encode("ascii") + b"\n"
+
+
+def steps_hash(steps) -> str:
+    h = hashlib.sha256()
+    for step in steps:
+        h.update(json.dumps(step, sort_keys=True).encode("ascii") + b"\n")
+    return h.hexdigest()
+
+
+def upload_steps(be, st: dict, steps: list, prefix: str, final: bool, extra) -> int:
+    """JSON 한 덩어리를 통째로 다시 쓰는 transcript(Devin)의 steps 를 한 줄에 하나씩 JSONL 로 바꿔, 늘어난 step 만
+    segment 로 올린다. 마지막 step 은 아직 채워지는 중일 수 있어 세션이 끝날 때(final) 올린다. 이미 올린 step 이
+    바뀌었거나 줄었으면 다시 쓰인 것으로 보고 새 세대로 처음부터 올린다. 반환: 올린 segment 수."""
+    done = int(st.get("steps_sent", 0))
+    if done and (len(steps) < done or steps_hash(steps[:done]) != st.get("steps_sha256")):
+        new_generation(st)
+        done = 0
+    ready = len(steps) if final else len(steps) - 1
+    sent = 0
+    while done < ready:
+        lines, size = [], 0
+        while done + len(lines) < ready and (not lines or size < SEGMENT_MAX):
+            line = json_line(steps[done + len(lines)])
+            lines.append(line)
+            size += len(line)
+        seq = int(st.get("seq", 0)) + 1
+        st["meta_dirty"] = True
+        be.put(segment_key(prefix, st, seq), gzip.compress(scrub(b"".join(lines), extra, redact_jsonl), mtime=0))
+        done += len(lines)
+        st["seq"], st["steps_sent"], st["steps_sha256"] = seq, done, steps_hash(steps[:done])
+        sent += 1
     return sent
 
 
@@ -444,18 +509,27 @@ def upload_snapshot(be, st: dict, src: Path, prefix: str, extra) -> int:
 
 def reset_progress(st: dict):
     """원격에 올린 진행(offset·segment 번호·snapshot)을 지운다 — 다른 저장소에 처음부터 올리게."""
-    for k in ("offset", "seq", "head_len", "head_sha256", "snapshot_sha256", "meta_sent", "rewrites"):
+    for k in ("offset", "seq", "gen", "head_len", "head_sha256", "steps_sent", "steps_sha256", "snapshot_sha256",
+              "meta_sent", "rewrites", "published"):
         st.pop(k, None)
     st["meta_dirty"] = True
 
 
+def publish(st: dict):
+    """이번 수집의 올리기가 다 끝났다 — meta.json 이 가리킬 세대·segment 수·형식을 지금 진행으로 정한다.
+    올리다 실패한 진행(새 세대의 일부만 올라감)은 여기까지 오지 못해 meta 에 나가지 않는다."""
+    st["published"] = {"gen": int(st.get("gen", 1)), "segments": int(st.get("seq", 0)), "format": st.get("format")}
+
+
 def write_meta(be, st: dict, tool: str, session: str):
     st["updated"] = now_iso()
+    pub = st.get("published") or {}
     meta = {
         "tool": tool, "session_id": session, "repo_key": st.get("repo_key"),
         "branch": st.get("branch"), "cwd": st.get("cwd"),
-        "host": socket.gethostname().split(".")[0], "format": st.get("format"),
-        "segments": int(st.get("seq", 0)), "rewrites": int(st.get("rewrites", 0)),
+        "host": socket.gethostname().split(".")[0], "format": pub.get("format"),
+        "segments": int(pub.get("segments", 0)), "generation": int(pub.get("gen", 1)),
+        "rewrites": int(st.get("rewrites", 0)),
         "started": st.get("started"), "updated": st["updated"], "ended": st.get("ended"),
         "title": st.get("title") or "",
     }
@@ -463,8 +537,28 @@ def write_meta(be, st: dict, tool: str, session: str):
     st["meta_sent"], st["meta_dirty"] = True, False
 
 
+def json_kind(src: Path):
+    """JSON transcript 의 종류: ("steps", steps 목록) | ("snapshot", None) | ("partial", None).
+    partial 은 아직 다 쓰지 않은 파일이다 — 이번에는 올리지 않는다 (반쯤 쓴 내용을 snapshot 으로 올리지 않게)."""
+    try:
+        doc = json.loads(src.read_bytes())
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return "partial", None
+    if isinstance(doc, dict) and isinstance(doc.get("steps"), list):
+        return "steps", doc["steps"]
+    return "snapshot", None
+
+
+def first_generation(be, prefix: str) -> int:
+    """진행 기록 없이 이 자리에 처음 올릴 때의 세대. 이미 있는 segment 의 세대보다 하나 위 — 예전에 이 자리에
+    올린 더 높은 세대나 남은 segment 가 새 내용에 섞이지 않게."""
+    gens = [int(m.group(1) or 1) for k in be.list(prefix + "/")
+            if (m := SEGMENT_NAME.fullmatch(k.rsplit("/", 1)[-1]))]
+    return max(gens) + 1 if gens else 1
+
+
 def collect(tool: str, session: str, transcript: str = "", cwd: str = "", final: bool = False) -> str:
-    """반환: 한 일을 한 줄로 (off | no-transcript | uploaded N | nochange)."""
+    """반환: 한 일을 한 줄로 (off | no-transcript | partial | uploaded N | nochange)."""
     be = sfstate.load_backend()
     if not be:
         return "off"
@@ -480,19 +574,30 @@ def collect(tool: str, session: str, transcript: str = "", cwd: str = "", final:
             st["ended"] = now_iso()
             st["meta_dirty"] = True
         if src is None:
-            # transcript 가 사라졌어도 이미 올린 세션이면 끝났다는 것만은 올린다
-            if st.get("prefix") and (st.get("meta_dirty") or not st.get("meta_sent")):
+            # transcript 가 사라졌어도 이미 올린 세션이면 끝났다는 것만은 올린다 (세대·segment 는 마지막으로 낸 그대로)
+            if st.get("prefix") and st.get("published") and (st.get("meta_dirty") or not st.get("meta_sent")):
                 write_meta(be, st, tool, session)
             return "no-transcript"
         prefix = remote_dir(st, tool, session, cwd)
         st["source"] = str(src)
         extra = user_patterns()
-        if src.suffix == ".jsonl":
-            st["format"] = "jsonl-segments"
+        kind, steps = ("jsonl", None) if src.suffix == ".jsonl" else json_kind(src)
+        if kind == "partial":  # 끝났다는 것 정도만 — 세대·segment 는 마지막으로 낸 그대로
+            if st.get("published") and (st.get("meta_dirty") or not st.get("meta_sent")):
+                write_meta(be, st, tool, session)
+            return "partial"
+        if "gen" not in st:  # 1.3 까지의 진행 기록은 1세대다
+            st["gen"] = 1 if int(st.get("seq", 0)) else first_generation(be, prefix)
+        fmt = "json-snapshot" if kind == "snapshot" else "jsonl-segments"
+        if st.get("format") != fmt:
+            st["format"], st["meta_dirty"] = fmt, True
+        if kind == "jsonl":
             sent = upload_jsonl(be, st, src, prefix, final, extra)
+        elif kind == "steps":
+            sent = upload_steps(be, st, steps, prefix, final, extra)
         else:
-            st["format"] = "json-snapshot"
             sent = upload_snapshot(be, st, src, prefix, extra)
+        publish(st)
         if not st.get("title"):
             title = derive_title(tool, src, extra)
             if title:
@@ -639,7 +744,8 @@ def events_devin(doc):
                     yield ev("result", dump(r.get("content")), ts)
 
 
-JSONL_EVENTS = {"claude": events_claude, "codex": events_codex, "grok": events_grok}
+JSONL_EVENTS = {"claude": events_claude, "codex": events_codex, "grok": events_grok,
+                "devin": lambda records: events_devin({"steps": list(records)})}  # step 한 줄에 하나
 
 
 def jsonl_records(data: bytes):
@@ -732,6 +838,15 @@ def render(events, tools=True, full=False) -> str:
 # 원격 기록 찾기 (캐시)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def latest_segments(names, generation=None) -> list:
+    """읽을 세대의 segment 이름을 순서대로. 세대는 meta.json 의 generation 이 정한다 — 그 세대가 비었으면 빈
+    기록이다 (예전 세대로 돌아가지 않는다). generation 이 없는 1.3 까지의 meta 는 1세대다 (그 뒤에 올라간 g2 는
+    아직 meta 가 가리키지 않은, 다 올라가지 않았을 수 있는 세대다). 예전 세대는 다시 쓰이기 전 내용이라 읽지 않는다."""
+    gen = generation if isinstance(generation, int) and not isinstance(generation, bool) and generation >= 1 else 1
+    segs = [(int(m.group(1) or 1), m.group(2), n) for n in names if (m := SEGMENT_NAME.fullmatch(n))]
+    return [n for g, _, n in sorted(segs) if g == gen]
+
+
 class Remote:
     """backend 의 logs/ 를 읽는다. 받은 object 는 etag 와 함께 캐시해 두고 바뀐 것만 다시 받는다."""
 
@@ -796,8 +911,8 @@ class Remote:
         elif fmt == "json-snapshot":
             data = gzip.decompress(self.fetch(f"{d}/transcript.json.gz", files["transcript.json.gz"]))
         else:
-            segs = sorted(n for n in files if re.fullmatch(r"\d{6}\.jsonl\.gz", n))
-            data = b"".join(gzip.decompress(self.fetch(f"{d}/{n}", files[n])) for n in segs)
+            names = latest_segments(files, meta.get("generation"))
+            data = b"".join(gzip.decompress(self.fetch(f"{d}/{n}", files[n])) for n in names)
         return data
 
     def events(self, meta: dict) -> list:
@@ -841,6 +956,7 @@ def meta_line(m: dict) -> str:
     where = "" if m.get("_repo_shown") else f"{m.get('repo_key') or '_norepo'} · "
     return (f"{(m.get('updated') or '')[:16]}  {m.get('tool', '?'):<6}  {m.get('session_id')}  "
             f"{where}{m.get('branch') or '-'} · {m.get('host') or '-'} · {seg}seg"
+            + (f" · {m['generation']}세대" if isinstance(m.get("generation"), int) and m["generation"] > 1 else "")
             + (" · 진행 중" if not m.get("ended") else "") + (f"\n    {m['title']}" if m.get("title") else ""))
 
 

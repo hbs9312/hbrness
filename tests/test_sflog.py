@@ -239,8 +239,11 @@ class CollectEnv(unittest.TestCase):
         return self.store / 'logs' / 'github.com/acme/app' / tool / session
 
     def segments(self, tool, session):
+        """읽는 쪽과 같이 meta.json 의 세대만."""
         d = self.remote(tool, session)
-        return b''.join(gzip.decompress(f.read_bytes()) for f in sorted(d.glob('*.jsonl.gz')))
+        gen = json.loads((d / 'meta.json').read_text()).get('generation')
+        names = sflog.latest_segments([f.name for f in d.glob('*.jsonl.gz')], gen)
+        return b''.join(gzip.decompress((d / n).read_bytes()) for n in names)
 
 
 class CollectTests(CollectEnv):
@@ -268,14 +271,71 @@ class CollectTests(CollectEnv):
         self.collect('codex', 's2', t, final=True)
         self.assertEqual(self.segments('codex', 's2'), b'{"a":1}\n{"b":2}')
 
-    def test_rewritten_transcript_starts_over(self):
+    def test_rewritten_transcript_starts_a_new_generation(self):
         t = self.base / 'c.jsonl'
         t.write_text('{"old":1}\n{"old":2}\n')
         self.collect('claude', 's3', t)
         t.write_text('{"new":1}\n{"new":2}\n{"new":3}\n')  # 더 길어졌지만 앞부분이 다르다
         self.collect('claude', 's3', t)
-        self.assertTrue(self.segments('claude', 's3').endswith(b'{"new":1}\n{"new":2}\n{"new":3}\n'))
-        self.assertEqual(json.loads((self.remote('claude', 's3') / 'meta.json').read_text())['rewrites'], 1)
+        d = self.remote('claude', 's3')
+        self.assertEqual(sorted(f.name for f in d.glob('*.jsonl.gz')), ['000001.jsonl.gz', 'g2-000001.jsonl.gz'])
+        self.assertEqual(self.segments('claude', 's3'), b'{"new":1}\n{"new":2}\n{"new":3}\n')  # 예전 세대는 안 읽는다
+        meta = json.loads((d / 'meta.json').read_text())
+        self.assertEqual((meta['rewrites'], meta['generation'], meta['segments']), (1, 2, 1))
+        shown = sh(sys.executable, str(SFLOG), 'show', 's3', '--raw', cwd=self.project, env=self.env())
+        self.assertNotIn('old', shown)
+        self.assertEqual(sflog.latest_segments(['000002.jsonl.gz', 'g10-000001.jsonl.gz', 'g9-000003.jsonl.gz',
+                                                'g10-000002.jsonl.gz', 'meta.json', 'g0-000001.jsonl.gz'], 10),
+                         ['g10-000001.jsonl.gz', 'g10-000002.jsonl.gz'])
+        # generation 이 없는 1.3 meta 는 1세대 — 그 뒤에 일부만 올라간 g2 를 읽지 않는다
+        self.assertEqual(sflog.latest_segments(['000001.jsonl.gz', '000002.jsonl.gz', 'g2-000001.jsonl.gz'], None),
+                         ['000001.jsonl.gz', '000002.jsonl.gz'])
+        self.assertEqual(sflog.latest_segments(['000001.jsonl.gz', 'g2-000001.jsonl.gz'], 3), [])  # 빈 세대
+        self.assertEqual(sflog.latest_segments(['000001.jsonl.gz', 'g2-000001.jsonl.gz'], 1), ['000001.jsonl.gz'])
+        t.write_text('{"x":1}\n')  # 줄었다
+        self.collect('claude', 's3', t)
+        self.assertEqual(self.segments('claude', 's3'), b'{"x":1}\n')
+        self.assertEqual(json.loads((d / 'meta.json').read_text())['generation'], 3)
+
+    def test_rewritten_to_empty_reads_empty(self):
+        t = self.base / 'c.jsonl'
+        t.write_text('{"old":1}\n')
+        self.collect('claude', 'empty', t)
+        t.write_text('')
+        self.collect('claude', 'empty', t, final=True)
+        shown = sh(sys.executable, str(SFLOG), 'show', 'empty', '--raw', cwd=self.project, env=self.env())
+        self.assertNotIn('old', shown)
+        d = self.base / 'd.json'
+        d.write_text(json.dumps({'steps': [{'source': 'user', 'message': 'old step'}, {'source': 'agent', 'message': 'x'}]}))
+        self.collect('devin', 'dempty', d, final=True)
+        d.write_text(json.dumps({'steps': []}))
+        self.collect('devin', 'dempty', d, final=True)
+        self.assertNotIn('old step', sh(sys.executable, str(SFLOG), 'show', 'dempty', cwd=self.project, env=self.env()))
+
+    def test_lost_state_starts_above_what_is_there(self):
+        t = self.base / 'c.jsonl'
+        t.write_text('{"a":1}\n')
+        self.collect('claude', 'lost', t)
+        t.write_text('{"a":1}\n{"a":2}\n')
+        self.collect('claude', 'lost', t)  # 1세대 segment 두 개
+        for f in (self.home / 'logs' / 'sessions').glob('claude-lost.*'):
+            f.unlink()
+        t.write_text('{"b":1}\n')
+        self.collect('claude', 'lost', t)
+        self.assertEqual(self.segments('claude', 'lost'), b'{"b":1}\n')  # 남은 000002 가 섞이지 않는다
+        self.assertTrue((self.remote('claude', 'lost') / 'g2-000001.jsonl.gz').exists())
+
+    def test_rewrite_noticed_before_its_first_line_is_complete_bumps_once(self):
+        t = self.base / 'c.jsonl'
+        t.write_text('{"old":1}\n{"old":2}\n')
+        self.collect('claude', 'half', t)
+        t.write_text('{"new":1')  # 다시 쓰는 중 — 첫 줄도 아직 덜 썼다
+        self.assertIn('nochange', self.collect('claude', 'half', t))
+        t.write_text('{"new":1}\n{"new":2}\n')
+        self.collect('claude', 'half', t)
+        meta = json.loads((self.remote('claude', 'half') / 'meta.json').read_text())
+        self.assertEqual((meta['rewrites'], meta['generation']), (1, 2))
+        self.assertEqual(self.segments('claude', 'half'), b'{"new":1}\n{"new":2}\n')
 
     def test_grok_transcript_is_found_from_session_and_cwd(self):
         import urllib.parse
@@ -285,14 +345,48 @@ class CollectTests(CollectEnv):
         self.assertIn('COLLECT=uploaded 1', self.collect('grok', 'g-1'))
         self.assertEqual(self.segments('grok', 'g-1'), b'{"role":"user"}\n')
 
-    def test_devin_json_snapshot_is_replaced_only_when_it_changes(self):
+    def test_devin_steps_are_uploaded_as_they_grow(self):
         t = self.base / 'north-mandible.json'
-        t.write_text('{"schema_version": 1, "steps": []}')
-        self.assertIn('uploaded 1', self.collect('devin', 'd-1', t))
+        step = lambda n, text='': {'step_id': n, 'source': 'user' if n % 2 else 'agent', 'message': text or f'm{n}'}
+        write = lambda steps: t.write_text(json.dumps({'schema_version': 'ATIF-v1.7', 'steps': steps}))
+        write([step(1), step(2)])
+        self.assertIn('uploaded 1', self.collect('devin', 'd-1', t))  # 마지막 step 은 아직 채워지는 중일 수 있다
         self.assertIn('nochange', self.collect('devin', 'd-1', t))
-        t.write_text('{"schema_version": 1, "steps": [{"text": "ghp_' + 'x' * 36 + '"}]}')
+        write([step(1), step(2), step(3, 'key ghp_' + 'x' * 36)])
         self.assertIn('uploaded 1', self.collect('devin', 'd-1', t))
-        snap = gzip.decompress((self.remote('devin', 'd-1') / 'transcript.json.gz').read_bytes())
+        self.assertIn('uploaded 1', self.collect('devin', 'd-1', t, final=True))
+        lines = [json.loads(l) for l in self.segments('devin', 'd-1').splitlines()]
+        self.assertEqual([l['step_id'] for l in lines], [1, 2, 3])
+        self.assertIn('[REDACTED:github-token]', lines[2]['message'])
+        self.assertFalse((self.remote('devin', 'd-1') / 'transcript.json.gz').exists())
+
+        write([step(1, 'edited'), step(2), step(3), step(4)])  # 이미 올린 step 이 바뀌었다 — 새 세대
+        self.collect('devin', 'd-1', t, final=True)
+        meta = json.loads((self.remote('devin', 'd-1') / 'meta.json').read_text())
+        self.assertEqual((meta['format'], meta['generation']), ('jsonl-segments', 2))
+        self.assertEqual([json.loads(l)['message'] for l in self.segments('devin', 'd-1').splitlines()],
+                         ['edited', 'm2', 'm3', 'm4'])
+
+    def test_half_written_devin_json_is_skipped_not_uploaded(self):
+        t = self.base / 'd.json'
+        doc = json.dumps({'steps': [{'source': 'user', 'message': '세션 질문'}, {'source': 'agent', 'message': '답'}]})
+        t.write_text(doc)
+        self.collect('devin', 'half', t)
+        t.write_text('{"steps":[')  # 제자리에서 다시 쓰는 중
+        self.assertIn('partial', self.collect('devin', 'half', t))
+        self.assertFalse((self.remote('devin', 'half') / 'transcript.json.gz').exists())
+        t.write_text(doc)
+        self.assertIn('uploaded 1', self.collect('devin', 'half', t, final=True))
+        meta = json.loads((self.remote('devin', 'half') / 'meta.json').read_text())
+        self.assertEqual(meta['format'], 'jsonl-segments')
+        self.assertIn('세션 질문', sh(sys.executable, str(SFLOG), 'show', 'half', cwd=self.project, env=self.env()))
+
+    def test_json_without_steps_is_still_a_snapshot(self):
+        t = self.base / 'other.json'
+        t.write_text('{"messages": ["ghp_' + 'x' * 36 + '"]}')
+        self.assertIn('uploaded 1', self.collect('devin', 'd-2', t))
+        self.assertIn('nochange', self.collect('devin', 'd-2', t))
+        snap = gzip.decompress((self.remote('devin', 'd-2') / 'transcript.json.gz').read_bytes())
         self.assertIn(b'[REDACTED:github-token]', snap)
 
     def test_lone_surrogate_in_the_first_message_does_not_break_collect(self):
@@ -378,6 +472,92 @@ class InProcessCollectTests(CollectEnv):
             sfstate_mod.load_backend = real
         meta = json.loads((self.remote('claude', 'm') / 'meta.json').read_text())
         self.assertEqual(meta['segments'], 2)
+
+
+    def flaky_puts(self, fail_on):
+        """fail_on(key, n) 이 참이면 n 번째 segment put 을 실패시키는 backend 로 바꿔 끼운다. 되돌리는 함수를 준다."""
+        sfstate_mod = sflog.sfstate
+        real = sfstate_mod.load_backend
+        count = {'n': 0}
+
+        def flaky():
+            be = real()
+            put = be.put
+
+            def put_(key, data, **kw):
+                if key.endswith('.jsonl.gz'):
+                    count['n'] += 1
+                    if fail_on(key, count['n']):
+                        raise sflog.sfbackend.BackendError('segment down')
+                return put(key, data, **kw)
+            be.put = put_
+            return be
+        sfstate_mod.load_backend = flaky
+        return lambda: setattr(sfstate_mod, 'load_backend', real)
+
+    def meta(self, tool, session):
+        return json.loads((self.remote(tool, session) / 'meta.json').read_text())
+
+    def test_half_uploaded_generation_is_never_published(self):
+        t = self.base / 'd.json'
+        steps = [{'source': 'user', 'message': f'v1 step {i}'} for i in range(3)]
+        t.write_text(json.dumps({'steps': steps}))
+        sflog.collect('devin', 'pub', str(t), str(self.project), final=True)
+        new = [{'source': 'user', 'message': f'v2 step {i}'} for i in range(3)]
+        t.write_text(json.dumps({'steps': new}))
+        old = sflog.SEGMENT_MAX
+        sflog.SEGMENT_MAX = 1  # step 하나가 segment 하나
+        undo = self.flaky_puts(lambda key, n: n == 2)  # 새 세대의 두 번째 segment 에서 끊긴다
+        try:
+            with self.assertRaises(sflog.sfbackend.BackendError):
+                sflog.collect('devin', 'pub', str(t), str(self.project), final=True)
+        finally:
+            undo()
+            sflog.SEGMENT_MAX = old
+        t.write_text('{"steps":[')  # 다음 수집 때는 반쯤 쓴 파일
+        self.assertEqual(sflog.collect('devin', 'pub', str(t), str(self.project), final=True), 'partial')
+        meta = self.meta('devin', 'pub')
+        self.assertEqual((meta['generation'], meta['format']), (1, 'jsonl-segments'))
+        self.assertIn(b'v1 step 2', self.segments('devin', 'pub'))
+        t.write_text(json.dumps({'steps': new}))
+        sflog.collect('devin', 'pub', str(t), str(self.project), final=True)
+        self.assertEqual(self.meta('devin', 'pub')['generation'], 2)
+        self.assertEqual([json.loads(l)['message'] for l in self.segments('devin', 'pub').splitlines()],
+                         ['v2 step 0', 'v2 step 1', 'v2 step 2'])
+
+    def test_partial_after_lost_state_leaves_remote_meta_alone(self):
+        t = self.base / 'd.json'
+        t.write_text(json.dumps({'steps': [{'source': 'user', 'message': 'kept'}, {'source': 'agent', 'message': 'x'}]}))
+        sflog.collect('devin', 'lostp', str(t), str(self.project), final=True)
+        before = self.meta('devin', 'lostp')
+        for f in (self.home / 'logs' / 'sessions').glob('devin-lostp.*'):
+            f.unlink()
+        t.write_text('{"steps":[')
+        self.assertEqual(sflog.collect('devin', 'lostp', str(t), str(self.project), final=True), 'partial')
+        self.assertEqual(self.meta('devin', 'lostp'), before)
+
+    def test_first_rewrite_after_upgrade_keeps_old_meta_readable(self):
+        t = self.base / 'c.jsonl'
+        t.write_text('{"a":1}\n{"a":2}\n')
+        sflog.collect('claude', 'up', str(t), str(self.project))
+        d = self.remote('claude', 'up')
+        meta = self.meta('claude', 'up')
+        del meta['generation']  # 1.3 이 쓴 meta
+        (d / 'meta.json').write_text(json.dumps(meta))
+        t.write_text('{"b":1}\n{"b":2}\n')
+        old = sflog.SEGMENT_MAX
+        sflog.SEGMENT_MAX = 8
+        undo = self.flaky_puts(lambda key, n: n == 2)
+        try:
+            with self.assertRaises(sflog.sfbackend.BackendError):
+                sflog.collect('claude', 'up', str(t), str(self.project))
+        finally:
+            undo()
+            sflog.SEGMENT_MAX = old
+        self.assertTrue((d / 'g2-000001.jsonl.gz').exists())
+        shown = sh(sys.executable, str(SFLOG), 'show', 'up', '--raw', cwd=self.project, env=self.env())
+        self.assertIn('"a":2', shown.replace(' ', ''))
+        self.assertNotIn('"b"', shown)
 
 
 class StoreSwitchTests(CollectEnv):
@@ -607,6 +787,27 @@ class ReadCommandTests(CollectEnv):
         self.assertIn('LOGS=_norepo · 0개', out)
         out = sh(sys.executable, str(SFLOG), 'list', '--all-repos', cwd=other, env=self.env())
         self.assertIn('github.com/acme/app', out)
+
+
+class BackAndForthTests(CollectEnv):
+    def test_returning_to_a_backend_reads_the_new_content(self):
+        t = self.base / 'c.jsonl'
+        t.write_text('{"v":1}\n')
+        self.collect('claude', 'ab', t)
+        t.write_text('{"v":2}\n')  # A 에 2세대
+        self.collect('claude', 'ab', t)
+        init = lambda store: sh(sys.executable, str(SFSTATE), 'init', '--backend', 'local', '--path', str(store),
+                                '--no-encrypt', cwd=self.project, env=self.env())
+        init(self.base / 'store-b')
+        t.write_text('{"v":3}\n')
+        self.collect('claude', 'ab', t)
+        init(self.store)  # A 로 돌아온다
+        t.write_text('{"v":4}\n')
+        self.assertIn('uploaded 1', self.collect('claude', 'ab', t))
+        self.assertEqual(self.segments('claude', 'ab'), b'{"v":4}\n')
+        shown = sh(sys.executable, str(SFLOG), 'show', 'ab', '--raw', cwd=self.project, env=self.env())
+        self.assertIn('"v":4', shown.replace(' ', ''))
+        self.assertNotIn('"v":2', shown.replace(' ', ''))
 
 
 @unittest.skipUnless(__import__('shutil').which('age'), 'age 가 있을 때만')

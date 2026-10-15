@@ -23,7 +23,7 @@ sessionflow 훅은 turn 이 끝날 때마다·세션이 끝날 때 각 도구의
 python3 "${SKILL_DIR}/../../scripts/sflog.py"
 ```
 
-- `LOG list [--all-repos] [--tool claude|codex|grok|devin|manual] [--limit N]` — 세션 목록. 한 세션이 두 줄이다: `갱신시각 도구 session-id 브랜치 · host · segment 수 [· 진행 중]` 과 그 아래 첫 사용자 말(제목).
+- `LOG list [--all-repos] [--tool claude|codex|grok|devin|manual] [--limit N]` — 세션 목록. 한 세션이 두 줄이다: `갱신시각 도구 session-id 브랜치 · host · segment 수 [· N세대] [· 진행 중]` (N세대: transcript 가 다시 쓰여 마지막 세대만 보인다) 과 그 아래 첫 사용자 말(제목).
 - `LOG show <session> [--no-tools] [--full] [--out <파일>]` — session id 앞부분만 적어도 된다. 형식은 `### user` / `### assistant` 문단, 도구 호출은 `→ 이름: 입력`, 결과는 `← 결과`. 도구 입력은 300자, 결과는 500자에서 자른다(`--full` 이면 안 자른다). `--no-tools` 는 대화만.
 - `LOG search <검색어> [--days N] [--regex] [--tool T] [--all-repos]` — 최근 N일(기본 30) 세션에서 찾는다. 세션마다 맞는 곳을 5개까지 앞뒤 80자로 보여준다.
 - `LOG save --title "<제목>" --file <파일>` — 파일 내용을 `manual` 기록으로 올린다. 비밀값은 스크립트가 가린다.
