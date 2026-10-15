@@ -316,20 +316,37 @@ def handle_mcp(plugin_dir, output_dir, adapter):
             f.write("\n")
 
 
-def handle_hooks(plugin_dir, output_dir, adapter, repo_root):
-    """Copy harness-specific hook configuration."""
-    hooks_source = adapter.get("hooks_source")
-    if not hooks_source:
-        return
+def plugin_hook_files(plugin_dir):
+    """plugins/<name>/hooks/<harness>.hooks.json — 플러그인이 하네스마다 직접 선언한 훅."""
+    hooks_dir = os.path.join(plugin_dir, "hooks")
+    if not os.path.isdir(hooks_dir):
+        return {}
+    return {f[:-len(".hooks.json")]: os.path.join(hooks_dir, f)
+            for f in os.listdir(hooks_dir) if f.endswith(".hooks.json")}
 
-    # Check if this plugin has hooks
+
+def handle_hooks(plugin_dir, output_dir, adapter, repo_root):
+    """Copy harness-specific hook configuration.
+
+    A plugin that declares its own hooks/<harness>.hooks.json files uses those (and gets no hooks
+    for a harness it has no file for). Otherwise the adapter-wide hooks_source is used, as before.
+    """
     hooks_dir = os.path.join(plugin_dir, "hooks")
     if not os.path.isdir(hooks_dir):
         return
 
-    src = os.path.join(repo_root, hooks_source)
-    if not os.path.exists(src):
-        return
+    own = plugin_hook_files(plugin_dir)
+    if own:
+        src = own.get(adapter["harness"])
+        if not src:
+            return
+    else:
+        hooks_source = adapter.get("hooks_source")
+        if not hooks_source:
+            return
+        src = os.path.join(repo_root, hooks_source)
+        if not os.path.exists(src):
+            return
 
     dst_hooks_dir = os.path.join(output_dir, "hooks")
     os.makedirs(dst_hooks_dir, exist_ok=True)
@@ -476,6 +493,9 @@ def build_plugin(harness, plugin_dir, adapter_path, output_dir):
 
         for fname in files:
             if fname.endswith(".pyc") or fname == ".DS_Store":
+                continue
+            # Per-harness hook declarations are rendered by handle_hooks, not copied as-is
+            if fname.endswith(".hooks.json") and rel_root == "hooks":
                 continue
             src_path = os.path.join(root, fname)
             rel_path = os.path.join(rel_root, fname) if rel_root != "." else fname

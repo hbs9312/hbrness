@@ -1029,6 +1029,19 @@ def cmd_init(a):
     print_conflicts(pulled["conflicts"] + pushed["conflicts"])
 
 
+def logs_lifecycle(logs: str, rules: list) -> str:
+    """logs/ 전체에 걸리는 만료 규칙이 있는지. 태그·크기 조건이 붙었거나 logs/ 의 일부에만 걸리면 모자란다."""
+    live = [r for r in rules if r["enabled"] and r["expires"]]
+    full = [r for r in live if not r["filtered"] and logs.startswith(r["prefix"])]
+    if full:
+        return f"ok ({', '.join(repr(r['prefix']) for r in full)})"
+    part = [r for r in live if logs.startswith(r["prefix"]) or r["prefix"].startswith(logs)]
+    if part:
+        return (f"partial (WARN: {logs} 의 일부나 조건이 맞는 것에만 만료 규칙이 걸려 있다 — "
+                f"{', '.join(repr(r['prefix']) for r in part)})")
+    return f"none (WARN: 대화 기록 {logs} 이 계속 쌓인다 — 이 prefix 에 만료(Expiration) 규칙을 거는 게 좋다)"
+
+
 def cmd_doctor(a):
     """backend 에 닿는지, conditional write 를 지키는지 확인한다. 실패가 있으면 exit 1."""
     try:
@@ -1083,6 +1096,8 @@ def cmd_doctor(a):
             v = be.versioning()
             print(f"VERSIONING={v}" + ("" if v == "Enabled" else
                   " (WARN: 지운 파일·덮어쓴 버전을 되살릴 수 없다 — bucket versioning 을 켜는 게 좋다)"))
+        if hasattr(be, "lifecycle_rules"):
+            print("LOGS_LIFECYCLE=" + logs_lifecycle(be.prefix + "logs/", be.lifecycle_rules()))
     except sfbackend.BackendError as e:
         print(f"PROBE=failed ({e})")
         failed = True

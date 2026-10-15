@@ -180,6 +180,40 @@ python3 <sessionflow>/scripts/sfstate.py migrate-all
 - `<project-key>` = 프로젝트 절대경로의 `/` 를 `-` 로 치환 (leading dash 유지).
 - `<wt-name>` = `basename "$(git rev-parse --git-dir)"` — git 워크트리 디렉토리명
 
+## 대화 기록 (log) — 훅이 transcript 를 모은다
+
+각 도구가 이미 남기는 transcript 원본을 훅이 turn 끝·세션 끝마다 backend 의 `logs/` 아래로 올린다. 모델이 대화를 다시 쓰지 않으므로 빠지는 내용이 없고 토큰도 쓰지 않는다. backend 가 없으면 아무것도 하지 않는다.
+
+| 도구 | transcript | 훅이 주는 것 | 올리는 방식 |
+|---|---|---|---|
+| Claude Code | `~/.claude/projects/<key>/<session>.jsonl` | `transcript_path` | 늘어난 줄만 segment 로 |
+| Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `transcript_path` | 늘어난 줄만 segment 로 |
+| Grok Build | `~/.grok/sessions/<URL 인코딩한 cwd>/<session>/chat_history.jsonl` | `sessionId`·`cwd` (경로는 sflog 가 찾는다) | 늘어난 줄만 segment 로 |
+| Devin CLI | `~/.local/share/devin/cli/transcripts/<이름>.json` | `transcript_path` | 바뀌었으면 통째로 다시 |
+
+```
+<bucket>/<prefix>/logs/<repo-key|_norepo>/<tool>/<session-id>/
+├── meta.json             # 도구·세션·저장소·브랜치·cwd·host·시작/갱신/끝 시각·segment 수
+├── 000001.jsonl.gz       # JSONL: 지난번에 올린 곳 뒤로 늘어난 완성된 줄 (S3 object 는 이어 쓸 수 없어서)
+├── 000002.jsonl.gz
+└── transcript.json.gz    # JSON 한 덩어리(Devin): 최신본
+```
+
+- **훅**: `scripts/sfhook.py` 가 Stop(turn 끝)과 SessionEnd(세션 끝)에 붙는다. 바로 돌아오고 아무것도 출력하지 않는다. 실제 일은 떼어 낸 프로세스가 한다 — Stop 에서는 followup/handoff pull(`sfstate.py pull`)과 log 수집(`sflog.py collect`), SessionEnd 에서는 마지막 수집(쓰다 만 마지막 줄까지)을 한다.
+- **훅 등록**: Claude Code·Grok·Devin 은 플러그인에 들어 있는 `hooks/<harness>.hooks.json` 이 설치될 때 같이 등록된다. Codex 는 hbrness installer 가 훅을 넣지 못하므로 `~/.codex/hooks.json` 에 직접 넣는다:
+
+  ```json
+  "Stop":       [{"hooks": [{"type": "command", "timeout": 10,
+                  "command": "python3 \"$HOME/.codex/skills/sessionflow-handoff/../../scripts/sfhook.py\" stop --tool codex"}]}],
+  "SessionEnd": [{"hooks": [{"type": "command", "timeout": 10,
+                  "command": "python3 \"$HOME/.codex/skills/sessionflow-handoff/../../scripts/sfhook.py\" session-end --tool codex"}]}]
+  ```
+
+- **자리**: 세션을 처음 수집할 때의 cwd 로 저장소 키를 정하고, 세션 내내 그 자리에 모은다(도중에 `cd` 해도 한 세션은 한 곳에). 올린 위치(offset)는 `~/.hbrness/logs/sessions/<tool>-<session>.json` 에 적고 저장소 ID 에 묶는다 — backend 를 바꾸면 그 세션을 처음부터 다시 올린다. transcript 가 사라져도 세션이 끝났다는 것(`ended`)은 올린다. transcript 가 줄었거나 앞부분이 바뀌면(다시 쓰임) 처음부터 새 segment 로 잇고 `meta.json` 의 `rewrites` 를 올린다.
+- **비밀값 가리기**: 올리기 전에 private key 블록, AWS access key, GitHub·Anthropic·OpenAI·Slack·Google·Atlassian 토큰, JWT, `Bearer …`, `password=…`·`DB_PASSWORD="…"`·`"api_key": "…"` 꼴의 값을 `[REDACTED:<종류>]` 로 바꾼다. 따옴표로 묶인 값은 짧거나 공백이 있어도 닫는 따옴표까지 통째로 가린다. transcript 는 줄마다 JSON 으로 풀어서 문자열 값을 검사하고(escape 에 가려지지 않게), `password`·`api_key`·`client_secret` 같은 이름의 key 값은 숫자여도 가린다. 가린 줄만 다시 직렬화하므로 JSON 이 깨지지 않고, segment 는 줄 중간에서 자르지 않는다. `~/.hbrness/redact.txt` 에 한 줄에 정규식 하나씩 더할 수 있다. 패턴에 안 걸리는 비밀값은 그대로 올라가므로 bucket 은 공개하지 않는다.
+- **보관 기간**: 기록은 계속 쌓인다. bucket lifecycle 규칙으로 `<prefix>logs/` 에 만료를 건다(예: 180일). `sfstate.py doctor` 가 규칙이 없으면 `LOGS_LIFECYCLE=none` 으로 알린다.
+- **실패**: 수집기는 뒤에서 조용히 돌기 때문에 실패를 `~/.hbrness/logs/collect.log` 에 남긴다. 직접 돌려 볼 수도 있다: `python3 <sessionflow>/scripts/sflog.py collect --tool claude --session <id> --transcript <path> --cwd <dir>`.
+
 ## MEMORY.md 갱신 (Tier 2 — 하네스별 자동로드 위치)
 
 스킬은 동시에 양쪽 하네스의 MEMORY.md 의 `## Followups` 또는 `## Handoff` 섹션을 갱신해 위 state 경로(`~/.hbrness/state/...`)를 가리키게 합니다. MEMORY.md 는 PC 마다 따로라, 다른 PC 에서 처음 이어받을 때는 `/handoff load` 나 `/followup list` 가 그 PC 의 MEMORY.md 를 채웁니다.

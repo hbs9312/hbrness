@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/sfhook.py\" stop --tool claude"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/sfhook.py\" session-end --tool claude"
+          }
+        ]
+      }
+    ]
+  }
+}

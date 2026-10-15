@@ -393,6 +393,31 @@ class S3Backend:
             raise PreconditionFailed(key)
         return status != 404
 
+    def lifecycle_rules(self) -> list:
+        """bucket lifecycle 규칙. 대화 기록(logs/) 보관 기간을 확인할 때 쓴다. 규칙이 없으면 빈 목록.
+        반환: [{"prefix", "enabled", "expires", "filtered"}] — filtered 는 태그·크기 조건이 붙어 일부에만 걸린다는 뜻."""
+        status, _, body = self._request("GET", params={"lifecycle": ""})
+        if status == 404:
+            return []
+        if status != 200:
+            raise self._error(status, body, "lifecycle 확인")
+        root = ET.fromstring(body)
+        for el in root.iter():
+            el.tag = el.tag.rsplit("}", 1)[-1]
+        out = []
+        for rule in root.findall("Rule"):
+            prefix = next((rule.findtext(q) for q in ("Filter/Prefix", "Filter/And/Prefix", "Prefix")
+                           if rule.find(q) is not None), "")
+            out.append({
+                "prefix": prefix or "",
+                "enabled": (rule.findtext("Status") or "") == "Enabled",
+                "expires": bool(rule.findtext("Expiration/Days") or rule.findtext("Expiration/Date")),
+                "filtered": any(rule.find(q) is not None for q in (
+                    "Filter/Tag", "Filter/And/Tag", "Filter/ObjectSizeGreaterThan", "Filter/ObjectSizeLessThan",
+                    "Filter/And/ObjectSizeGreaterThan", "Filter/And/ObjectSizeLessThan")),
+            })
+        return out
+
     def versioning(self) -> str:
         """Enabled | Suspended | Off"""
         status, _, body = self._request("GET", params={"versioning": ""})

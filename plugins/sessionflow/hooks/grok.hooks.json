@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 \"{HBRNESS_PLUGIN_PATH}/scripts/sfhook.py\" stop --tool grok"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 \"{HBRNESS_PLUGIN_PATH}/scripts/sfhook.py\" session-end --tool grok"
+          }
+        ]
+      }
+    ]
+  }
+}
