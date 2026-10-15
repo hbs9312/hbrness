@@ -204,7 +204,7 @@ class GitleaksTests(unittest.TestCase):
 
     @unittest.skipUnless(__import__('shutil').which('gitleaks'), 'gitleaks 가 있을 때만')
     def test_real_gitleaks_catches_what_patterns_miss(self):
-        secret = 'SK0123456789abcdef0123456789abcdef'  # twilio — SECRET_PATTERNS 에 없다
+        secret = 'SK' + '0123456789abcdef' * 2  # twilio 모양 — SECRET_PATTERNS 에 없다. 조립해 두어 GitHub push protection 에 안 걸리게
         chunk = json.dumps({'t': f'twilio {secret}'}).encode() + b'\n'
         self.assertIn(secret.encode(), sflog.redact_jsonl(chunk))
         self.assertNotIn(secret.encode(), sflog.scrub(chunk, [], sflog.redact_jsonl))
