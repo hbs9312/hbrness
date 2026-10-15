@@ -1,12 +1,12 @@
 ---
 name: handoff-clear
-description: "현재 브랜치(또는 --all 로 저장소 전체)의 핸드오프 파일을 삭제하고 state repo 에 반영(다른 PC 에도 사라짐)한 뒤, 양쪽 도구(Claude / Codex) MEMORY.md 의 Handoff 섹션에서 해당 라인을 정리한다. 핸드오프에 적힌 작업이 끝나 다음 세션에서 이어받을 필요가 없을 때 사용. 사용자가 'clear handoff', 'delete handoff', 'remove handoff', 'handoff done', 'handoff complete', '핸드오프 삭제', '핸드오프 정리', '/handoff-clear' 등을 말하면 트리거한다. Usage: /handoff-clear [-y] [--all]"
+description: "현재 브랜치(또는 --all 로 저장소 전체)의 핸드오프 파일을 삭제하고 backend 에 반영(다른 PC 에도 사라짐)한 뒤, 양쪽 도구(Claude / Codex) MEMORY.md 의 Handoff 섹션에서 해당 라인을 정리한다. 핸드오프에 적힌 작업이 끝나 다음 세션에서 이어받을 필요가 없을 때 사용. 사용자가 'clear handoff', 'delete handoff', 'remove handoff', 'handoff done', 'handoff complete', '핸드오프 삭제', '핸드오프 정리', '/handoff-clear' 등을 말하면 트리거한다. Usage: /handoff-clear [-y] [--all]"
 model: sonnet
 ---
 
 # Handoff Clear Skill
 
-`handoff` 스킬이 만든 핸드오프 파일과 양쪽 도구 `MEMORY.md` 의 `## Handoff` 섹션에서 해당 라인을 정리한다. 기본은 **현재 브랜치** 의 핸드오프만 정리한다. 핸드오프는 state repo 로 동기화되므로 **여기서 지우면 다른 PC 에서도 사라진다.**
+`handoff` 스킬이 만든 핸드오프 파일과 양쪽 도구 `MEMORY.md` 의 `## Handoff` 섹션에서 해당 라인을 정리한다. 기본은 **현재 브랜치** 의 핸드오프만 정리한다. 핸드오프는 backend 로 동기화되므로 **여기서 지우면 다른 PC 에서도 사라진다.**
 
 `phase-run` / `phase-loop` / `relay` 가 쓰는 로컬 `HANDOFF.md`(`~/.hbrness/sessionflow/<경로키>/...`)는 건드리지 않는다.
 

@@ -1,12 +1,12 @@
 ---
 name: followup-clear
-description: "현재 저장소의 followups 디렉토리(항목 파일 전체 + INDEX.md)를 삭제하고 state repo 에 반영(다른 PC 에도 사라짐)한 뒤, 양쪽 도구(Claude / Codex) MEMORY.md 의 Followups 섹션을 정리한다. 누적된 후속 조치 항목이 모두 처리됐거나 더 이상 유효하지 않아 한 번에 비우고 싶을 때 사용. 개별 항목만 해결하려면 followup 스킬에서 해당 항목을 Resolved 처리하는 것으로 충분하다. 사용자가 'clear followup', 'delete followup', 'reset followups', 'followup 정리', '후속 조치 비우기', '/followup-clear' 등을 말하면 트리거한다. Usage: /followup-clear [-y]"
+description: "현재 저장소의 followups 디렉토리(항목 파일 전체 + INDEX.md)를 삭제하고 backend 에 반영(다른 PC 에도 사라짐)한 뒤, 양쪽 도구(Claude / Codex) MEMORY.md 의 Followups 섹션을 정리한다. 누적된 후속 조치 항목이 모두 처리됐거나 더 이상 유효하지 않아 한 번에 비우고 싶을 때 사용. 개별 항목만 해결하려면 followup 스킬에서 해당 항목을 Resolved 처리하는 것으로 충분하다. 사용자가 'clear followup', 'delete followup', 'reset followups', 'followup 정리', '후속 조치 비우기', '/followup-clear' 등을 말하면 트리거한다. Usage: /followup-clear [-y]"
 model: sonnet
 ---
 
 # Followup Clear Skill
 
-`followup` 스킬이 만든 `followups/` 디렉토리(항목별 상세 파일 전체 + 생성된 `INDEX.md`)와 양쪽 도구 `MEMORY.md` 의 `## Followups` 섹션을 정리한다. 누적된 항목 전체를 한 번에 비우는 용도이며, 개별 항목 해결은 `/followup` 으로 해당 항목을 Resolved 처리하는 것으로 충분하다. followup 은 state repo 로 동기화되므로 **여기서 지우면 다른 PC 에서도 사라진다.**
+`followup` 스킬이 만든 `followups/` 디렉토리(항목별 상세 파일 전체 + 생성된 `INDEX.md`)와 양쪽 도구 `MEMORY.md` 의 `## Followups` 섹션을 정리한다. 누적된 항목 전체를 한 번에 비우는 용도이며, 개별 항목 해결은 `/followup` 으로 해당 항목을 Resolved 처리하는 것으로 충분하다. followup 은 backend 로 동기화되므로 **여기서 지우면 다른 PC 에서도 사라진다.**
 
 ## 인자
 

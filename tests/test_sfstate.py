@@ -125,81 +125,22 @@ class IndexTests(Env):
         self.assertEqual(data['items'][0]['summary'], '요약 A')
 
 
-class SyncTests(Env):
-    def test_two_pcs_share_handoff_and_followups(self):
-        self.run_sf('init', '--remote', str(self.remote), pc='a')
-        p = self.paths('a')
-        self.assertEqual(p['SYNC'], 'on')
-        Path(p['HANDOFF_FILE']).parent.mkdir(parents=True, exist_ok=True)
-        Path(p['HANDOFF_FILE']).write_text('# Session Handoff\n\n## Next Action\n\nrun tests\n')
-        d = Path(p['FOLLOWUPS_DIR'])
-        d.mkdir(parents=True, exist_ok=True)
-        (d / 'x.md').write_text('---\ntitle: X\nstatus: open\ndiscovered: 2026-10-01\n---\n\n# X\n')
-        self.assertIn('SYNC=pushed', self.run_sf('sync', '-m', 'handoff', pc='a'))
-
-        # 다른 PC: clone 경로가 달라도 같은 저장소면 같은 키로 찾는다
-        other_clone = self.base / 'home-pc' / 'code' / 'my-app'
-        sh('git', 'clone', '-q', str(self.project), str(other_clone), env=self.env('b'))
-        sh('git', 'remote', 'set-url', 'origin', 'https://github.com/acme/my-app', cwd=other_clone, env=self.env('b'))
-        self.run_sf('init', '--remote', str(self.remote), pc='b', cwd=other_clone)
-        status = self.run_sf('status', pc='b', cwd=other_clone)
-        self.assertIn('handoff [main]:', status)
-        self.assertNotIn('handoff [main]: 없음', status)
-        self.assertIn('followups: open 1', status)
-        # INDEX.md 는 추적하지 않고 각 PC 에서 다시 만든다
-        tracked = sh('git', 'ls-files', cwd=self.base / 'pc-b' / 'state', env=self.env('b'))
-        self.assertNotIn('INDEX.md', tracked)
-        self.assertIn('github.com/acme/my-app/followups/x.md', tracked)
-
-    def test_concurrent_edits_on_different_items_merge(self):
-        self.run_sf('init', '--remote', str(self.remote), pc='a')
-        self.run_sf('init', '--remote', str(self.remote), pc='b')
-        for pc, slug in (('a', 'from-a'), ('b', 'from-b')):
-            d = Path(self.paths(pc)['FOLLOWUPS_DIR'])
-            d.mkdir(parents=True, exist_ok=True)
-            (d / f'{slug}.md').write_text(f'---\ntitle: {slug}\nstatus: open\n---\n')
-        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='a'))
-        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='b'))  # push 거절 → rebase → 재시도
-        self.run_sf('pull', pc='a')
-        d = Path(self.paths('a')['FOLLOWUPS_DIR'])
-        self.assertTrue((d / 'from-b.md').exists())
-
-    def test_background_pull_returns_at_once_and_brings_other_pc_changes(self):
-        import time
-        self.run_sf('init', '--remote', str(self.remote), pc='a')
-        self.run_sf('init', '--remote', str(self.remote), pc='b')
-        d = Path(self.paths('a')['FOLLOWUPS_DIR'])
-        d.mkdir(parents=True, exist_ok=True)
-        (d / 'late.md').write_text('---\ntitle: late\nstatus: open\n---\n')
-        self.run_sf('sync', pc='a')
-
-        pb = self.paths('b')
-        stamp = Path(pb['PULL_STAMP'])
-        started = time.monotonic()
-        self.assertEqual(self.run_sf('pull', '--background', pc='b'), '')
-        self.assertLess(time.monotonic() - started, 2)
-        index = Path(pb['INDEX_FILE'])
-        for _ in range(100):
-            if stamp.exists() and index.exists():
-                break
-            time.sleep(0.1)
-        self.assertTrue((Path(pb['FOLLOWUPS_DIR']) / 'late.md').exists())
-        self.assertIn('late', index.read_text())  # --dir 로 그 프로젝트 INDEX 도 다시 만든다
-
-    def test_pull_skips_while_another_pull_runs(self):
-        import fcntl
-        self.run_sf('init', '--remote', str(self.remote), pc='a')
-        lock = self.base / 'pc-a' / '.sfstate-pull.lock'
-        with open(lock, 'w') as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            self.assertIn('PULL=skipped', self.run_sf('pull', pc='a'))
-        self.assertIn('PULL=ok', self.run_sf('pull', pc='a'))
-
-    def test_without_state_repo_sync_is_local_only(self):
+class NoBackendTests(Env):
+    def test_without_backend_sync_is_local_only(self):
         p = self.paths()
         Path(p['FOLLOWUPS_DIR']).mkdir(parents=True)
         (Path(p['FOLLOWUPS_DIR']) / 'x.md').write_text('---\ntitle: X\n---\n')
-        self.assertIn('SYNC=local-only', self.run_sf('sync'))
+        out = self.run_sf('sync')
+        self.assertIn('SYNC=local-only', out)
+        self.assertIn('backend 가 없다', out)
+
+    def test_old_git_state_repo_is_not_synced_any_more(self):
+        state = self.base / 'pc-a' / 'state'
+        state.mkdir(parents=True)
+        sh('git', 'init', '-q', cwd=state, env=self.env())
+        p = self.paths()
+        self.assertEqual(p['SYNC'], 'off')
+        self.assertIn('1.0 에서 없어졌다', self.run_sf('prepare'))
 
 
 class LocalBackendTests(unittest.TestCase):
@@ -425,16 +366,30 @@ class BackendSyncTests(Env):
         (self.base / 'pc-b' / 'sessionflow').mkdir()
         self.assertIn(f'CONFLICT={self.KEY}/followups/x.md', self.run_sf('migrate-all', pc='b'))
 
-    def test_init_uploads_existing_state_repo_clone(self):
-        self.run_sf('init', '--remote', str(self.remote), pc='a')
+    def test_init_uploads_existing_state_repo_clone_and_archives_git(self):
+        state = self.base / 'pc-a' / 'state'
+        sh('git', 'clone', '-q', str(self.remote), str(state), env=self.env())
+        (state / 'README.md').write_text('# sessionflow state\n')
         self.item('a', 'old', 'from git days\n')
-        self.run_sf('sync', pc='a')
+        sh('git', 'add', '-A', cwd=state, env=self.env())
+        sh('git', 'commit', '-q', '-m', 'old', cwd=state, env=self.env())
         out = self.init('a')
         self.assertIn('PUSH=ok (올림 1', out)
+        self.assertIn('GIT_ARCHIVE=', out)
+        self.assertFalse((state / '.git').exists())
+        archive = next(self.base.joinpath('pc-a').glob('state.git-archive-*'))
+        self.assertTrue((archive / '.git').is_dir())
+        self.assertTrue((archive / 'README.md').exists())
         self.assertEqual(self.stored('followups/old.md').read_text(), 'from git days\n')
         self.assertFalse((self.store / 'repos' / 'README.md').exists())
-        self.assertFalse((self.store / 'repos' / '.git').exists())
-        self.assertIn('SYNC=nochange', self.run_sf('sync', pc='a'))  # backend 가 state repo 보다 먼저다
+        self.assertIn('SYNC=nochange', self.run_sf('sync', pc='a'))
+
+    def test_doctor_checks_conditional_writes(self):
+        self.init('a')
+        out = self.run_sf('doctor', pc='a')
+        for line in ('STORE=ok', 'IF_NONE_MATCH=ok', 'IF_MATCH=ok', 'DELETE_IF_MATCH=ok'):
+            self.assertIn(line, out)
+        self.assertEqual(list((self.store).glob('.doctor/*')), [])  # probe 는 치운다
 
     def test_background_pull_stamps_inside_state(self):
         import time
@@ -450,6 +405,234 @@ class BackendSyncTests(Env):
                 break
             time.sleep(0.1)
         self.assertIn('late', Path(pb['INDEX_FILE']).read_text())
+
+
+class S3UnitTests(unittest.TestCase):
+    """네트워크 없이 S3Backend 의 응답 검증과 자격증명 처리를 본다."""
+
+    def backend(self, responses):
+        sfbackend = sfstate.sfbackend
+
+        class Fake(sfbackend.S3Backend):
+            def _request(self, method, key='', params=None, body=b'', extra=None):
+                return responses.pop(0)
+
+        return Fake({'type': 's3', 'bucket': 'b', 'endpoint': 'http://x'},
+                    {'access_key_id': 'k', 'secret_access_key': 's'})
+
+    def xml(self, inner):
+        return (200, {}, ('<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+                          + inner + '</ListBucketResult>').encode())
+
+    def test_list_rejects_incomplete_or_odd_responses(self):
+        BackendError = sfstate.sfbackend.BackendError
+        for bad in (self.xml('<IsTruncated>true</IsTruncated>'),             # 다음 페이지 토큰 없음
+                    self.xml('<Contents><Key>repos/a</Key><ETag>"1"</ETag></Contents>'),  # IsTruncated 없음
+                    (200, {}, b'<Error><Code>Odd</Code></Error>'),          # 다른 응답
+                    (200, {}, b'not xml'),
+                    self.xml('<IsTruncated>false</IsTruncated><Contents><Key>repos/a</Key></Contents>')):
+            with self.assertRaises(BackendError, msg=bad):
+                self.backend([bad]).list('repos/')
+
+    def test_list_follows_continuation_tokens(self):
+        be = self.backend([
+            self.xml('<IsTruncated>true</IsTruncated><NextContinuationToken>t</NextContinuationToken>'
+                     '<Contents><Key>repos/a</Key><ETag>"1"</ETag></Contents>'),
+            self.xml('<IsTruncated>false</IsTruncated><Contents><Key>repos/b</Key><ETag>"2"</ETag></Contents>'),
+        ])
+        self.assertEqual(be.list('repos/'), {'repos/a': '1', 'repos/b': '2'})
+
+    def test_credentials_file_is_never_world_readable(self):
+        sfbackend = sfstate.sfbackend
+        seen = []
+        real_replace = os.replace
+
+        def spy(src, dst):
+            seen.append(os.stat(src).st_mode & 0o777)
+            return real_replace(src, dst)
+
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / 'credentials.json'
+            (Path(d) / 'credentials.json.tmp').write_text('stale')  # 앞서 끊긴 쓰기
+            old_umask = os.umask(0o022)
+            try:
+                sfbackend.os.replace = spy
+                sfbackend.save_config(f, {'secret_access_key': 's'})
+            finally:
+                sfbackend.os.replace = real_replace
+                os.umask(old_umask)
+            self.assertEqual(seen, [0o600])
+            self.assertEqual(f.stat().st_mode & 0o777, 0o600)
+            self.assertFalse((Path(d) / 'credentials.json.tmp').exists())
+
+    def test_env_credentials_are_all_or_nothing_and_need_no_file(self):
+        sfbackend = sfstate.sfbackend
+        keys = ('HBRNESS_S3_ACCESS_KEY_ID', 'HBRNESS_S3_SECRET_ACCESS_KEY', 'HBRNESS_S3_SESSION_TOKEN')
+        saved = {k: os.environ.pop(k, None) for k in keys}
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                f = Path(d) / 'credentials.json'
+                f.write_text('{"access_key_id": "file-k", "secret_access_key": "file-s", "session_token": "old"}')
+                os.environ['HBRNESS_S3_ACCESS_KEY_ID'] = 'env-k'  # secret 없이 key 만 — 섞지 않는다
+                self.assertEqual(sfbackend.load_credentials(f)['access_key_id'], 'file-k')
+                os.environ['HBRNESS_S3_SECRET_ACCESS_KEY'] = 'env-s'
+                self.assertEqual(sfbackend.load_credentials(f), {'access_key_id': 'env-k', 'secret_access_key': 'env-s'})
+                be = sfbackend.make_backend({'type': 's3', 'bucket': 'b'})  # 파일 경로 없이 환경변수만
+                self.assertEqual(be.creds['access_key_id'], 'env-k')
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_cut_off_response_is_a_backend_error(self):
+        import http.client
+        sfbackend = sfstate.sfbackend
+
+        class Cut:
+            status, headers = 200, {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                raise http.client.IncompleteRead(b'par', 10)
+
+        be = sfbackend.S3Backend({'type': 's3', 'bucket': 'b', 'endpoint': 'http://x'},
+                                 {'access_key_id': 'k', 'secret_access_key': 's'})
+        real = sfbackend.urllib.request.urlopen
+        sfbackend.urllib.request.urlopen = lambda *a, **k: Cut()
+        try:
+            with self.assertRaises(sfbackend.BackendError):
+                be.get('repos/a.md')
+        finally:
+            sfbackend.urllib.request.urlopen = real
+
+    def test_init_uses_the_same_credentials_as_later_commands(self):
+        import io
+        import types
+        keys = ('HBRNESS_S3_ACCESS_KEY_ID', 'HBRNESS_S3_SECRET_ACCESS_KEY')
+        saved_env = {k: os.environ.pop(k, None) for k in keys + ('HBRNESS_HOME',)}
+        saved_stdin = sys.stdin
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                os.environ.update({'HBRNESS_HOME': d, 'HBRNESS_S3_ACCESS_KEY_ID': 'env-k',
+                                   'HBRNESS_S3_SECRET_ACCESS_KEY': 'env-s'})
+                sys.stdin = io.StringIO('stdin-k\nstdin-s\n')
+                a = types.SimpleNamespace(backend='s3', bucket='b', endpoint='http://x', prefix='', region='',
+                                          path_style=None, credentials_stdin=True, path='')
+                _, be, new = sfstate._init_config(a)
+                self.assertEqual(be.creds['access_key_id'], 'env-k')  # load_backend 와 같은 선택
+                self.assertEqual(new['access_key_id'], 'stdin-k')      # 저장은 stdin 것
+        finally:
+            sys.stdin = saved_stdin
+            for k, v in saved_env.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_stdin_credentials_replace_the_old_set(self):
+        import io
+        import types
+        keys = ('HBRNESS_S3_ACCESS_KEY_ID', 'HBRNESS_S3_SECRET_ACCESS_KEY')
+        saved_env = {k: os.environ.pop(k, None) for k in keys + ('HBRNESS_HOME',)}
+        saved_stdin = sys.stdin
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                os.environ['HBRNESS_HOME'] = d
+                (Path(d) / 'credentials.json').write_text(
+                    '{"access_key_id": "old", "secret_access_key": "old", "session_token": "old-token"}')
+                sys.stdin = io.StringIO('new-k\nnew-s\n')
+                a = types.SimpleNamespace(backend='s3', bucket='b', endpoint='http://x', prefix='', region='',
+                                          path_style=None, credentials_stdin=True, path='')
+                _, be, new = sfstate._init_config(a)
+                self.assertEqual(be.creds, {'access_key_id': 'new-k', 'secret_access_key': 'new-s'})
+                self.assertEqual(new, be.creds)
+        finally:
+            sys.stdin = saved_stdin
+            for k, v in saved_env.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
+
+
+S3_ENV = {k: os.environ.get(f'HBRNESS_TEST_S3_{k.upper()}', '') for k in ('endpoint', 'bucket', 'access_key_id', 'secret_access_key', 'region')}
+
+
+@unittest.skipUnless(S3_ENV['endpoint'] and S3_ENV['bucket'],
+                     'HBRNESS_TEST_S3_ENDPOINT/BUCKET/ACCESS_KEY_ID/SECRET_ACCESS_KEY 가 있을 때만 (MinIO 등)')
+class S3BackendTests(Env):
+    """실제 S3 API 저장소에 붙는다. 테스트마다 prefix 를 새로 써서 서로 섞이지 않는다."""
+
+    KEY = 'github.com/acme/my-app'
+
+    def setUp(self):
+        super().setUp()
+        import uuid
+        self.prefix = f'sfstate-test/{uuid.uuid4().hex}'
+
+    def init(self, pc='a', cwd=None):
+        args = [sys.executable, str(SCRIPT), 'init', '--backend', 's3', '--endpoint', S3_ENV['endpoint'],
+                '--bucket', S3_ENV['bucket'], '--prefix', self.prefix, '--credentials-stdin']
+        if S3_ENV['region']:
+            args += ['--region', S3_ENV['region']]
+        r = subprocess.run(args, cwd=cwd or self.project, env=self.env(pc), check=True, capture_output=True,
+                           text=True, input=f"{S3_ENV['access_key_id']}\n{S3_ENV['secret_access_key']}\n")
+        return r.stdout
+
+    def backend(self):
+        cfg = {'type': 's3', 'endpoint': S3_ENV['endpoint'], 'bucket': S3_ENV['bucket'], 'prefix': self.prefix,
+               'region': S3_ENV['region'] or 'us-east-1'}
+        return sfstate.sfbackend.S3Backend(cfg, {'access_key_id': S3_ENV['access_key_id'],
+                                                  'secret_access_key': S3_ENV['secret_access_key']})
+
+    def item(self, pc, slug, text):
+        d = Path(self.paths(pc)['FOLLOWUPS_DIR'])
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f'{slug}.md').write_text(text)
+        return d / f'{slug}.md'
+
+    def test_credentials_are_saved_privately(self):
+        self.init('a')
+        creds = self.base / 'pc-a' / 'credentials.json'
+        self.assertEqual(oct(creds.stat().st_mode & 0o777), '0o600')
+        self.assertNotIn(S3_ENV['secret_access_key'], (self.base / 'pc-a' / 'backend.json').read_text())
+
+    def test_two_pcs_share_and_conflict(self):
+        self.init('a')
+        self.init('b')
+        self.item('a', 'x', 'v1 한글\n')
+        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='a'))
+        self.run_sf('pull', pc='b')
+        xb = Path(self.paths('b')['FOLLOWUPS_DIR']) / 'x.md'
+        self.assertEqual(xb.read_text(), 'v1 한글\n')
+        self.item('a', 'x', 'from a\n')
+        self.item('b', 'x', 'from b\n')
+        self.run_sf('sync', pc='a')
+        self.assertIn(f'CONFLICT={self.KEY}/followups/x.md', self.run_sf('sync', pc='b'))
+        self.assertEqual(xb.read_text(), 'from a\n')
+        Path(self.paths('a')['FOLLOWUPS_DIR'], 'x.md').unlink()
+        self.assertIn('SYNC=pushed', self.run_sf('sync', pc='a'))
+        self.run_sf('pull', pc='b')
+        self.assertFalse(xb.exists())
+
+    def test_list_follows_pages(self):
+        be = self.backend()
+        be.ensure()
+        for n in range(5):
+            be.put(f'repos/h/o/r/{n}.md', b'x', if_none_match=True)
+        be.page_size = 2
+        self.assertEqual(len(be.list('repos/')), 5)
+
+    def test_doctor(self):
+        self.init('a')
+        out = self.run_sf('doctor', pc='a')
+        self.assertIn('IF_NONE_MATCH=ok', out)
+        self.assertIn('IF_MATCH=ok', out)
+        self.assertIn('DELETE_IF_MATCH=', out)
 
 
 class MigrateTests(Env):

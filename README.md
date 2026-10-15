@@ -89,8 +89,9 @@ Runtime differences:
   successful `exec` commit. Grok ignores passive hook stdout, so invoke
   `/ghflow:chronicle` explicitly there. Template-fetch hooks remain disabled.
 - Shared handoff/followup files live in `~/.hbrness/state`, keyed by the
-  repository's origin remote and synced across machines through a private state
-  repo (`sessionflow/scripts/sfstate.py init --remote <url>`). The skills also
+  repository's origin remote and synced across machines through an S3-API
+  backend with conditional writes (`sessionflow/scripts/sfstate.py init --backend s3 …`,
+  then `sfstate.py doctor`). The skills also
   maintain the Claude/Codex memory indexes. This does not create a native
   Grok/Devin automatic-memory integration.
 

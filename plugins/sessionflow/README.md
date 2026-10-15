@@ -1,6 +1,6 @@
 # sessionflow
 
-세션 간 컨텍스트를 보존·재개하기 위한 스킬 모음. followup 과 handoff 는 **경로가 아니라 저장소(origin remote)를 기준**으로 private state repo 에 저장·동기화하므로, 다른 도구(Claude / Codex / Grok / Devin)는 물론 **다른 PC** 에서도 같은 내용을 이어 작업할 수 있습니다. `phase-run` 은 여기서 한 발 더 나아가, 페이즈 경계마다 컨텍스트를 비우고 새 세션이 핸드오프를 읽어 자동으로 이어받게 합니다.
+세션 간 컨텍스트를 보존·재개하기 위한 스킬 모음. followup 과 handoff 는 **경로가 아니라 저장소(origin remote)를 기준**으로 저장하고 Terraform backend 처럼 원격 저장소(S3 API)와 동기화하므로, 다른 도구(Claude / Codex / Grok / Devin)는 물론 **다른 PC** 에서도 같은 내용을 이어 작업할 수 있습니다. `phase-run` 은 여기서 한 발 더 나아가, 페이즈 경계마다 컨텍스트를 비우고 새 세션이 핸드오프를 읽어 자동으로 이어받게 합니다.
 
 ## 스킬
 
@@ -88,55 +88,70 @@ echo deploy-staging
 
 ## 저장 경로 — 저장소 기준 + PC 간 동기화
 
-followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고 동기화합니다.
+followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고, `scripts/sfbackend.py` 가 동기화한다. Terraform backend 처럼 원격은 key → 내용 저장소이고 `~/.hbrness/state/` 는 그 캐시다.
 
 ```
-~/.hbrness/state/                         # private state repo 의 clone (PC 마다 하나)
-├── <host>/<owner>/<repo>/                # 저장소 키 = origin remote URL 정규화 (예: github.com/hbs9312/hbrness)
-│   ├── followups/
-│   │   ├── <slug>.md                     # 항목 하나 = 파일 하나 (frontmatter 가 진실원, summary = INDEX 한 줄 설명)
-│   │   ├── _config.json                  # 선택: {"resolved_keep": 10}
-│   │   └── INDEX.md                      # 생성물 — git 추적 안 함, 각 PC 에서 다시 만든다
-│   └── handoffs/
-│       ├── main.md
-│       └── feat/login.md                 # 브랜치 feat/login
-└── _local/<경로키>/                       # remote 없는 프로젝트 — 이 PC 에만 (git 추적 안 함)
+~/.hbrness/
+├── backend.json                          # backend 설정 (Terraform 의 backend 블록 역할)
+├── credentials.json                      # s3 자격증명 (mode 600, state 밖)
+└── state/                                # 원격의 로컬 캐시 (PC 마다 하나)
+    ├── <host>/<owner>/<repo>/            # 저장소 키 = origin remote URL 정규화 (예: github.com/hbs9312/hbrness)
+    │   ├── followups/
+    │   │   ├── <slug>.md                 # 항목 하나 = 파일 하나 (frontmatter 가 진실원, summary = INDEX 한 줄 설명)
+    │   │   ├── _config.json              # 선택: {"resolved_keep": 10}
+    │   │   └── INDEX.md                  # 생성물 — 올리지 않고 각 PC 에서 다시 만든다
+    │   └── handoffs/
+    │       ├── main.md
+    │       └── feat/login.md             # 브랜치 feat/login
+    ├── _local/<경로키>/                   # remote 없는 프로젝트 — 이 PC 에만
+    ├── _conflicts/                       # 충돌 때 비켜 둔 이 PC 의 버전 — 이 PC 에만
+    └── .sfstate/manifest.json            # 파일마다 마지막으로 맞춘 원격 etag 와 내용 해시
+
+<bucket>/<prefix>/
+├── .sfbackend                            # 저장소 ID — 없으면 원격에 닿지 못한 것으로 본다
+└── repos/<host>/<owner>/<repo>/{followups,handoffs}/…
 ```
 
 - **저장소 키**: `git@github.com:o/r.git`, `https://github.com/o/r`, `ssh://git@github.com:22/o/r.git` 모두 `github.com/o/r` 로 같다. clone 경로가 PC 마다 달라도 같은 저장소면 같은 디렉토리를 쓴다.
 - **브랜치 기준 핸드오프**: 워크트리 폴더 이름은 PC 마다 다르지만 브랜치는 push 하면 같다. git 은 한 브랜치를 두 워크트리에 동시에 체크아웃하지 못하게 막으니 한 PC 안에서도 겹치지 않는다.
-- **동기화**: 스킬이 읽기 전에 `sfstate.py prepare`(pull), 쓰고 나서 `sfstate.py sync`(commit + push). push 가 거절되면 rebase 후 한 번 더 시도하고, 그래도 안 되면 로컬 커밋으로 남겨 다음 sync 때 올린다. 항목마다 파일이 따로라 두 PC 가 다른 항목을 고치면 충돌하지 않는다.
-- **turn 끝에 받아오기**: 각 도구의 Stop hook 에 `python3 <sessionflow>/scripts/sfstate.py pull --background` 를 걸면 turn 이 끝날 때마다 다른 PC 의 변경을 받아 온다. 바로 돌아오고 뒤에서 pull 하므로 turn 종료를 붙잡지 않으며, 이미 pull 이 돌고 있으면 건너뛴다. 끝나면 `paths` 의 `PULL_STAMP` 파일을 갱신해, 표시 쪽(statusline 등)이 mtime 으로 다시 그릴 때를 안다. hook 의 cwd 를 `--dir` 로 넘기면 그 저장소의 INDEX.md 도 다시 만든다. 받기만 하고 push 는 하지 않는다.
+- **동기화**: 스킬이 읽기 전에 `sfstate.py prepare`(pull), 쓰고 나서 `sfstate.py sync`. pull 은 원격 목록에서 etag 가 바뀐 것만 받고, sync 는 로컬에서 내용이 바뀐 파일만 올린다.
+- **conditional write**: 이미 있던 파일은 `If-Match`(manifest 의 etag), 새 파일은 `If-None-Match: *` 로 올린다. 그사이 다른 PC 가 같은 파일을 바꿨으면 원격이 거절한다. 그러면 원격본을 원래 자리에 받고 이 PC 의 버전은 `_conflicts/` 에 남긴 뒤 `CONFLICT=` 로 알린다. 항목마다 파일이 따로라 두 PC 가 다른 항목을 고치면 충돌하지 않는다. lock 은 쓰지 않는다 — Terraform 은 state 가 파일 하나라 lock 이 필요하지만 여기는 파일 단위로 충돌을 가린다.
+- **삭제**: 원격 삭제도 etag 를 확인한다. 그사이 다른 PC 가 고친 파일은 지우지 않고 그 버전을 받는다. DeleteObject 의 `If-Match` 를 무시하는 저장소(예: MinIO)에서는 지우기 직전에 HEAD 로 확인해서 아주 짧은 경합 창이 남는다 — `doctor` 가 알려 준다.
+- **원격에 닿지 못하면**: 저장소 표시(`.sfbackend`)를 읽지 못하면 빈 저장소로 보지 않고 실패한다. 빈 목록으로 읽으면 pull 이 로컬 사본을 전부 지우기 때문이다. manifest 는 저장소 ID 에 묶여 있어서, 같은 자리에 저장소를 새로 만들면 예전 manifest 를 버리고 로컬 파일을 다시 올린다. 로컬 디렉토리를 읽다 에러가 나도 빠진 파일을 삭제로 읽지 않고 sync 를 멈춘다.
+- **turn 끝에 받아오기**: 각 도구의 Stop hook 에 `python3 <sessionflow>/scripts/sfstate.py pull --background` 를 걸면 turn 이 끝날 때마다 다른 PC 의 변경을 받아 온다. 바로 돌아오고 뒤에서 pull 하므로 turn 종료를 붙잡지 않으며, 이미 pull 이 돌고 있으면 건너뛴다. 끝나면 `paths` 의 `PULL_STAMP` 파일(`state/.sfstate/pulled`)을 갱신해, 표시 쪽(statusline 등)이 mtime 으로 다시 그릴 때를 안다. hook 의 cwd 를 `--dir` 로 넘기면 그 저장소의 INDEX.md 도 다시 만든다. 받기만 하고 올리지는 않는다.
 - **INDEX.md 는 생성물**: 두 PC 가 같은 목록 파일을 고치면 충돌하므로, 항목 frontmatter(`title`·`summary`·`status`·`discovered`·`resolved`)로 매번 다시 만든다. 상한(`resolved_keep`, 기본 10)을 넘는 오래된 resolved 는 sync 때 지운다.
 
-### 새 PC 설정
+### backend 정하기 (새 PC 도 같다)
 
 ```bash
-# state repo 를 ~/.hbrness/state 로 clone (이미 이 PC 에 로컬 기록이 있으면 옆으로 옮긴 뒤 합친다)
-python3 <sessionflow>/scripts/sfstate.py init --remote https://github.com/<you>/hbrness-state.git
-# (선택) 예전 경로 기준 데이터를 한 번에 옮기기 — 각 스킬도 처음 실행될 때 그 프로젝트 몫을 옮긴다
-python3 <sessionflow>/scripts/sfstate.py migrate-all --dry-run
-python3 <sessionflow>/scripts/sfstate.py migrate-all
+# S3 API 저장소 — AWS S3·Cloudflare R2·MinIO 등. 자격증명은 stdin 으로 넘겨 credentials.json(mode 600)에 저장한다.
+printf '%s\n%s\n' "$ACCESS_KEY_ID" "$SECRET_ACCESS_KEY" | \
+  python3 <sessionflow>/scripts/sfstate.py init --backend s3 \
+    --endpoint https://<account>.r2.cloudflarestorage.com --region auto \
+    --bucket <bucket> --prefix hbrness --credentials-stdin
+# 디렉토리 하나를 원격처럼 쓴다 (테스트·오프라인용)
+python3 <sessionflow>/scripts/sfstate.py init --backend local --path <dir>
+
+# 저장소가 conditional write 를 지키는지, versioning 이 켜졌는지 확인한다
+python3 <sessionflow>/scripts/sfstate.py doctor
 # 현황 보기
 python3 <sessionflow>/scripts/sfstate.py status
 ```
 
-state repo 가 없으면 스킬은 `~/.hbrness/state/` 에 로컬로만 기록하고 그 사실을 알린다. 나중에 `init` 하면 그대로 합쳐진다.
+- `init` 은 `backend.json` 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다. 다른 PC 에서 이미 올린 내용이 있으면 먼저 받는다.
+- AWS 가 아닌 저장소는 `--endpoint` 를 준다. endpoint 가 있으면 path-style(`<endpoint>/<bucket>/<key>`)이 기본이고, `--virtual-host` 로 바꿀 수 있다. 환경변수 `HBRNESS_S3_ACCESS_KEY_ID` 와 `HBRNESS_S3_SECRET_ACCESS_KEY` 가 둘 다 있으면 (`HBRNESS_S3_SESSION_TOKEN` 과 함께) 한 묶음으로 `credentials.json` 보다 먼저 쓴다. 파일 값과 섞지 않는다. `--credentials-stdin` 으로 준 자격증명은 저장된 것을 통째로 바꾼다 (환경변수 묶음이 있으면 init 도 그쪽으로 맞춘다).
+- bucket versioning 을 켜 두면 지운 항목·덮어쓴 버전을 되살릴 수 있다.
+- backend 가 없으면 스킬은 `~/.hbrness/state/` 에 로컬로만 기록하고 그 사실을 알린다. 나중에 `init` 하면 그대로 올라간다.
 
-### backend (Terraform 방식)
+### 예전 git state repo 에서 옮기기 (≤0.18)
 
-`~/.hbrness/backend.json` 이 있으면 state repo 대신 backend 를 쓴다. Terraform backend 처럼 원격은 key → 내용 저장소이고 `~/.hbrness/state/` 는 그 캐시다. 로직은 `scripts/sfbackend.py`.
+0.18 까지는 `~/.hbrness/state` 가 private git repo 의 clone 이었고 commit + push 로 동기화했다. 1.0 부터는 git 으로 동기화하지 않는다. 그 자리에서 `init --backend …` 를 하면 `.git`·`.gitignore`·`README.md` 를 `~/.hbrness/state.git-archive-<시각>/` 로 치우고 항목 파일은 그대로 backend 에 올린다. 다른 PC 는 먼저 `git pull` 로 최신을 받은 뒤 같은 `init` 을 하면 된다. GitHub 의 state repo 는 건드리지 않으니 옮긴 걸 확인한 뒤 archive 한다.
 
 ```bash
-# 디렉토리 하나를 원격처럼 쓴다 (지금은 local 만 있다)
-python3 <sessionflow>/scripts/sfstate.py init --backend local --path <dir>
+# (선택) 예전 경로 기준 데이터를 한 번에 옮기기 — 각 스킬도 처음 실행될 때 그 프로젝트 몫을 옮긴다
+python3 <sessionflow>/scripts/sfstate.py migrate-all --dry-run
+python3 <sessionflow>/scripts/sfstate.py migrate-all
 ```
-
-- **원격 key**: `repos/<repo-key>/followups/<slug>.md`, `repos/<repo-key>/handoffs/<branch>.md`. `INDEX.md`, `_local/`, 최상위 파일(예전 state repo 의 README 등)은 올리지 않는다.
-- **manifest**: `~/.hbrness/state/.sfstate/manifest.json` 에 파일마다 마지막으로 맞춘 원격 etag 와 내용 해시를 적는다. pull 은 etag 가 바뀐 것만 받고, sync 는 로컬에서 바뀐 것만 올린다. 로컬 디렉토리를 읽다 에러가 나면 빠진 파일을 삭제로 읽지 않고 sync 를 멈춘다.
-- **conditional write**: 이미 있던 파일은 `If-Match`(manifest 의 etag), 새 파일은 `If-None-Match` 로 올린다. 그사이 다른 PC 가 같은 파일을 바꿨으면 원격이 거절한다. 그러면 원격본을 원래 자리에 받고 이 PC 의 버전은 `~/.hbrness/state/_conflicts/` 에 남긴 뒤 `CONFLICT=` 로 알린다. 다른 PC 가 고친 파일을 이 PC 가 지우려 하면 지우지 않고 그 버전을 받는다.
-- **원격에 닿지 못하면**: local backend 는 init 때 원격 디렉토리에 `.sfbackend` 표시 파일을 남기고 저장소 ID 를 적는다. manifest 는 이 ID 에 묶여 있어서, 같은 경로에 저장소를 새로 만들면 예전 manifest 를 버리고 로컬 파일을 다시 올린다. 이 파일이 없으면(디렉토리를 옮겼거나 외장 디스크가 빠짐) 빈 저장소로 읽지 않고 실패한다 — 빈 목록으로 읽으면 pull 이 로컬 사본을 전부 지우기 때문이다. 원격 삭제도 `If-Match` 로 해서 그사이 다른 PC 가 올린 버전은 지우지 않는다.
-- **init**: `backend.json` 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다. 예전 state repo clone 이 그 자리에 있으면 그 내용이 그대로 올라간다. backend 가 있으면 state repo 보다 먼저 쓴다.
 
 ### 예전 경로 기준 데이터 (≤0.15)
 
@@ -178,8 +193,8 @@ python3 <sessionflow>/scripts/sfstate.py init --backend local --path <dir>
 
 ## 동작 보장
 
-- **install** 은 SKILL.md 만 배치합니다. MEMORY.md 와 state repo 는 스킬이 실제로 실행될 때만 갱신됩니다.
+- **install** 은 SKILL.md 만 배치합니다. MEMORY.md 와 backend 는 스킬이 실제로 실행될 때만 갱신됩니다.
 - `followup` 과 `handoff` 는 서로의 파일을 절대 건드리지 않습니다. clear 스킬도 마찬가지입니다.
 - `handoff` 는 브랜치 격리 — 같은 저장소의 다른 브랜치 핸드오프를 덮어쓰지 않습니다.
 - `followup` 은 저장소 단위 — 어느 워크트리·PC 에서 호출해도 같은 `followups/` 디렉토리에 누적됩니다.
-- state repo 에는 핸드오프의 diff·에러 원문이 들어가므로 **private repo** 로만 둡니다.
+- backend 에는 핸드오프의 diff·에러 원문이 들어가므로 **공개되지 않는 bucket** 에만 둡니다.

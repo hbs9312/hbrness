@@ -17,6 +17,16 @@ Terraform 의 backend 와 같은 구조다. 원격은 key → 내용 저장소�
 
 설정 파일(backend.json):
   {"type": "local", "path": "/some/dir"}   디렉토리 하나를 원격처럼 쓴다 (테스트·오프라인용)
+  {"type": "s3", "endpoint": "https://…", "bucket": "b", "prefix": "hbrness/", "region": "auto",
+   "path_style": true}                     S3 API 를 쓰는 저장소 (AWS S3·R2·MinIO 등). SigV4 서명을 직접 한다.
+
+s3 자격증명은 backend.json 옆의 credentials.json(mode 600)에 둔다:
+  {"access_key_id": "…", "secret_access_key": "…", "session_token": "…(선택)"}
+환경변수 HBRNESS_S3_ACCESS_KEY_ID 와 HBRNESS_S3_SECRET_ACCESS_KEY 가 둘 다 있으면 (HBRNESS_S3_SESSION_TOKEN 과 함께)
+한 묶음으로 그쪽을 먼저 쓴다. 파일 값과 섞지 않는다.
+
+저장소마다 표시 object(<prefix>.sfbackend, local 은 <dir>/.sfbackend)에 저장소 ID 를 적어 둔다.
+표시가 없으면 원격에 닿지 못한 것으로 보고 실패한다. manifest 는 이 ID 에 묶인다.
 """
 
 from __future__ import annotations
@@ -27,8 +37,14 @@ import fcntl
 import hashlib
 import json
 import os
+import hmac
+import http.client
 import socket
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REMOTE_PREFIX = "repos/"
@@ -163,12 +179,266 @@ class LocalBackend:
             return True
 
 
-def make_backend(cfg: dict):
+class S3Backend:
+    """S3 API 저장소. ETag 를 etag 로 쓰고, PutObject 의 If-Match / If-None-Match 로 conditional write 를 한다.
+    DeleteObject 는 If-Match 를 보내되, 지원하지 않는 저장소도 있어 HEAD 로 먼저 etag 를 확인한다."""
+
+    MARKER = ".sfbackend"
+    TIMEOUT = 30
+    page_size = None  # ListObjectsV2 max-keys. None 이면 저장소 기본값(보통 1000). 테스트가 줄인다.
+
+    def __init__(self, cfg: dict, creds: dict):
+        for k in ("bucket",):
+            if not cfg.get(k):
+                raise BackendError(f"s3 backend 에 {k} 가 없다")
+        if not creds.get("access_key_id") or not creds.get("secret_access_key"):
+            raise BackendError("s3 자격증명이 없다 — credentials.json 이나 HBRNESS_S3_* 환경변수를 확인한다")
+        self.bucket = cfg["bucket"]
+        prefix = (cfg.get("prefix") or "").strip("/")
+        self.prefix = prefix + "/" if prefix else ""
+        self.region = cfg.get("region") or "us-east-1"
+        endpoint = cfg.get("endpoint") or f"https://s3.{self.region}.amazonaws.com"
+        u = urllib.parse.urlsplit(endpoint)
+        if u.scheme not in ("http", "https") or not u.netloc:
+            raise BackendError(f"잘못된 endpoint: {endpoint!r}")
+        self.scheme = u.scheme
+        self.base_path = u.path.rstrip("/")
+        self.path_style = bool(cfg.get("path_style", bool(cfg.get("endpoint"))))
+        self.host = u.netloc if self.path_style else f"{self.bucket}.{u.netloc}"
+        self.endpoint = f"{u.scheme}://{u.netloc}{self.base_path}"
+        self.creds = creds
+
+    def describe(self) -> str:
+        return f"s3:{self.endpoint}/{self.bucket}/{self.prefix}"
+
+    # ── 서명·요청 ──────────────────────────────────────────────────────────
+
+    def _path(self, key: str = "") -> str:
+        segs = [self.bucket] if self.path_style else []
+        if key:
+            segs.append(key)
+        return self.base_path + "/" + urllib.parse.quote("/".join(segs), safe="/-_.~")
+
+    @staticmethod
+    def _query(params: dict) -> str:
+        q = lambda v: urllib.parse.quote(str(v), safe="-_.~")
+        return "&".join(f"{q(k)}={q(v)}" for k, v in sorted(params.items()))
+
+    def _sign(self, method: str, path: str, query: str, payload_hash: str, now: dt.datetime) -> dict:
+        amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+        date = amz_date[:8]
+        headers = {"host": self.host, "x-amz-content-sha256": payload_hash, "x-amz-date": amz_date}
+        if self.creds.get("session_token"):
+            headers["x-amz-security-token"] = self.creds["session_token"]
+        names = sorted(headers)
+        canonical = "\n".join([method, path, query,
+                               "".join(f"{n}:{headers[n].strip()}\n" for n in names),
+                               ";".join(names), payload_hash])
+        scope = f"{date}/{self.region}/s3/aws4_request"
+        to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope,
+                             hashlib.sha256(canonical.encode()).hexdigest()])
+        k = ("AWS4" + self.creds["secret_access_key"]).encode()
+        for part in (date, self.region, "s3", "aws4_request"):
+            k = hmac.new(k, part.encode(), hashlib.sha256).digest()
+        sig = hmac.new(k, to_sign.encode(), hashlib.sha256).hexdigest()
+        headers["authorization"] = (f"AWS4-HMAC-SHA256 Credential={self.creds['access_key_id']}/{scope}, "
+                                    f"SignedHeaders={';'.join(names)}, Signature={sig}")
+        del headers["host"]  # urllib 이 URL 로 같은 값을 넣는다
+        return headers
+
+    def _request(self, method: str, key: str = "", params=None, body: bytes = b"", extra=None):
+        """반환: (status, headers, body). 4xx/5xx 도 그대로 돌려준다. 네트워크 실패는 BackendError."""
+        path = self._path(key)
+        query = self._query(params or {})
+        headers = self._sign(method, path, query, hashlib.sha256(body).hexdigest(),
+                             dt.datetime.now(dt.timezone.utc))
+        headers.update(extra or {})
+        url = f"{self.scheme}://{self.host}{path}" + (f"?{query}" if query else "")
+        req = urllib.request.Request(url, data=body if method in ("PUT", "POST") else None,
+                                     method=method, headers=headers)
+        # 응답을 읽다 연결이 끊기면(IncompleteRead 등) 그것도 BackendError 로 바꾼다 — 그래야 Cache 가
+        # PartialSync 로 감싸 그때까지의 충돌을 알린다.
+        try:
+            try:
+                with urllib.request.urlopen(req, timeout=self.TIMEOUT) as r:
+                    return r.status, r.headers, r.read()
+            except urllib.error.HTTPError as e:
+                return e.code, e.headers, e.read() if method != "HEAD" else b""
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
+            raise BackendError(f"{self.endpoint} 에 닿지 못했다: {getattr(e, 'reason', None) or e!r}") from e
+
+    @staticmethod
+    def _error(status: int, body: bytes, what: str) -> BackendError:
+        code = msg = ""
+        try:
+            root = ET.fromstring(body)
+            code = root.findtext("Code") or ""
+            msg = root.findtext("Message") or ""
+        except ET.ParseError:
+            pass
+        return BackendError(f"{what}: HTTP {status} {code} {msg}".strip())
+
+    @staticmethod
+    def _etag(headers) -> str:
+        return (headers.get("ETag") or "").strip('"')
+
+    # ── backend 인터페이스 ─────────────────────────────────────────────────
+
+    def ensure(self):
+        """init 에서만 부른다. bucket 에 닿는지 보고, 표시 object 가 없으면 새 저장소 ID 로 만든다."""
+        self.list("", limit=1)
+        try:
+            self._put_raw(self.prefix + self.MARKER, (uuid.uuid4().hex + "\n").encode(), if_none_match=True)
+        except PreconditionFailed:
+            pass
+
+    def identity(self) -> str:
+        r = self._get_raw(self.prefix + self.MARKER)
+        if r is None:
+            raise BackendError(f"{self.describe()} 에 저장소 표시({self.MARKER})가 없다 — 지웠거나 다른 곳이면 init 을 다시 한다")
+        return f"{self.describe()}#{r[0].decode('utf-8', 'replace').strip()}"
+
+    def list(self, prefix: str, limit: int | None = None) -> dict:
+        out, token = {}, None
+        full = self.prefix + prefix
+        while True:
+            params = {"list-type": "2", "prefix": full}
+            if limit or self.page_size:
+                params["max-keys"] = str(limit or self.page_size)
+            if token:
+                params["continuation-token"] = token
+            status, _, body = self._request("GET", params=params)
+            if status != 200:
+                raise self._error(status, body, f"목록 {full}")
+            # 목록이 모자라면 pull 이 빠진 파일을 '원격에서 지웠다' 로 읽고 로컬 사본을 지운다.
+            # 그래서 모양이 이상한 응답은 빈 목록이 아니라 실패로 본다.
+            try:
+                root = ET.fromstring(body)
+            except ET.ParseError as e:
+                raise BackendError(f"목록 {full}: 응답을 읽지 못했다 ({e})") from e
+            for el in root.iter():
+                el.tag = el.tag.rsplit("}", 1)[-1]  # namespace 떼기
+            truncated = root.findtext("IsTruncated")
+            if root.tag != "ListBucketResult" or truncated not in ("true", "false"):
+                raise BackendError(f"목록 {full}: ListObjectsV2 응답이 아니다 ({root.tag}, IsTruncated={truncated!r})")
+            for c in root.findall("Contents"):
+                k = c.findtext("Key") or ""
+                etag = (c.findtext("ETag") or "").strip('"')
+                if not k or not etag:
+                    raise BackendError(f"목록 {full}: Key 나 ETag 가 빠진 항목이 있다")
+                if k.startswith(self.prefix):
+                    out[k[len(self.prefix):]] = etag
+            if limit or truncated == "false":
+                return out
+            token = root.findtext("NextContinuationToken")
+            if not token:
+                raise BackendError(f"목록 {full}: 다음 페이지가 있다는데 NextContinuationToken 이 없다")
+
+    def _get_raw(self, full_key: str):
+        status, headers, body = self._request("GET", full_key)
+        if status == 404:
+            return None
+        if status != 200:
+            raise self._error(status, body, f"읽기 {full_key}")
+        return body, self._etag(headers)
+
+    def get(self, key: str):
+        check_key(key)
+        return self._get_raw(self.prefix + key)
+
+    def stat(self, key: str):
+        check_key(key)
+        status, headers, body = self._request("HEAD", self.prefix + key)
+        if status == 404:
+            return None
+        if status != 200:
+            raise self._error(status, body, f"확인 {key}")
+        return self._etag(headers)
+
+    def _put_raw(self, full_key: str, data: bytes, if_match=None, if_none_match=False) -> str:
+        extra = {"Content-Type": "application/octet-stream"}
+        if if_none_match:
+            extra["If-None-Match"] = "*"
+        if if_match is not None:
+            extra["If-Match"] = f'"{if_match}"'
+        status, headers, body = self._request("PUT", full_key, body=data, extra=extra)
+        if status in (200, 201):
+            return self._etag(headers)
+        # 412: 조건 불일치 · 409: 동시에 다른 conditional write 가 진행 중 · 404: If-Match 대상이 없음
+        if status == 412 or (status in (404, 409) and (if_match is not None or if_none_match)):
+            raise PreconditionFailed(full_key)
+        raise self._error(status, body, f"쓰기 {full_key}")
+
+    def put(self, key: str, data: bytes, if_match: str | None = None, if_none_match: bool = False) -> str:
+        check_key(key)
+        return self._put_raw(self.prefix + key, data, if_match=if_match, if_none_match=if_none_match)
+
+    def delete_request(self, key: str, if_match: str | None = None) -> int:
+        """DeleteObject 를 그대로 보낸다 (doctor 가 If-Match 지원을 확인할 때 쓴다). 반환: HTTP status."""
+        check_key(key)
+        extra = {"If-Match": f'"{if_match}"'} if if_match is not None else {}
+        status, _, body = self._request("DELETE", self.prefix + key, extra=extra)
+        if status not in (200, 204, 404, 412):
+            raise self._error(status, body, f"지우기 {key}")
+        return status
+
+    def delete(self, key: str, if_match: str | None = None) -> bool:
+        cur = self.stat(key)
+        if cur is None:
+            return False
+        if if_match is not None and cur != if_match:
+            raise PreconditionFailed(key)
+        status = self.delete_request(key, if_match)
+        if status == 412:
+            raise PreconditionFailed(key)
+        return status != 404
+
+    def versioning(self) -> str:
+        """Enabled | Suspended | Off"""
+        status, _, body = self._request("GET", params={"versioning": ""})
+        if status != 200:
+            raise self._error(status, body, "versioning 확인")
+        root = ET.fromstring(body)
+        for el in root.iter():
+            el.tag = el.tag.rsplit("}", 1)[-1]
+        return root.findtext("Status") or "Off"
+
+
+CRED_KEYS = ("access_key_id", "secret_access_key", "session_token")
+
+
+def env_credentials() -> dict:
+    """HBRNESS_S3_* 환경변수. key id 와 secret 이 둘 다 있을 때만 한 묶음으로 쓴다 — 파일 값과 섞지 않는다."""
+    env = {k: os.environ.get(f"HBRNESS_S3_{k.upper()}", "") for k in CRED_KEYS}
+    if not (env["access_key_id"] and env["secret_access_key"]):
+        return {}
+    return {k: v for k, v in env.items() if v}
+
+
+def load_credentials(path: Path | None) -> dict:
+    """환경변수 묶음이 있으면 그것을, 없으면 credentials.json 을 쓴다. path 가 None 이면 파일은 보지 않는다."""
+    env = env_credentials()
+    if env:
+        return env
+    if path is None or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise BackendError(f"{path} 를 읽지 못했다: {e}")
+    if not isinstance(data, dict):
+        raise BackendError(f"{path} 가 JSON 객체가 아니다")
+    return {k: str(v) for k, v in data.items() if k in CRED_KEYS and v}
+
+
+def make_backend(cfg: dict, creds_path: Path | None = None):
     kind = cfg.get("type")
     if kind == "local":
         if not cfg.get("path"):
             raise BackendError("local backend 에 path 가 없다")
         return LocalBackend(cfg["path"])
+    if kind == "s3":
+        return S3Backend(cfg, load_credentials(creds_path))
     raise BackendError(f"모르는 backend type: {kind!r}")
 
 
@@ -185,16 +455,24 @@ def load_config(path: Path):
     return cfg
 
 
+def credentials_file(config_path: Path) -> Path:
+    return config_path.with_name("credentials.json")
+
+
 def load_backend(path: Path):
     cfg = load_config(path)
-    return make_backend(cfg) if cfg is not None else None
+    return make_backend(cfg, credentials_file(path)) if cfg is not None else None
 
 
 def save_config(path: Path, cfg: dict):
+    """mode 600 으로 쓴다. 자격증명이 잠깐이라도 다른 사용자에게 읽히지 않게 임시 파일부터 600 으로 만든다."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
+    with contextlib.suppress(FileNotFoundError):
+        tmp.unlink()  # 앞서 끊긴 쓰기의 잔재
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
     os.replace(tmp, path)
 
 

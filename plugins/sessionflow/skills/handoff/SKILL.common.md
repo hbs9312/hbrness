@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "현재 워크트리/세션의 in-flight 컨텍스트(편집 중인 파일·마지막 실행 명령·실패한 에러·즉시 다음 한 줄)를 저장소 + 브랜치 단위 핸드오프 파일로 직렬화하고, private state repo 로 여러 PC 사이에 동기화한다. followup(저장소 단위 후속 조치)과 달리 '지금 작업을 다음 세션이 그대로 이어받는 것' 이 목적이며, 브랜치별로 파일이 분리된다. 다른 PC 에서 같은 브랜치를 체크아웃하면 그 핸드오프를 불러올 수 있다(load). 사용자가 'handoff', 'hand off', '인계', '세션 끊김 대비', '이어서 작업', '컨텍스트 저장', 'save session context', 'prepare for next session', 'write HANDOFF.md', '핸드오프', 'handoff 남겨줘', '/handoff' 등을 말하면 트리거. '핸드오프 불러와', '핸드오프 이어받기', '다른 PC 에서 하던 거 이어서', 'handoff load' 처럼 불러오기를 요청하면 load 로 동작. Usage: /handoff [load | -m | -o] [메시지]"
+description: "현재 워크트리/세션의 in-flight 컨텍스트(편집 중인 파일·마지막 실행 명령·실패한 에러·즉시 다음 한 줄)를 저장소 + 브랜치 단위 핸드오프 파일로 직렬화하고, backend(S3 API 저장소)로 여러 PC 사이에 동기화한다. followup(저장소 단위 후속 조치)과 달리 '지금 작업을 다음 세션이 그대로 이어받는 것' 이 목적이며, 브랜치별로 파일이 분리된다. 다른 PC 에서 같은 브랜치를 체크아웃하면 그 핸드오프를 불러올 수 있다(load). 사용자가 'handoff', 'hand off', '인계', '세션 끊김 대비', '이어서 작업', '컨텍스트 저장', 'save session context', 'prepare for next session', 'write HANDOFF.md', '핸드오프', 'handoff 남겨줘', '/handoff' 등을 말하면 트리거. '핸드오프 불러와', '핸드오프 이어받기', '다른 PC 에서 하던 거 이어서', 'handoff load' 처럼 불러오기를 요청하면 load 로 동작. Usage: /handoff [load | -m | -o] [메시지]"
 model: sonnet
 ---
 
@@ -31,7 +31,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 ```
 
 - `SF prepare` — 로컬 state 를 원격과 맞추고(pull), 예전 경로 기준 데이터가 있으면 옮긴 뒤 경로를 `KEY=VALUE` 로 출력한다.
-- `SF sync -m "<메시지>"` — 이 저장소의 변경만 원격에 올린다. 원격은 `backend.json` 이 있으면 backend, 없으면 state repo(commit + push)다.
+- `SF sync -m "<메시지>"` — 이 저장소에서 바뀐 파일만 backend 에 올린다.
 - `SF status` — 이 저장소의 핸드오프(현재 브랜치 + 다른 브랜치)·followup 현황을 짧게 보여준다.
 
 `prepare` 출력에서 쓰는 값:
@@ -42,7 +42,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 | `HANDOFFS_DIR` | 이 저장소의 핸드오프 디렉토리 (브랜치 이름의 `/` 는 하위 디렉토리가 된다) |
 | `BRANCH` | 현재 브랜치. detached HEAD 면 `_detached/<sha>`, git 이 아니면 비어 있고 파일은 `_nogit.md` |
 | `REPO_KEY` | 저장소 키 (예: `github.com/hbs9312/hbrness`). 비면 remote 가 없는 프로젝트 |
-| `SYNC` | `on` 이면 push 까지 된다. `off` 면 이 PC 에만 저장 (`SYNC_NOTE` 에 이유) |
+| `SYNC` | `on` 이면 backend 까지 올라간다. `off` 면 이 PC 에만 저장 (`SYNC_NOTE` 에 이유) |
 | `MEMORY_KEY` | MEMORY.md 경로에 쓰는 키 |
 
 `SYNC=off` 여도 기록은 된다. 사용자에게 `SYNC_NOTE` 를 한 줄로 알리기만 하고 계속한다.
@@ -63,7 +63,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 ## 저장 경로
 
 ```text
-~/.hbrness/state/                       # private state repo 의 clone (PC 마다 하나)
+~/.hbrness/state/                       # backend 의 로컬 캐시 (PC 마다 하나)
 └── <host>/<owner>/<repo>/              # REPO_KEY
     ├── handoffs/
     │   ├── main.md
@@ -91,7 +91,7 @@ remote 가 없는 프로젝트는 `~/.hbrness/state/_local/<경로키>/handoffs/
 
 세션의 거시적 TODO 나 백로그성 항목은 handoff 의 대상이 **아니다** — 그 정보는 `followup` 스킬에 속한다.
 
-비밀 값(env 파일·토큰·자격증명 등)은 절대 기록하지 않는다. state repo 는 원격에 push 된다.
+비밀 값(env 파일·토큰·자격증명 등)은 절대 기록하지 않는다. state 는 원격 backend 에 올라간다.
 
 **다른 PC 에서 읽힌다는 점을 염두에 둔다.** 커밋·push 하지 않은 변경은 다른 PC 에 없다. `Current State` 에 "미커밋 변경 N개 — 이 PC(`{hostname}`)에만 있음" 처럼 적어, 다른 PC 에서 이어받는 세션이 그 사실을 알게 한다.
 
@@ -175,10 +175,9 @@ mkdir -p "$(dirname "<HANDOFF_FILE>")"
 SF sync -m "handoff: <BRANCH>"
 ```
 
-- `SYNC=pushed` — 원격까지 올라갔다.
-- `SYNC=committed-local` — 커밋은 됐지만 push 를 못 했다 (오프라인·충돌). 괄호 안 사유를 보고한다. 다음 sync 때 다시 push 한다.
+- `SYNC=pushed` — backend 까지 올라갔다.
 - `SYNC=nochange` — 올릴 변경이 없었다.
-- `SYNC=failed` — 원격에 닿지 못했다. 괄호 안 사유를 보고한다. 로컬 파일은 그대로 있고 다음 sync 때 다시 올린다.
+- `SYNC=failed` — 원격에 닿지 못했다. 괄호 안 사유를 보고한다. 못 올린 변경은 로컬에 남아 다음 sync 때 다시 올린다.
 - `SYNC=local-only` — 동기화가 꺼진 프로젝트다.
 - `CONFLICT=` 가 있으면 「스크립트」 절에 적은 대로 사용자에게 알린다.
 

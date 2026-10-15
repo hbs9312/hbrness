@@ -1,6 +1,6 @@
 ---
 name: followup
-description: "현재 세션에서 발견했지만 처리하지 못한 후속 조치 항목을, 저장소 단위 followups 디렉토리(항목별 상세 파일 + 생성되는 INDEX.md)에 누적 기록하고, private state repo 로 여러 PC 사이에 동기화한다. handoff(세션 인계)와 달리 '나중에 처리해야 할 일' 의 영속 리스트이며, 워크트리·세션·PC 와 무관하게 같은 저장소(origin remote)면 하나의 디렉토리를 공유한다. 사용자가 'followup', 'follow-up', 'followup 추가', '후속 조치', '나중에 처리할 일', '백로그 추가', '이번 세션 범위 밖', '미뤄둘 것', '/followup' 등을 말하면 트리거. 'followup 목록', '후속 조치 뭐 남았어' 처럼 현황을 물으면 list 로 동작. Usage: /followup [list | -m | -o] [메시지]"
+description: "현재 세션에서 발견했지만 처리하지 못한 후속 조치 항목을, 저장소 단위 followups 디렉토리(항목별 상세 파일 + 생성되는 INDEX.md)에 누적 기록하고, backend(S3 API 저장소)로 여러 PC 사이에 동기화한다. handoff(세션 인계)와 달리 '나중에 처리해야 할 일' 의 영속 리스트이며, 워크트리·세션·PC 와 무관하게 같은 저장소(origin remote)면 하나의 디렉토리를 공유한다. 사용자가 'followup', 'follow-up', 'followup 추가', '후속 조치', '나중에 처리할 일', '백로그 추가', '이번 세션 범위 밖', '미뤄둘 것', '/followup' 등을 말하면 트리거. 'followup 목록', '후속 조치 뭐 남았어' 처럼 현황을 물으면 list 로 동작. Usage: /followup [list | -m | -o] [메시지]"
 model: sonnet
 ---
 
@@ -28,7 +28,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 ```
 
 - `SF prepare` — 로컬 state 를 원격과 맞추고(pull), 예전 경로 기준 데이터가 있으면 옮기고, `INDEX.md` 를 만든 뒤 경로를 `KEY=VALUE` 로 출력한다.
-- `SF sync -m "<메시지>"` — `INDEX.md` 를 다시 만들고(오래된 resolved 정리 포함) 이 저장소의 변경만 원격에 올린다. 원격은 `backend.json` 이 있으면 backend, 없으면 state repo(commit + push)다.
+- `SF sync -m "<메시지>"` — `INDEX.md` 를 다시 만들고(오래된 resolved 정리 포함) 이 저장소에서 바뀐 파일만 backend 에 올린다.
 - `SF status` — 이 저장소의 핸드오프·followup 현황을 짧게 보여준다.
 
 `prepare` 출력에서 쓰는 값:
@@ -38,7 +38,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 | `FOLLOWUPS_DIR` | 항목 파일을 쓰는 디렉토리 |
 | `INDEX_FILE` | 생성된 INDEX.md (읽기 전용으로 취급) |
 | `REPO_KEY` | 저장소 키 (예: `github.com/hbs9312/hbrness`). 비면 remote 가 없는 프로젝트 |
-| `SYNC` | `on` 이면 push 까지 된다. `off` 면 이 PC 에만 저장 (`SYNC_NOTE` 에 이유) |
+| `SYNC` | `on` 이면 backend 까지 올라간다. `off` 면 이 PC 에만 저장 (`SYNC_NOTE` 에 이유) |
 | `MEMORY_KEY` | MEMORY.md 경로에 쓰는 키 |
 | `LEGACY_SINGLE` | 아주 예전 단일 `FOLLOWUPS.md` 를 옮겨 둔 파일. 비어 있지 않으면 Step 2 에서 항목으로 나눈다 |
 
@@ -60,7 +60,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 ## 저장 경로
 
 ```text
-~/.hbrness/state/                       # private state repo 의 clone (PC 마다 하나)
+~/.hbrness/state/                       # backend 의 로컬 캐시 (PC 마다 하나)
 └── <host>/<owner>/<repo>/              # REPO_KEY — origin remote URL 을 정규화한 값
     ├── followups/
     │   ├── INDEX.md                    # 생성물. git 추적 안 함. 직접 고치지 않는다
@@ -123,7 +123,7 @@ refs:                   # 관련 파일·이슈·PR (선택, 리스트)
 
 세션 진행 상태(편집 중인 파일, 마지막 에러 등)는 followup 의 대상이 **아니다** — 그 정보는 `handoff` 스킬에 속한다.
 
-비밀 값(env 파일·토큰·자격증명 등)은 절대 기록하지 않는다. state repo 는 원격에 push 된다.
+비밀 값(env 파일·토큰·자격증명 등)은 절대 기록하지 않는다. state 는 원격 backend 에 올라간다.
 
 ### 2. 준비 — pull + 기존 구조 파악
 
@@ -163,10 +163,9 @@ rm -f "<FOLLOWUPS_DIR>/"*.md
 SF sync -m "followup: <추가·갱신한 슬러그 요약>"
 ```
 
-- `SYNC=pushed` — 원격까지 올라갔다.
-- `SYNC=committed-local` — 커밋은 됐지만 push 를 못 했다 (오프라인·충돌). 괄호 안 사유를 보고한다. 다음 sync 때 다시 push 한다.
+- `SYNC=pushed` — backend 까지 올라갔다.
 - `SYNC=nochange` — 올릴 변경이 없었다.
-- `SYNC=failed` — 원격에 닿지 못했다. 괄호 안 사유를 보고한다. 로컬 파일은 그대로 있고 다음 sync 때 다시 올린다.
+- `SYNC=failed` — 원격에 닿지 못했다. 괄호 안 사유를 보고한다. 못 올린 변경은 로컬에 남아 다음 sync 때 다시 올린다.
 - `SYNC=local-only` — 동기화가 꺼진 프로젝트다.
 - `CONFLICT=` 가 있으면 「스크립트」 절에 적은 대로 사용자에게 알린다.
 - `PRUNED=` 가 있으면 상한을 넘어 지운 resolved 슬러그다.

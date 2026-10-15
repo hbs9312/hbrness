@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """sfstate — sessionflow 의 followup / handoff 를 '경로'가 아닌 '저장소' 기준으로 저장하고,
-여러 PC 사이에 동기화한다.
+Terraform backend 처럼 원격 key-value 저장소(backend)로 여러 PC 사이에 동기화한다.
 
-동기화 방식은 둘 중 하나다. $HBRNESS_HOME/backend.json 이 있으면 backend 를 쓴다.
-  backend     Terraform backend 처럼 원격 key-value 저장소에 두고 로컬은 캐시로 맞춘다 (sfbackend.py).
-  state repo  (예전 방식) private git repo 를 clone 해 두고 commit + push 한다.
+$HBRNESS_HOME/backend.json 이 backend 를 정한다 (sfbackend.py). 없으면 이 PC 에만 저장한다.
+  local   디렉토리 하나를 원격처럼 쓴다 (테스트·오프라인용)
+  s3      S3 API 저장소 (AWS S3·R2·MinIO 등). 자격증명은 $HBRNESS_HOME/credentials.json (mode 600).
 
-저장 위치 ($HBRNESS_STATE_DIR, 기본 ~/.hbrness/state):
+저장 위치 ($HBRNESS_STATE_DIR, 기본 ~/.hbrness/state — 원격의 로컬 캐시):
 
   <repo-key>/followups/<slug>.md      항목 파일. frontmatter 가 진실원이다.
-  <repo-key>/followups/INDEX.md       항목 frontmatter 에서 생성한다 (git 추적 안 함).
+  <repo-key>/followups/INDEX.md       항목 frontmatter 에서 생성한다 (올리지 않는다).
   <repo-key>/followups/_config.json   선택: {"resolved_keep": 10}
   <repo-key>/handoffs/<branch>.md     브랜치별 핸드오프.
-  _local/<path-key>/...               remote 가 없는 프로젝트 (git 추적 안 함, 동기화 안 함).
+  _local/<path-key>/...               remote 가 없는 프로젝트 (동기화 안 함).
+  _conflicts/...                      충돌 때 비켜 둔 이 PC 의 버전 (동기화 안 함).
+  .sfstate/manifest.json              파일마다 마지막으로 맞춘 원격 etag 와 내용 해시.
 
 <repo-key> 는 프로젝트의 origin remote URL 을 정규화한 값이다 (예: github.com/hbs9312/hbrness).
 clone 경로가 PC 마다 달라도 같은 저장소면 같은 키가 나온다.
@@ -23,25 +25,29 @@ PC 로컬 상태라 여기서 다루지 않는다 — 계속 ~/.hbrness/sessionf
 서브커맨드:
   paths       [--dir D]               경로를 KEY=VALUE 로 출력
   prepare     [--dir D]               pull → 레거시 마이그레이션 → INDEX 생성 → paths
-  pull        [--dir D] [--background] state repo 를 원격과 맞춘다 (받기만, 실패해도 exit 0).
+  pull        [--dir D] [--background] 원격에서 바뀐 것만 받는다 (실패해도 exit 0).
                                       --dir: 그 프로젝트의 INDEX 도 다시 만든다.
                                       --background: 바로 돌아오고 뒤에서 돈다 (turn 종료 hook 용).
                                       이미 pull 이 돌고 있으면 건너뛴다. 끝나면 PULL_STAMP 를 갱신한다.
   index       [--dir D] [--prune] [--json]
                                       INDEX.md 를 다시 만든다 (--prune: 오래된 resolved 삭제,
                                       --json: 개수와 INDEX 순서의 항목 목록을 JSON 으로 출력)
-  sync        [--dir D] [-m MSG]      INDEX 생성·정리 → 이 프로젝트 변경 commit → push
+  sync        [--dir D] [-m MSG]      INDEX 생성·정리 → 이 프로젝트에서 바뀐 파일만 올린다
   status      [--dir D] [--no-pull]   이 저장소의 핸드오프·followup 현황
   migrate     [--dir D] [--dry-run]   이 프로젝트의 경로 기준 레거시 데이터를 옮긴다
   migrate-all [--dry-run]             ~/.hbrness/sessionflow/* 전체를 옮긴다
-  init        [--remote URL]          state repo 를 clone 하거나 초기화한다
-              --backend local --path D
-                                      backend.json 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다
+  init        --backend local --path D
+              --backend s3 --bucket B [--endpoint URL] [--prefix P] [--region R]
+                           [--path-style | --virtual-host] [--credentials-stdin]
+                                      backend.json 을 쓰고, 원격과 맞춘 뒤 로컬 전체를 올린다.
+                                      예전 git state repo clone 이 있으면 .git 을 옆으로 치우고 내용을 올린다.
+  doctor                              backend 에 닿는지, conditional write 를 지키는지 확인한다
 
 환경변수:
   HBRNESS_HOME          기본 ~/.hbrness
   HBRNESS_STATE_DIR     기본 $HBRNESS_HOME/state
-  HBRNESS_STATE_REMOTE  init 에 --remote 가 없을 때 쓰는 remote URL
+  HBRNESS_S3_ACCESS_KEY_ID / HBRNESS_S3_SECRET_ACCESS_KEY / HBRNESS_S3_SESSION_TOKEN
+                        s3 자격증명 (credentials.json 보다 먼저)
 """
 from __future__ import annotations
 
@@ -64,19 +70,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sfbackend  # noqa: E402
 
 RESOLVED_KEEP_DEFAULT = 10
-NET_TIMEOUT = 30
 MARKER = ".sfstate-migrated.json"
-GITIGNORE = "_local/\n**/followups/INDEX.md\n.DS_Store\n"
-STATE_README = """# sessionflow state
-
-sessionflow 의 followup / handoff 를 저장소 기준으로 모아 여러 PC 사이에 동기화하는 repo.
-`hbrness` 의 `plugins/sessionflow/scripts/sfstate.py` 가 읽고 쓴다. 직접 고칠 일은 거의 없다.
-
-- `<host>/<owner>/<repo>/followups/<slug>.md` — 후속 조치 항목 (INDEX.md 는 생성물이라 추적 안 함)
-- `<host>/<owner>/<repo>/handoffs/<branch>.md` — 브랜치별 핸드오프
-
-새 PC: `python3 <sessionflow>/scripts/sfstate.py init --remote <이 repo URL>`
-"""
 
 STATUS_ALIASES = {
     "open": "open", "todo": "open",
@@ -115,11 +109,6 @@ def git(args, cwd, timeout=None):
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 
-def last_line(text: str) -> str:
-    lines = [l for l in (text or "").splitlines() if l.strip()]
-    return lines[-1] if lines else ""
-
-
 def now_str() -> str:
     return dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -152,9 +141,7 @@ def pull_guard():
 
 def pull_stamp() -> Path:
     """pull 이 끝날 때마다 갱신하는 파일. 표시 쪽(statusline mod 등)이 mtime 으로 갱신 시점을 안다."""
-    if backend_config_file().exists():
-        return state_root() / sfbackend.META_DIR / "pulled"
-    return state_root() / ".git" / "sfstate-pulled"
+    return state_root() / sfbackend.META_DIR / "pulled"
 
 
 @contextlib.contextmanager
@@ -203,15 +190,6 @@ def valid_branch(name: str) -> bool:
     return all(seg and seg not in (".", "..") for seg in name.split("/"))
 
 
-def state_repo_status() -> str:
-    """ok | absent | no-remote"""
-    root = state_root()
-    if not (root / ".git").exists():
-        return "absent"
-    code, url, _ = git(["remote", "get-url", "origin"], root)
-    return "ok" if code == 0 and url else "no-remote"
-
-
 def backend_config_file() -> Path:
     return hbrness_home() / "backend.json"
 
@@ -231,7 +209,7 @@ def backend_status() -> str:
 
 
 def sync_available() -> bool:
-    return backend_config_file().exists() or state_repo_status() == "ok"
+    return backend_config_file().exists()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -293,20 +271,16 @@ class Ctx:
             return "remote 가 없는 프로젝트라 이 PC 에만 저장한다"
         if backend_config_file().exists():
             return ""
-        st = state_repo_status()
-        if st == "absent":
-            return ("동기화 설정이 없다 — `sfstate.py init --backend local --path <dir>` 로 backend 를 정하거나 "
-                    f"`sfstate.py init --remote <url>` 로 {tilde(state_root())} 에 state repo 를 만든다")
-        if st == "no-remote":
-            return f"{tilde(state_root())} 에 origin remote 가 없다"
-        return ""
+        if (state_root() / ".git").exists():
+            return ("git state repo 동기화는 sessionflow 1.0 에서 없어졌다 — `sfstate.py init --backend s3 …` 로 "
+                    "backend 를 정하면 지금 내용이 그대로 올라간다")
+        return "backend 가 없다 — `sfstate.py init --backend s3 …` (또는 local) 로 정한다"
 
 
 def print_paths(ctx: Ctx):
     legacy_single = ctx.followups_dir / "_legacy-FOLLOWUPS.md"
     rows = [
         ("STATE_ROOT", state_root()),
-        ("STATE_REPO", state_repo_status()),
         ("BACKEND", backend_status()),
         ("REPO_KEY", ctx.repo_key or ""),
         ("SYNC", ctx.sync),
@@ -494,59 +468,21 @@ def build_index(ctx: Ctx, prune=False):
 # 동기화
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _abort_rebase(root: Path):
-    if (root / ".git" / "rebase-merge").exists() or (root / ".git" / "rebase-apply").exists():
-        git(["rebase", "--abort"], root)
-
-
 def _pull():
     """반환: (ok|off|failed, 설명, conflicts[(상대경로, 비켜 둔 경로)])"""
     try:
         be = load_backend()
     except sfbackend.BackendError as e:
         return "failed", str(e), []
-    if be:
-        try:
-            rep = sfbackend.Cache(state_root(), be).pull()
-        except sfbackend.PartialSync as e:
-            return "failed", str(e), e.report["conflicts"]
-        except (sfbackend.BackendError, OSError) as e:
-            return "failed", str(e), []
-        return "ok", "", rep["conflicts"]
-    st = state_repo_status()
-    if st != "ok":
-        return "off", f"state repo {st}", []
-    root = state_root()
-    c, _, _ = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
-    if c != 0:
-        return "ok", "upstream 없음 (아직 push 한 적 없음)", []
-    c, _, err = git(["pull", "--rebase", "--autostash", "-q"], root, timeout=NET_TIMEOUT)
-    if c != 0:
-        _abort_rebase(root)
-        return "failed", last_line(err) or f"exit {c}", []
-    return "ok", "", []
-
-
-def _push(root: Path):
-    """반환: (pushed|nochange|committed-local, 설명)"""
-    if git(["rev-parse", "-q", "--verify", "HEAD"], root)[0] != 0:
-        return "nochange", ""
-    c, _, _ = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
-    if c != 0:
-        c, _, err = git(["push", "-q", "-u", "origin", "HEAD"], root, timeout=NET_TIMEOUT)
-        return ("pushed", "") if c == 0 else ("committed-local", last_line(err))
-    c, ahead, _ = git(["rev-list", "--count", "@{u}..HEAD"], root)
-    if c == 0 and ahead == "0":
-        return "nochange", ""
-    c, _, err = git(["push", "-q"], root, timeout=NET_TIMEOUT)
-    if c == 0:
-        return "pushed", ""
-    c, _, perr = git(["pull", "--rebase", "--autostash", "-q"], root, timeout=NET_TIMEOUT)
-    if c != 0:
-        _abort_rebase(root)
-        return "committed-local", f"원격과 충돌해 rebase 를 되돌렸다 ({last_line(perr)}) — {tilde(root)} 에서 직접 정리"
-    c, _, err = git(["push", "-q"], root, timeout=NET_TIMEOUT)
-    return ("pushed", "") if c == 0 else ("committed-local", last_line(err))
+    if not be:
+        return "off", "backend 없음", []
+    try:
+        rep = sfbackend.Cache(state_root(), be).pull()
+    except sfbackend.PartialSync as e:
+        return "failed", str(e), e.report["conflicts"]
+    except (sfbackend.BackendError, OSError) as e:
+        return "failed", str(e), []
+    return "ok", "", rep["conflicts"]
 
 
 def _sync_backend(ctx: Ctx, be):
@@ -572,7 +508,7 @@ def _sync_backend(ctx: Ctx, be):
 
 
 def _sync(ctx: Ctx, message: str):
-    """반환: (pushed|nochange|committed-local|local-only|failed, 설명, pruned, conflicts)"""
+    """반환: (pushed|nochange|local-only|failed, 설명, pruned, conflicts). message 는 지금은 쓰지 않는다."""
     _, pruned = build_index(ctx, prune=True)
     if ctx.sync != "on":
         return "local-only", ctx.sync_reason(), pruned, []
@@ -580,24 +516,8 @@ def _sync(ctx: Ctx, message: str):
         be = load_backend()
     except sfbackend.BackendError as e:
         return "failed", str(e), pruned, []
-    if be:
-        st, detail, conflicts = _sync_backend(ctx, be)
-        return st, detail, pruned, conflicts
-    root = state_root()
-    rel = str(ctx.project_dir.relative_to(root))
-    tracked = git(["ls-files", "--", rel], root)[1]
-    if ctx.project_dir.exists() or tracked:
-        c, _, err = git(["add", "-A", "--", rel], root)
-        if c != 0:
-            return "failed", last_line(err), pruned, []
-    c, _, _ = git(["diff", "--cached", "--quiet", "--", rel], root)
-    if c == 1:
-        msg = f"{ctx.repo_key}: {message or 'update'} ({socket.gethostname()})"
-        c, _, err = git(["commit", "-q", "-m", msg, "--", rel], root)
-        if c != 0:
-            return "failed", last_line(err), pruned, []
-    status, detail = _push(root)
-    return status, detail, pruned, []
+    st, detail, conflicts = _sync_backend(ctx, be)
+    return st, detail, pruned, conflicts
 
 
 def print_conflicts(conflicts):
@@ -912,25 +832,17 @@ def cmd_sync(a):
 
 
 def _when(path: Path, cache=None) -> str:
-    """핸드오프 헤더의 Generated 를 먼저 쓴다 — 커밋 시각은 옮기거나 다시 올린 시각일 수 있다."""
+    """핸드오프 헤더의 Generated 를 먼저 쓴다 — 파일 시각은 옮기거나 다시 받은 시각일 수 있다."""
     try:
         m = re.search(r"^>\s*Generated:\s*(.+)$", path.read_text(encoding="utf-8", errors="replace"), re.M)
         if m:
             return m.group(1).strip()
     except OSError:
         pass
-    root = state_root()
-    if cache is not None:
-        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-        return mtime if cache.synced(path.relative_to(root).as_posix()) else mtime + " (미동기화)"
-    try:
-        rel = str(path.relative_to(root))
-        c, out, _ = git(["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M", "--", rel], root)
-        if c == 0 and out:
-            return out
-    except ValueError:
-        pass
-    return dt.datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M") + " (미동기화)"
+    mtime = dt.datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+    if cache is not None and cache.synced(path.relative_to(state_root()).as_posix()):
+        return mtime
+    return mtime + " (미동기화)"
 
 
 def cmd_status(a):
@@ -1023,103 +935,163 @@ def cmd_migrate_all(a):
                 print_conflicts(r[3])
 
 
-def _ensure_scaffold(root: Path):
-    changed = False
-    gi = root / ".gitignore"
-    if not gi.exists():
-        gi.write_text(GITIGNORE, encoding="utf-8")
-        changed = True
-    rd = root / "README.md"
-    if not rd.exists():
-        rd.write_text(STATE_README, encoding="utf-8")
-        changed = True
-    return changed
+def _archive_git_clone(root: Path):
+    """예전 git state repo clone 이면 .git·.gitignore·README.md 를 옆 디렉토리로 치운다.
+    항목 파일은 그대로 두고 init 이 backend 로 올린다. 반환: 옮긴 디렉토리 또는 None."""
+    if not (root / ".git").exists():
+        return None
+    dst = root.with_name(f"{root.name}.git-archive-{dt.datetime.now():%Y%m%d%H%M%S}")
+    dst.mkdir(parents=True)
+    for name in (".git", ".gitignore", "README.md"):
+        if os.path.lexists(root / name):
+            os.replace(root / name, dst / name)
+    return dst
 
 
-def cmd_init_backend(a):
-    """backend.json 을 쓰고 원격과 맞춘 뒤 로컬 전체를 올린다. 이미 쓰던 state 디렉토리(예전 state repo
-    clone 포함)가 있으면 그 내용이 그대로 올라간다 — 최상위 .git·README 같은 것은 동기화 대상이 아니다."""
-    cfg = {"type": a.backend}
+def _read_credentials_stdin() -> dict:
+    """stdin 으로 자격증명을 받는다 — 명령줄·shell history 에 남기지 않으려고.
+    JSON 객체 또는 두 줄(access key id, secret access key[, session token])."""
+    text = sys.stdin.read().strip()
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError as e:
+            raise sfbackend.BackendError(f"stdin 자격증명 JSON 을 읽지 못했다: {e}")
+        return {k: str(v) for k, v in data.items() if k in ("access_key_id", "secret_access_key", "session_token") and v}
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if len(lines) < 2:
+        raise sfbackend.BackendError("stdin 에 access key id 와 secret access key 를 한 줄씩 넣는다")
+    creds = {"access_key_id": lines[0], "secret_access_key": lines[1]}
+    if len(lines) > 2:
+        creds["session_token"] = lines[2]
+    return creds
+
+
+def _init_config(a):
+    """반환: (cfg, backend, 저장할 자격증명 또는 None)"""
     if a.backend == "local":
         if not a.path:
-            print("init: --backend local 에는 --path <dir> 가 필요하다", file=sys.stderr)
-            sys.exit(1)
-        cfg["path"] = str(Path(a.path).expanduser().resolve())
+            raise sfbackend.BackendError("--backend local 에는 --path <dir> 가 필요하다")
+        cfg = {"type": "local", "path": str(Path(a.path).expanduser().resolve())}
+        return cfg, sfbackend.make_backend(cfg), None
+    if not a.bucket:
+        raise sfbackend.BackendError("--backend s3 에는 --bucket 이 필요하다")
+    cfg = {"type": "s3", "bucket": a.bucket}
+    for k in ("endpoint", "prefix", "region"):
+        if getattr(a, k):
+            cfg[k] = getattr(a, k)
+    if a.path_style is not None:
+        cfg["path_style"] = a.path_style
+    # stdin 으로 받은 자격증명은 예전 것을 통째로 바꾼다 — 예전 session_token 이 섞이면 서명이 틀린다
+    new_creds = _read_credentials_stdin() if a.credentials_stdin else None
+    env = sfbackend.env_credentials()
+    if new_creds and env:
+        print("init: HBRNESS_S3_* 환경변수가 있으면 credentials.json 보다 그쪽을 먼저 쓴다 — "
+              "stdin 자격증명은 저장만 하고 지금은 환경변수로 맞춘다", file=sys.stderr)
+    # 이후 명령(load_backend)과 같은 순서로 고른다: 환경변수 묶음 → stdin(곧 저장될 파일) → 저장된 파일
+    creds = env or new_creds or sfbackend.load_credentials(sfbackend.credentials_file(backend_config_file()))
+    return cfg, sfbackend.S3Backend(cfg, creds), new_creds
+
+
+def cmd_init(a):
+    """backend.json 을 쓰고 원격과 맞춘 뒤 로컬 전체를 올린다. 이미 쓰던 state 디렉토리(예전 git state repo
+    clone 포함)가 있으면 그 내용이 그대로 올라간다."""
     try:
-        be = sfbackend.make_backend(cfg)
+        cfg, be, new_creds = _init_config(a)
         be.ensure()
     except (sfbackend.BackendError, OSError) as e:
         print(f"init: {e}", file=sys.stderr)
         sys.exit(1)
     root = state_root()
     with state_lock():
+        if new_creds:
+            sfbackend.save_config(sfbackend.credentials_file(backend_config_file()), new_creds)
         sfbackend.save_config(backend_config_file(), cfg)
         root.mkdir(parents=True, exist_ok=True)
-        cache = sfbackend.Cache(root, be)
+        archived = _archive_git_clone(root)
         pulled = None
         try:
+            cache = sfbackend.Cache(root, be)
             pulled = cache.pull()
             pushed = cache.push("")
         except (sfbackend.BackendError, OSError) as e:
             print(f"BACKEND={be.describe()}")
-            print(f"INIT=failed ({e})")
+            print(f"INIT=failed ({e}) — 다시 init 하면 이어서 맞춘다")
             print_conflicts((pulled["conflicts"] if pulled else [])
                             + (e.report["conflicts"] if isinstance(e, sfbackend.PartialSync) else []))
             sys.exit(1)
     print(f"STATE_ROOT={root}")
     print(f"BACKEND={be.describe()}")
+    if archived:
+        print(f"GIT_ARCHIVE={archived} (예전 state repo 의 .git — 확인 뒤 지워도 된다)")
     print(f"PULL=ok (받음 {len(pulled['got'])} · 지움 {len(pulled['removed'])})")
     print(f"PUSH=ok (올림 {len(pushed['put'])} · 지움 {len(pushed['deleted'])})")
     print_conflicts(pulled["conflicts"] + pushed["conflicts"])
 
 
-def cmd_init(a):
-    if a.backend:
-        return cmd_init_backend(a)
-    root = state_root()
-    remote = a.remote or os.environ.get("HBRNESS_STATE_REMOTE", "")
-    with state_lock():
-        if (root / ".git").exists():
-            c, cur, _ = git(["remote", "get-url", "origin"], root)
-            if c != 0 and remote:
-                git(["remote", "add", "origin", remote], root)
-            elif remote and cur != remote:
-                print(f"origin 이 이미 {cur} 로 잡혀 있어 그대로 둔다", file=sys.stderr)
+def cmd_doctor(a):
+    """backend 에 닿는지, conditional write 를 지키는지 확인한다. 실패가 있으면 exit 1."""
+    try:
+        be = load_backend()
+    except sfbackend.BackendError as e:
+        print(f"BACKEND=error ({e})")
+        sys.exit(1)
+    if not be:
+        print("BACKEND=none")
+        print(f"  {Ctx(None).sync_reason() or 'backend.json 이 없다'}")
+        sys.exit(1)
+    print(f"BACKEND={be.describe()}")
+    failed = False
+    try:
+        print(f"STORE=ok ({be.identity().rsplit('#', 1)[-1]})")
+    except sfbackend.BackendError as e:
+        print(f"STORE=failed ({e})")
+        sys.exit(1)
+
+    key = f".doctor/{socket.gethostname().split('.')[0] or 'host'}-{os.getpid()}"
+    try:
+        e1 = be.put(key, b"1", if_none_match=True)
+        try:
+            be.put(key, b"2", if_none_match=True)
+            print("IF_NONE_MATCH=failed (있는 object 를 덮어썼다 — 새 파일끼리 충돌을 막지 못한다)")
+            failed = True
+        except sfbackend.PreconditionFailed:
+            print("IF_NONE_MATCH=ok")
+        e1 = be.stat(key) or e1
+        try:
+            be.put(key, b"3", if_match="0" * 32)
+            print("IF_MATCH=failed (etag 가 달라도 덮어썼다 — 같은 파일을 두 PC 가 고치면 한쪽이 사라진다)")
+            failed = True
+        except sfbackend.PreconditionFailed:
+            print("IF_MATCH=ok")
+        e2 = be.put(key, b"4", if_match=be.stat(key))
+        if hasattr(be, "delete_request"):
+            status = be.delete_request(key, if_match=e1 if e1 != e2 else "0" * 32)
+            if status == 412:
+                print("DELETE_IF_MATCH=ok")
+            else:
+                print("DELETE_IF_MATCH=unsupported (저장소가 무시한다 — 지우기 직전에 HEAD 로 etag 를 확인해서 "
+                      "경합 창이 아주 짧게 남는다)")
         else:
-            if not remote:
-                print("init: --remote <state repo URL> 가 필요하다 (또는 HBRNESS_STATE_REMOTE)", file=sys.stderr)
-                sys.exit(1)
-            aside = None
-            if root.exists() and any(root.iterdir()):
-                aside = root.with_name(f"{root.name}.pre-init-{dt.datetime.now():%Y%m%d%H%M%S}")
-                root.rename(aside)
-            root.parent.mkdir(parents=True, exist_ok=True)
-            c, _, err = git(["clone", "-q", remote, str(root)], root.parent, timeout=180)
-            if c != 0:
-                if aside:
-                    aside.rename(root)
-                print(f"init: clone 실패 — {last_line(err)}", file=sys.stderr)
-                sys.exit(1)
-            if aside:
-                for f in aside.rglob("*"):
-                    dst = root / f.relative_to(aside)
-                    if f.is_file() and not dst.exists():
-                        dst.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(f, dst)
-                print(f"기존 {tilde(root)} 내용을 {tilde(aside)} 로 옮기고, 없던 파일만 다시 복사했다")
-        if _ensure_scaffold(root):
-            git(["add", ".gitignore", "README.md"], root)
-            git(["commit", "-q", "-m", "init sessionflow state repo"], root)
-        git(["add", "-A"], root)
-        if git(["diff", "--cached", "--quiet"], root)[0] == 1:
-            git(["commit", "-q", "-m", f"import local state ({socket.gethostname()})"], root)
-        if git(["rev-parse", "-q", "--verify", "HEAD"], root)[0] == 0:
-            st, detail = _push(root)
-        else:
-            st, detail = "nochange", ""
-    print(f"STATE_ROOT={root}")
-    print(f"STATE_REPO={state_repo_status()}")
-    print(f"PUSH={st}" + (f" ({detail})" if detail else ""))
+            try:
+                be.delete(key, if_match="0" * 32)
+                print("DELETE_IF_MATCH=failed")
+                failed = True
+            except sfbackend.PreconditionFailed:
+                print("DELETE_IF_MATCH=ok")
+        if hasattr(be, "versioning"):
+            v = be.versioning()
+            print(f"VERSIONING={v}" + ("" if v == "Enabled" else
+                  " (WARN: 지운 파일·덮어쓴 버전을 되살릴 수 없다 — bucket versioning 을 켜는 게 좋다)"))
+    except sfbackend.BackendError as e:
+        print(f"PROBE=failed ({e})")
+        failed = True
+    finally:
+        try:
+            be.delete(key)
+        except (sfbackend.BackendError, OSError):
+            pass
+    sys.exit(1 if failed else 0)
 
 
 def main(argv=None):
@@ -1152,10 +1124,19 @@ def main(argv=None):
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(fn=cmd_migrate_all)
     sp = sub.add_parser("init")
-    sp.add_argument("--remote", default="")
-    sp.add_argument("--backend", choices=["local"], default=None)
-    sp.add_argument("--path", default="", help="--backend local 이 원격으로 쓸 디렉토리")
+    sp.add_argument("--backend", choices=["local", "s3"], required=True)
+    sp.add_argument("--path", default="", help="local: 원격으로 쓸 디렉토리")
+    sp.add_argument("--bucket", default="", help="s3: bucket")
+    sp.add_argument("--endpoint", default="", help="s3: AWS 가 아니면 endpoint URL (R2·MinIO 등)")
+    sp.add_argument("--prefix", default="", help="s3: bucket 안에서 쓸 prefix")
+    sp.add_argument("--region", default="", help="s3: region (R2 는 auto, 기본 us-east-1)")
+    g = sp.add_mutually_exclusive_group()
+    g.add_argument("--path-style", dest="path_style", action="store_true", default=None)
+    g.add_argument("--virtual-host", dest="path_style", action="store_false")
+    sp.add_argument("--credentials-stdin", action="store_true",
+                    help="s3: 자격증명을 stdin 으로 받아 credentials.json(mode 600)에 저장한다")
     sp.set_defaults(fn=cmd_init)
+    sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
 
     a = p.parse_args(argv)
     a.fn(a)
