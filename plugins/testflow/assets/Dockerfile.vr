@@ -1,0 +1,16 @@
+# testflow visual regression 이미지.
+# 공식 Playwright 이미지 + 한글·이모지 폰트. 기준 이미지를 만들 때와 비교할 때 같은 이미지를 써야 한다.
+# PW_VERSION 은 프로젝트의 @playwright/test 버전과 같아야 이미지 안의 브라우저 빌드가 맞는다.
+ARG PW_VERSION
+ARG PW_DISTRO=noble
+FROM mcr.microsoft.com/playwright:v${PW_VERSION}-${PW_DISTRO}
+
+# 폰트는 빌드할 때 한 번만 넣는다. 실행할 때마다 apt-get 하면 패키지 버전이 바뀌어 픽셀이 달라질 수 있다.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends fonts-noto-cjk fonts-noto-color-emoji \
+ && fc-cache -f \
+ && rm -rf /var/lib/apt/lists/*
+
+# 호스트(macOS)의 node_modules 를 가리는 named volume 의 마운트 지점
+RUN mkdir -p /work/node_modules
+WORKDIR /work

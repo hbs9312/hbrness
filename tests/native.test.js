@@ -88,7 +88,7 @@ test('--no-hooks removes both hook layouts, including on reinstall', (t) => {
 
 test('built native workflows contain the correct caller and install without unresolved paths', (t) => {
   fixture(t);
-  for (const plugin of ['agentbus', 'dbflow', 'ghflow', 'sessionflow', 'xreview']) {
+  for (const plugin of ['agentbus', 'dbflow', 'ghflow', 'sessionflow', 'testflow', 'xreview']) {
     const plan = installer.planInstall({ harness: 'grok', plugin });
     assert.equal(installer.applyPlan(plan)[0].status, 'installed');
   }

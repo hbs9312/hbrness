@@ -1,0 +1,8 @@
+{
+  "name": "testflow",
+  "version": "0.1.0",
+  "description": "사용자의 화면·마우스·키보드를 점유하지 않고 UI 를 확인하는 테스트 도구 모음. ui-check 는 헤드리스 브라우저로 웹 화면을 캡처·탐색하고, Playwright MCP 를 헤드리스로 설정하며, Docker 컨테이너에서 visual regression 기준 이미지를 만들고 비교해 macOS·CI 렌더링 차이를 없앤다.",
+  "author": {
+    "name": "hbs9312"
+  }
+}
