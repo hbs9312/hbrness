@@ -1,10 +1,10 @@
 # hbrness 플러그인 사용 플로우 — 실무 가이드
 
-> 이 문서는 hbrness 5개 플러그인 (ghflow / xreview / dbflow / sessionflow / agentbus) 을 **실제 프로젝트에서 사용하는 순서**를 시나리오별로 정리합니다.
+> 이 문서는 hbrness 6개 플러그인 (ghflow / xreview / dbflow / testflow / sessionflow / agentbus) 을 **실제 프로젝트에서 사용하는 순서**를 시나리오별로 정리합니다.
 >
 > 각 명령은 Claude Code 세션에서 `/plugin:skill` 형태로 실행합니다.
 
-> **범위 안내** — 명세 생성(specflow), 코드 생성(frontflow / backflow), 기획 분석(meeting-prep) 플러그인은 제거되었습니다. hbrness 는 이제 **이슈/PR 워크플로우 · 교차 코드리뷰 · E2E DB 검증 · 세션 관리**를 담당하고, 기획·명세·구현 자체는 hbrness 밖(직접 작성 또는 다른 도구)에서 진행합니다.
+> **범위 안내** — 명세 생성(specflow), 코드 생성(frontflow / backflow), 기획 분석(meeting-prep) 플러그인은 제거되었습니다. hbrness 는 이제 **이슈/PR 워크플로우 · 교차 코드리뷰 · E2E DB 검증 · 헤드리스 UI 확인 · 세션 관리**를 담당하고, 기획·명세·구현 자체는 hbrness 밖(직접 작성 또는 다른 도구)에서 진행합니다.
 
 ---
 
@@ -30,6 +30,16 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 ```
 /phase-loop <자연어 구현 계획>             ← 구현 → 리뷰 → 커밋 → push → PR → 핸드오프를
                                              페이즈마다 반복 (Phase 2~4 를 통째로 자동화)
+```
+
+구현 중 화면 확인은 testflow 로 한다. 브라우저를 헤드리스·컨테이너로만 띄워서 사용자의 화면·마우스를 건드리지 않는다.
+
+```
+/testflow:ui-check http://localhost:3000   ← 헤드리스로 화면을 찍어 확인 (모바일·다크모드 옵션)
+/testflow:ui-check vr test                 ← Docker 컨테이너에서 visual regression 비교
+/testflow:ui-check vr update               ← 의도한 화면 변경이면 기준 이미지(*-linux.png) 갱신
+/testflow:ui-check setup-mcp               ← Playwright MCP 를 --headless 로 설정 (새 세션부터 적용)
+/testflow:ui-check check                   ← Playwright·Docker·MCP 설정 점검
 ```
 
 ### Phase 3: E2E DB 검증 (dbflow)
@@ -208,8 +218,8 @@ skill 에 `model: sonnet` 이 지정된 기계적 작업은 자동으로 Sonnet 
 
 | 모델 | 대상 skill | 비율 |
 |---|---|---|
-| **Sonnet** (자동) | ghflow 전체(commit 포함), agentbus 전체, xreview 전체, dbflow (init~diff), sessionflow (handoff/followup/log 계열) | 32/37 (86%) |
-| **Opus** (세션 기본) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/37 (14%) |
+| **Sonnet** (자동) | ghflow 전체(commit 포함), agentbus 전체, xreview 전체, dbflow (init~diff), sessionflow (handoff/followup/log 계열) | 32/39 (82%) |
+| **Opus** (세션 기본) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` / `relay`, `testflow:ui-check` | 7/39 (18%) |
 
 ---
 
@@ -220,6 +230,8 @@ ghflow (이슈·브랜치·Draft PR)
      │
      ▼
 구현 (hbrness 범위 밖)
+     │
+     ├──────────────► testflow (헤드리스 UI 확인 · Docker visual regression)
      │
      ├──────────────► dbflow (E2E DB 검증)
      │                   │
@@ -246,3 +258,4 @@ agentbus ───── 세션 간 통신 (파이프라인 무관)
 4. **커밋 의도는 코드 밖에 남긴다** — `chronicle` 이 diff 가 답 못 하는 "왜"를 보존
 5. **긴 작업은 페이즈로 끊는다** — 컨텍스트 누적으로 인한 품질 저하를 `phase-run` / `phase-loop` 로 방지
 6. **기계적 작업은 Sonnet** — `model: sonnet` frontmatter 로 자동 비용 최적화
+7. **UI 확인은 사용자 화면 밖에서** — testflow 는 브라우저를 헤드리스·컨테이너로만 띄운다. 기준 이미지는 항상 같은 Docker 이미지에서 만들고 비교한다

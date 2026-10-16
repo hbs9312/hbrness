@@ -3,8 +3,8 @@
 > Compact version of `USAGE_FLOW.md`. Both files must be updated together.
 > Human-readable version: `docs/USAGE_FLOW.md`
 
-> **Scope**: 5 plugins — ghflow / xreview / dbflow / sessionflow / agentbus.
-> Spec generation (specflow), code generation (frontflow / backflow), and planning intake (meeting-prep) were removed. Planning, specs, and implementation live outside hbrness; hbrness handles issue/PR workflow, cross-model review, E2E DB verification, and session management.
+> **Scope**: 6 plugins — ghflow / xreview / dbflow / testflow / sessionflow / agentbus.
+> Spec generation (specflow), code generation (frontflow / backflow), and planning intake (meeting-prep) were removed. Planning, specs, and implementation live outside hbrness; hbrness handles issue/PR workflow, cross-model review, E2E DB verification, headless UI checks, and session management.
 
 ---
 
@@ -26,6 +26,15 @@ ghflow:draft-pr           → branch + empty commit + draft PR + issue link
 Outside hbrness. Write the code directly or use another tool.
 
 For long runs, wrap with `sessionflow:phase-loop` (see Cross-cutting) — it automates P2→P4 per PR unit.
+
+UI checks during P2 (testflow — headless/container only, never the user's screen):
+
+```
+testflow:ui-check  <url>                   → headless screenshot → Read  [--device, --color-scheme dark, --wait-for]
+testflow:ui-check  vr test|update          → Playwright visual regression in Docker (baselines *-linux.png)
+testflow:ui-check  setup-mcp               → Playwright MCP with --headless --isolated (applies from next session)
+testflow:ui-check  check                   → Playwright / Docker / MCP config preflight
+```
 
 ### P3: E2E DB (dbflow — after backend work lands)
 
@@ -127,6 +136,7 @@ Short messages go straight to the prompt; long or structured payloads land in `~
 | Code archaeology | P4 `chronicle-lookup` | everything else |
 | Long unattended run | `phase-loop <plan>` (wraps P2→P4) | — |
 | Parallel front/back sessions | `agent-register` per session → `agent-send` to sync | — |
+| UI change check | P2 `testflow:ui-check <url>` → (`vr test`) → P4 | — |
 
 ---
 
@@ -137,6 +147,7 @@ ghflow (issue / branch / draft PR)
      │
 implementation (outside hbrness)
      │
+     ├──────────► testflow (headless UI check, Docker VR)
      ├──────────► dbflow (E2E, after backend)
      │               └── gen-scenarios ← QA spec (specs/)
      ▼
@@ -160,8 +171,8 @@ Key cross-plugin data flows:
 
 | Model | Skills | Ratio |
 |---|---|---|
-| **Sonnet** (auto, via frontmatter) | `ghflow` all (incl. `commit`), `agentbus` all, `xreview` all, `dbflow` (init~diff), `sessionflow` handoff/followup/log family | 32/37 (86%) |
-| **Opus** (session default) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` | 5/37 (14%) |
+| **Sonnet** (auto, via frontmatter) | `ghflow` all (incl. `commit`), `agentbus` all, `xreview` all, `dbflow` (init~diff), `sessionflow` handoff/followup/log family | 32/39 (82%) |
+| **Opus** (session default) | `dbflow:gen-scenarios` / `dbflow:run` / `dbflow:validate-scenarios`, `sessionflow:phase-run` / `phase-loop` / `relay`, `testflow:ui-check` | 7/39 (18%) |
 
 ---
 
@@ -173,3 +184,4 @@ Key cross-plugin data flows:
 4. **Commit intent lives outside the diff** — `chronicle` preserves the "why"
 5. **Break long work into phases** — `phase-run` / `phase-loop` prevent context-accumulation quality decay
 6. **Mechanical work uses Sonnet** — `model: sonnet` frontmatter
+7. **UI checks stay off the user's screen** — testflow launches browsers headless or in containers only; VR baselines are created and compared in the same Docker image

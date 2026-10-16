@@ -3,7 +3,7 @@
 > Load this file for phase overview. Read `P{n}.md` for detail when entering that phase.
 > Monolithic version: `docs/USAGE_FLOW_AGENT.md`
 >
-> Scope: 5 plugins — ghflow / xreview / dbflow / sessionflow / agentbus.
+> Scope: 6 plugins — ghflow / xreview / dbflow / testflow / sessionflow / agentbus.
 > Planning, spec generation, and code generation are **not** part of hbrness; `specs/` is human-owned input.
 
 ## Phase Pipeline
@@ -20,6 +20,7 @@
 | Area | File | Summary |
 |---|---|---|
 | Session management (sessionflow) | [SESSION.md](SESSION.md) | `handoff` / `followup` / `phase-run` / `phase-loop` — preserve & resume context across sessions; `phase-loop` wraps P2→P4 and ships each phase as a PR |
+| UI checks (testflow) | [TESTFLOW.md](TESTFLOW.md) | `ui-check` — headless screenshots/exploration and Docker visual regression without touching the user's screen |
 | Agent messaging (agentbus) | [AGENTBUS.md](AGENTBUS.md) | alias-based fire-and-forget messaging between tmux sessions (claude/codex/shell) |
 
 ## Scenarios
@@ -32,6 +33,7 @@
 | Archaeology | P4(chronicle-lookup) |
 | Long unattended run | `phase-loop <plan>` — wraps P2→P4 |
 | Parallel sessions | `agent-register` per session → `agent-send` to sync |
+| UI change check | P2 → `testflow:ui-check <url>` (→ `vr test`) → P4 |
 
 ## Key Rules
 
@@ -40,4 +42,5 @@
 3. dbflow safety invariants are hardcoded (sandbox naming, pg_dump only, confirm)
 4. `chronicle` preserves the "why" that the diff cannot
 5. Break long work into phases (`phase-run` / `phase-loop`) to avoid context decay
-6. Sonnet for mechanical skills (86%), Opus for judgment skills (14%)
+6. Sonnet for mechanical skills (82%), Opus for judgment skills (18%)
+7. UI checks never use the user's screen — testflow runs browsers headless or in Docker

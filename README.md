@@ -12,6 +12,7 @@ Multi-harness AI coding plugin repository. Common sources build into Claude Code
 | Plugin | Version | Skills | Description |
 |--------|---------|--------|-------------|
 | dbflow | 0.1.2 | 12 | Sandbox E2E DB scenario testing |
+| testflow | 0.1.0 | 1 | Headless UI checks & Docker visual regression |
 | ghflow | 0.5.3 | 10 | GitHub issue/PR/review workflow |
 | sessionflow | 0.12.0 | 6 | Session handoff, followup backlog & phase loop |
 | agentbus | 0.2.0 | 5 | Cross-agent messaging over tmux |
@@ -57,7 +58,7 @@ node bin/hbrness.js doctor devin
 ```
 
 Both use `/<plugin>:<skill>`, for example `/ghflow:create-pr`,
-`/sessionflow:handoff`, and `/xreview:status`. Each gets 36 skills across the five
+`/sessionflow:handoff`, and `/xreview:status`. Each gets 37 skills across the six
 plugins. `ghflow:pick-issue` and `ghflow:clear-issue` remain Claude-only because
 they manage Claude session memory. Skill-level Claude model pins and tool
 auto-approval lists are omitted; the current session's model and permissions apply.
