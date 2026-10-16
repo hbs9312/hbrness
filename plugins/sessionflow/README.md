@@ -6,7 +6,7 @@
 
 | 스킬 | 트리거 | 역할 | 범위 |
 |---|---|---|---|
-| `followup` | `/followup [list\|-m\|-o] [메시지]` | 현재 세션에서 발견한 **후속 조치** 항목을 `followups/` 디렉토리(항목별 상세 파일 + 생성되는 `INDEX.md`)에 누적 기록. TODO·결정 보류·아이디어·발견된 이슈. 기본 동작은 merge. `list` 는 현황만. | 저장소 단위 (워크트리·세션·PC 무관) |
+| `followup` | `/followup [list\|-m\|-o] [-p P0\|P1\|P2\|P3] [메시지]` | 현재 세션에서 발견한 **후속 조치** 항목을 `followups/` 디렉토리(항목별 상세 파일 + 생성되는 `INDEX.md`)에 누적 기록. TODO·결정 보류·아이디어·발견된 이슈. 기본 동작은 merge. `list` 는 현황만. 항목마다 우선순위 P0~P3(기본 P2)를 두고, "이거 P0 으로" 처럼 말하면 그 항목만 바꾼다. | 저장소 단위 (워크트리·세션·PC 무관) |
 | `followup-clear` | `/followup-clear [-y]` | 누적된 followup 을 한 번에 비움. `followups/` 디렉토리 삭제(다른 PC 에도 반영) + 양쪽 `MEMORY.md` 의 `## Followups` 섹션 제거. | 저장소 단위 |
 | `handoff` | `/handoff [load\|-m\|-o] [메시지]` | 현재 세션의 **in-flight 컨텍스트** (편집중 파일·마지막 명령·실패한 에러·다음 한 줄) 를 `handoffs/<branch>.md` 로 직렬화. 다음 세션이 즉시 이어받을 수 있게. `load` 는 다른 PC 에서 남긴 핸드오프를 불러온다. | 저장소 + 브랜치 단위 |
 | `handoff-clear` | `/handoff-clear [-y] [--all]` | 현재 브랜치의 핸드오프 삭제(다른 PC 에도 반영) + `MEMORY.md` 의 해당 라인 정리. `--all` 로 저장소 전체 핸드오프 일괄 정리. | 저장소 + 브랜치 단위 (또는 `--all` 시 저장소 전체) |
@@ -99,7 +99,7 @@ followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고, `scripts/sf
 └── state/                                # 원격의 로컬 캐시 (PC 마다 하나)
     ├── <host>/<owner>/<repo>/            # 저장소 키 = origin remote URL 정규화 (예: github.com/hbs9312/hbrness)
     │   ├── followups/
-    │   │   ├── <slug>.md                 # 항목 하나 = 파일 하나 (frontmatter 가 진실원, summary = INDEX 한 줄 설명)
+    │   │   ├── <slug>.md                 # 항목 하나 = 파일 하나 (frontmatter 가 진실원, summary = INDEX 한 줄 설명, priority = P0~P3)
     │   │   ├── _config.json              # 선택: {"resolved_keep": 10}
     │   │   └── INDEX.md                  # 생성물 — 올리지 않고 각 PC 에서 다시 만든다
     │   └── handoffs/
@@ -122,7 +122,8 @@ followup / handoff 는 `scripts/sfstate.py` 가 경로를 정하고, `scripts/sf
 - **암호화**: 새 저장소는 `init` 이 age 로 암호화하도록 정한다. 표시(`.sfbackend`)에 age 공개키를 적고, 그 저장소의 object(followup·handoff·대화 기록·meta)는 모두 암호화해 올리고 풀어서 읽는다 — 저장소 운영자(R2·S3)는 내용을 못 본다. 암호화는 공개키로 하고 푸는 키는 `~/.hbrness/age.key` 에만 있다. `init` 이 같은 설정을 `backend.json` 에도 적어 두고 매번 표시와 맞춰 보므로, 누가 표시를 고쳐 암호화를 빼거나 공개키를 바꿔치기하면 올리지 않고 실패한다. `age` CLI 가 있어야 한다 (`brew install age` · `apt install age`). 이미 만든 평문 저장소를 암호화로 바꾸지는 않는다 — 새 bucket 이나 `--prefix` 로 `init` 한다. 그래서 암호화한 저장소에서 암호문이 아닌 object 는 받지 않고 실패한다(망가졌거나 누가 넣은 내용이 로컬 사본을 덮지 않게). 암호화한 저장소를 쓰던 PC 가 평문 저장소로 `init` 하려면 `--no-encrypt` 를 붙여야 한다.
 - **원격에 닿지 못하면**: 저장소 표시(`.sfbackend`)를 읽지 못하면 빈 저장소로 보지 않고 실패한다. 빈 목록으로 읽으면 pull 이 로컬 사본을 전부 지우기 때문이다. manifest 는 저장소 ID 에 묶여 있어서, 같은 자리에 저장소를 새로 만들면 예전 manifest 를 버리고 로컬 파일을 다시 올린다. 로컬 디렉토리를 읽다 에러가 나도 빠진 파일을 삭제로 읽지 않고 sync 를 멈춘다.
 - **turn 끝에 받아오기**: 각 도구의 Stop hook 에 `python3 <sessionflow>/scripts/sfstate.py pull --background` 를 걸면 turn 이 끝날 때마다 다른 PC 의 변경을 받아 온다. 바로 돌아오고 뒤에서 pull 하므로 turn 종료를 붙잡지 않으며, 이미 pull 이 돌고 있으면 건너뛴다. 끝나면 `paths` 의 `PULL_STAMP` 파일(`state/.sfstate/pulled`)을 갱신해, 표시 쪽(statusline 등)이 mtime 으로 다시 그릴 때를 안다. hook 의 cwd 를 `--dir` 로 넘기면 그 저장소의 INDEX.md 도 다시 만든다. 받기만 하고 올리지는 않는다.
-- **INDEX.md 는 생성물**: 두 PC 가 같은 목록 파일을 고치면 충돌하므로, 항목 frontmatter(`title`·`summary`·`status`·`discovered`·`resolved`)로 매번 다시 만든다. 상한(`resolved_keep`, 기본 10)을 넘는 오래된 resolved 는 sync 때 지운다.
+- **INDEX.md 는 생성물**: 두 PC 가 같은 목록 파일을 고치면 충돌하므로, 항목 frontmatter(`title`·`summary`·`status`·`priority`·`discovered`·`resolved`)로 매번 다시 만든다. 상한(`resolved_keep`, 기본 10)을 넘는 오래된 resolved 는 sync 때 지운다.
+- **우선순위**: 항목 frontmatter 의 `priority` 는 P0(지금 막혀 있거나 바로) · P1(곧) · P2(보통) · P3(언젠가) 중 하나다. 없거나 다른 값이면 P2 로 본다 — 그래서 예전 항목 파일은 고치지 않고, 다시 올라가지도 않는다. INDEX 는 Open · Decisions Pending · Ideas 를 각각 우선순위 → 먼저 추가된 것(`discovered`, 없으면 맨 뒤) → 제목 순으로 놓고, 머리말 개수 줄에 P0·P1 개수를 붙인다. 우선순위는 `sfstate.py set-priority <slug> <Pn>` 으로 바꾸고 `sync` 로 올린다 (스킬이 frontmatter 형식을 흔들지 않게). `index --json` 의 항목에도 `priority` 가 들어간다.
 
 ### backend 정하기 (새 PC 도 같다)
 

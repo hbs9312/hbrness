@@ -1,6 +1,6 @@
 # followup 우선순위 (P0~P3) — 구현 계획
 
-- 상태: 계획 (구현 전)
+- 상태: 구현 (sessionflow 1.8.0 · sessionflow-status mod 0.8.0, 2026-10-16)
 - 브랜치: `feat/followup-priority` (워크트리 `../hbrness-followup-priority`)
 - 작성: 2026-10-16
 - 범위: hbrness sessionflow (sfstate·followup 스킬·문서·테스트) + claude-config 의 `sessionflow-status` mod
@@ -12,7 +12,7 @@
 3. 정렬: 같은 status 안에서 **우선순위(P0→P3) → 같은 우선순위는 추가된 날짜(`discovered`) 순 → 같은 날짜는 제목 순**.
 4. mod 까지 같이 바꾼다.
 
-## 구현 전에 확인할 것
+## 구현 전에 확인한 것 (2026-10-16 사용자 확인 — 제안대로)
 
 - **기본값**: P2 로 둔다(아래 단계 정의에서 "보통"). P3 가 맞으면 상수 하나만 바꾼다.
 - **날짜 방향**: "추가된 날짜 순"을 **먼저 추가된 것부터(오름차순)** 로 읽었다. 지금 INDEX 는 최신부터(내림차순)라 순서가 뒤집힌다. 최신부터가 맞으면 정렬 키 방향만 바꾼다.

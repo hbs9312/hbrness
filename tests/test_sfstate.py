@@ -115,15 +115,99 @@ class IndexTests(Env):
         self.assertIn('PRUNED=r0', out)
         self.assertFalse((d / 'r0.md').exists())
         index = (d / 'INDEX.md').read_text()
-        self.assertIn('| A \\| pipe | 요약 A | 2026-01-02 | [a.md](./a.md) |', index)
+        self.assertIn('| P2 | A \\| pipe | 요약 A | 2026-01-02 | [a.md](./a.md) |', index)
         self.assertIn('## Decisions Pending', index)
-        self.assertIn('- 2026-01-03 C ([c.md](./c.md))', index)
+        self.assertIn('- [P2] 2026-01-03 C ([c.md](./c.md))', index)
         self.assertIn('## Resolved (최근 2)', index)
 
         data = json.loads(self.run_sf('index', '--json'))
         self.assertEqual(data['counts'], {'open': 1, 'pending': 1, 'idea': 1, 'resolved': 2})
         self.assertEqual([i['slug'] for i in data['items']], ['a', 'b', 'c', 'r2', 'r1'])
         self.assertEqual(data['items'][0]['summary'], '요약 A')
+
+    def test_priority_orders_before_date_and_title(self):
+        d = Path(self.paths()['FOLLOWUPS_DIR'])
+        self.write_item(d, 'late-p0', title='Late', status='open', priority='P0', discovered='2026-03-09')
+        self.write_item(d, 'early-p0', title='Early', status='open', priority='p0', discovered='2026-03-01')
+        self.write_item(d, 'p1', title='P1 one', status='open', priority='P1', discovered='2026-01-01')
+        self.write_item(d, 'none', title='No priority', status='open', discovered='2026-02-01')
+        self.write_item(d, 'bad', title='Bad value', status='open', priority='high', discovered='2026-02-01')
+        self.write_item(d, 'nodate', title='A no date', status='open', priority='P2')
+        self.write_item(d, 'p3', title='Someday', status='open', priority='P3', discovered='2025-01-01')
+        self.write_item(d, 'idea-p1', title='Idea', status='idea', priority='P1', discovered='2026-01-01')
+        self.write_item(d, 'idea-p3', title='Idea later', status='idea', priority='P3', discovered='2025-01-01')
+        self.write_item(d, 'wait', title='Wait', status='pending', priority='P0', discovered='2026-01-01')
+
+        data = json.loads(self.run_sf('index', '--json'))
+        self.assertEqual([i['slug'] for i in data['items']],
+                         ['early-p0', 'late-p0', 'p1', 'bad', 'none', 'nodate', 'p3', 'wait', 'idea-p1', 'idea-p3'])
+        prio = {i['slug']: i['priority'] for i in data['items']}
+        self.assertEqual((prio['early-p0'], prio['none'], prio['bad']), ('P0', 'P2', 'P2'))
+
+        index = (d / 'INDEX.md').read_text()
+        self.assertIn('> Open: 7 (P0 2 · P1 1) · Pending: 1 (P0 1) · Ideas: 2 · Resolved: 0', index)
+        self.assertIn('> 우선: P0 지금 막혀 있거나 바로 해야 한다 · P1 곧', index)
+        self.assertIn('| 우선 | 제목 | 한 줄 설명 | Discovered | 상세 |', index)
+        self.assertIn('| P0 | Early |  | 2026-03-01 | [early-p0.md](./early-p0.md) |', index)
+        self.assertIn('| 우선 | 주제 | 한 줄 설명 | Discovered | 상세 |', index)
+        self.assertIn('- [P1] 2026-01-01 Idea ([idea-p1.md](./idea-p1.md))', index)
+        self.assertLess(index.index('[early-p0.md]'), index.index('[late-p0.md]'))
+
+        self.assertIn('followups: open 7 (P0 2) · pending 1 (P0 1) · idea 2 · resolved 0',
+                      self.run_sf('status', '--no-pull'))
+
+    def test_quoted_priority_with_a_comment_keeps_its_value(self):
+        fm = lambda line: sfstate.parse_frontmatter(f'---\n{line}\n---\n')[0]['priority']
+        self.assertEqual(fm('priority: "P0" # urgent'), 'P0')
+        self.assertEqual(fm("priority: 'P1'   # soon"), 'P1')
+        self.assertEqual(fm('priority: P3 # later'), 'P3')
+        self.assertEqual(fm("priority: 'it''s'"), "it's")
+        self.assertEqual(fm('priority: "a # b"'), 'a # b')
+
+        d = Path(self.paths()['FOLLOWUPS_DIR'])
+        d.mkdir(parents=True)
+        (d / 'dq.md').write_text('---\ntitle: DQ\nstatus: open\npriority: "P0" # urgent\ndiscovered: 2026-01-02\n---\n')
+        (d / 'sq.md').write_text("---\ntitle: SQ\nstatus: open\npriority: 'p1'  # soon\ndiscovered: 2026-01-01\n---\n")
+        data = json.loads(self.run_sf('index', '--json'))
+        self.assertEqual([(i['slug'], i['priority']) for i in data['items']], [('dq', 'P0'), ('sq', 'P1')])
+
+    def test_header_has_no_counts_without_urgent_items(self):
+        d = Path(self.paths()['FOLLOWUPS_DIR'])
+        self.write_item(d, 'a', title='A', status='open', discovered='2026-01-01')
+        self.run_sf('index')
+        self.assertIn('> Open: 1 · Pending: 0 · Ideas: 0 · Resolved: 0', (d / 'INDEX.md').read_text())
+        self.assertIn('followups: open 1 · pending 0 ·', self.run_sf('status', '--no-pull'))
+
+    def test_set_priority_adds_or_changes_only_that_line(self):
+        d = Path(self.paths()['FOLLOWUPS_DIR'])
+        d.mkdir(parents=True)
+        item = d / 'x.md'
+        item.write_text('---\ntitle: X\nsummary: "s: #1"\nstatus: open\ndiscovered: 2026-01-01\n'
+                        'refs:\n  - a.py\n---\n\n# X\n\nbody\n')
+        out = self.run_sf('set-priority', 'x', 'p1')
+        self.assertIn('PRIORITY=P1', out)
+        self.assertIn('PREVIOUS=P2', out)
+        self.assertEqual(item.read_text(), '---\ntitle: X\nsummary: "s: #1"\nstatus: open\npriority: "P1"\n'
+                                           'discovered: 2026-01-01\nrefs:\n  - a.py\n---\n\n# X\n\nbody\n')
+        self.assertIn('| P1 | X |', (d / 'INDEX.md').read_text())
+
+        out = self.run_sf('set-priority', 'x.md', 'P0')
+        self.assertIn('PREVIOUS=P1', out)
+        text = item.read_text()
+        self.assertIn('status: open\npriority: "P0"\ndiscovered', text)
+        self.assertEqual(text.count('priority:'), 1)
+
+    def test_set_priority_refuses_unknown_items_and_values(self):
+        d = Path(self.paths()['FOLLOWUPS_DIR'])
+        self.write_item(d, 'x', title='X', status='open')
+        (d / '_config.json').write_text('{}')
+        before = (d / 'x.md').read_text()
+        for args in (('nope', 'P1'), ('x', 'P4'), ('x', 'high'), ('../x', 'P1'), ('INDEX', 'P1'), ('_config', 'P1')):
+            r = subprocess.run([sys.executable, str(SCRIPT), 'set-priority', *args], cwd=self.project,
+                               env=self.env(), capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1, args)
+            self.assertIn('set-priority:', r.stderr, args)
+        self.assertEqual((d / 'x.md').read_text(), before)
 
 
 class NoBackendTests(Env):

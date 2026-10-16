@@ -34,6 +34,11 @@ PC 로컬 상태라 여기서 다루지 않는다 — 계속 ~/.hbrness/sessionf
   index       [--dir D] [--prune] [--json]
                                       INDEX.md 를 다시 만든다 (--prune: 오래된 resolved 삭제,
                                       --json: 개수와 INDEX 순서의 항목 목록을 JSON 으로 출력)
+                                      open·pending·idea 는 우선순위(P0~P3, frontmatter priority —
+                                      없으면 P2) → 먼저 추가된 것 → 제목 순이다.
+  set-priority [--dir D] <slug> <P0|P1|P2|P3>
+                                      항목 frontmatter 의 priority 를 넣거나 바꾸고 INDEX 를 다시 만든다.
+                                      올리지는 않는다 (이어서 sync). 없는 항목·잘못된 값은 exit 1.
   sync        [--dir D] [-m MSG]      INDEX 생성·정리 → 이 프로젝트에서 바뀐 파일만 올린다
   status      [--dir D] [--no-pull]   이 저장소의 핸드오프·followup 현황
   migrate     [--dir D] [--dry-run]   이 프로젝트의 경로 기준 레거시 데이터를 옮긴다
@@ -85,6 +90,16 @@ STATUS_ALIASES = {
     "pending": "pending", "decision": "pending", "decisions pending": "pending", "blocked": "pending",
     "idea": "idea", "ideas": "idea",
     "resolved": "resolved", "done": "resolved", "closed": "resolved",
+}
+
+# followup 우선순위. 앞이 급하다. frontmatter 에 없거나 모르는 값이면 기본값으로 본다.
+PRIORITIES = ("P0", "P1", "P2", "P3")
+DEFAULT_PRIORITY = "P2"
+PRIORITY_MEANINGS = {
+    "P0": "지금 막혀 있거나 바로 해야 한다",
+    "P1": "곧 (이번 작업 흐름 안에서)",
+    "P2": "보통 — 기본값",
+    "P3": "언젠가 / 우선순위 낮음",
 }
 
 
@@ -318,12 +333,19 @@ FM_RE = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*(?:\n|\Z)", re.S)
 def _scalar(v: str) -> str:
     v = v.strip()
     if v.startswith('"'):
+        # 닫는 따옴표 뒤에는 주석만 올 수 있다: priority: "P0"  # 급함
         try:
-            return str(json.loads(v))
+            s, end = json.JSONDecoder().raw_decode(v)
+            rest = v[end:].strip()
+            if not rest or rest.startswith("#"):
+                return str(s)
         except ValueError:
-            return v.strip('"')
-    if v.startswith("'") and v.endswith("'") and len(v) >= 2:
-        return v[1:-1].replace("''", "'")
+            pass
+        return v.strip('"')
+    if v.startswith("'"):
+        m = re.match(r"'((?:[^']|'')*)'\s*(?:#.*)?$", v)
+        if m:
+            return m.group(1).replace("''", "'")
     return re.split(r"\s+#", v, maxsplit=1)[0].strip()
 
 
@@ -361,10 +383,11 @@ def fm_set(text: str, key: str, value: str) -> str:
             lines[i] = line
             break
     else:
-        # summary 는 title 바로 아래, 나머지는 끝에 둔다
+        # summary 는 title 바로 아래, priority 는 status 바로 아래, 나머지는 끝에 둔다
         at = len(lines)
-        if key == "summary":
-            at = next((i + 1 for i, l in enumerate(lines) if re.match(r"^title\s*:", l)), len(lines))
+        after = {"summary": "title", "priority": "status"}.get(key)
+        if after:
+            at = next((i + 1 for i, l in enumerate(lines) if re.match(rf"^{after}\s*:", l)), len(lines))
         lines.insert(at, line)
     return "---\n" + "\n".join(lines) + "\n---\n" + text[m.end():]
 
@@ -377,6 +400,12 @@ def first_heading(body: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # followups INDEX
 # ─────────────────────────────────────────────────────────────────────────────
+
+def priority_of(value) -> str:
+    """frontmatter 의 priority 를 P0~P3 로 맞춘다. 대소문자는 가리지 않고, 없거나 모르는 값은 기본값."""
+    p = str(value or "").strip().upper()
+    return p if p in PRIORITIES else DEFAULT_PRIORITY
+
 
 def load_items(followups_dir: Path):
     items = []
@@ -396,6 +425,7 @@ def load_items(followups_dir: Path):
             "path": f,
             "title": str(fm.get("title") or first_heading(body) or f.stem),
             "status": status,
+            "priority": priority_of(fm.get("priority")),
             "discovered": str(fm.get("discovered") or ""),
             "resolved": str(fm.get("resolved") or ""),
             "summary": str(fm.get("summary") or ""),
@@ -417,12 +447,19 @@ def _cell(s: str) -> str:
 
 
 def group_items(items, keep: int):
-    """INDEX 에 보이는 순서로 묶는다: open·pending·idea 는 discovered 최신순, resolved 는 최근 keep 개."""
+    """INDEX 에 보이는 순서로 묶는다: open·pending·idea 는 우선순위(P0→P3) → 먼저 추가된 것 → 제목,
+    discovered 가 없는 항목은 그 우선순위의 맨 뒤. resolved 는 최근에 해결한 것부터."""
     by = {k: [i for i in items if i["status"] == k] for k in ("open", "pending", "idea", "resolved")}
     for k in ("open", "pending", "idea"):
-        by[k].sort(key=lambda i: (i["discovered"], i["title"]), reverse=True)
+        by[k].sort(key=lambda i: (PRIORITIES.index(i["priority"]), not i["discovered"], i["discovered"], i["title"]))
     by["resolved"].sort(key=lambda i: (i["resolved"] or i["discovered"], i["title"]), reverse=True)
     return by
+
+
+def urgent_note(items, levels=("P0", "P1")) -> str:
+    """' (P0 1 · P1 2)' — levels 중 항목이 있는 단계만. 하나도 없으면 빈 문자열."""
+    parts = [f"{p} {n}" for p in levels if (n := sum(1 for i in items if i["priority"] == p))]
+    return f" ({' · '.join(parts)})" if parts else ""
 
 
 def build_index(ctx: Ctx, prune=False):
@@ -451,19 +488,22 @@ def build_index(ctx: Ctx, prune=False):
         "",
         f"> Repo: {ctx.repo_key or ctx.project_root}",
         f"> Generated: {now_str()} — sfstate.py 가 항목 frontmatter 로 만든다. 직접 고치지 말고 항목 파일을 고친다.",
-        f"> Open: {len(by['open'])} · Pending: {len(by['pending'])} · Ideas: {len(by['idea'])} · Resolved: {len(by['resolved'])}",
+        f"> Open: {len(by['open'])}{urgent_note(by['open'])} · Pending: {len(by['pending'])}{urgent_note(by['pending'])}"
+        f" · Ideas: {len(by['idea'])} · Resolved: {len(by['resolved'])}",
+        "> 우선: " + " · ".join(f"{p} {PRIORITY_MEANINGS[p]}" for p in PRIORITIES),
     ]
+    row = lambda i: f"| {i['priority']} | {_cell(i['title'])} | {_cell(i['summary'])} | {i['discovered']} | {link(i)} |"
     if by["open"]:
-        out += ["", "## Open", "", "| 제목 | 한 줄 설명 | Discovered | 상세 |", "|---|---|---|---|"]
-        out += [f"| {_cell(i['title'])} | {_cell(i['summary'])} | {i['discovered']} | {link(i)} |" for i in by["open"]]
+        out += ["", "## Open", "", "| 우선 | 제목 | 한 줄 설명 | Discovered | 상세 |", "|---|---|---|---|---|"]
+        out += [row(i) for i in by["open"]]
     if by["pending"]:
-        out += ["", "## Decisions Pending", "", "| 주제 | 한 줄 설명 | Discovered | 상세 |", "|---|---|---|---|"]
-        out += [f"| {_cell(i['title'])} | {_cell(i['summary'])} | {i['discovered']} | {link(i)} |" for i in by["pending"]]
+        out += ["", "## Decisions Pending", "", "| 우선 | 주제 | 한 줄 설명 | Discovered | 상세 |", "|---|---|---|---|---|"]
+        out += [row(i) for i in by["pending"]]
     if by["idea"]:
         out += ["", "## Ideas / Improvements", ""]
         for i in by["idea"]:
             extra = f" — {_cell(i['summary'])}" if i["summary"] else ""
-            out.append(f"- {i['discovered'] or '????-??-??'} {_cell(i['title'])}{extra} ({link(i)})")
+            out.append(f"- [{i['priority']}] {i['discovered'] or '????-??-??'} {_cell(i['title'])}{extra} ({link(i)})")
     if shown_resolved:
         out += ["", f"## Resolved (최근 {keep})", "", "| 제목 | Resolved | 상세 |", "|---|---|---|"]
         out += [f"| ~~{_cell(i['title'])}~~ | {i['resolved']} | {link(i)} |" for i in shown_resolved]
@@ -812,7 +852,7 @@ def cmd_index(a):
     if a.json:
         keep = resolved_keep(ctx.followups_dir)
         by = group_items(load_items(ctx.followups_dir), keep)
-        fields = ("slug", "title", "summary", "status", "discovered", "resolved")
+        fields = ("slug", "title", "summary", "status", "priority", "discovered", "resolved")
         print(json.dumps({
             "index": str(ctx.index_file) if any(counts.values()) else "",
             "counts": counts,
@@ -827,6 +867,29 @@ def cmd_index(a):
     print("COUNTS=" + " ".join(f"{k}:{v}" for k, v in counts.items()))
     if pruned:
         print("PRUNED=" + ",".join(pruned))
+
+
+def cmd_set_priority(a):
+    ctx = Ctx(a.dir)
+    value = str(a.priority).strip().upper()
+    if value not in PRIORITIES:
+        print(f"set-priority: 우선순위는 {'|'.join(PRIORITIES)} 중 하나다: {a.priority}", file=sys.stderr)
+        sys.exit(1)
+    slug = a.slug[:-3] if a.slug.endswith(".md") else a.slug
+    path = ctx.followups_dir / f"{slug}.md"
+    if not slug or "/" in slug or "\\" in slug or slug[0] in "._" or slug == "INDEX" or not path.is_file():
+        print(f"set-priority: 항목이 없다: {a.slug} ({tilde(ctx.followups_dir)})", file=sys.stderr)
+        sys.exit(1)
+    with state_lock():
+        text = path.read_text(encoding="utf-8")
+        before = priority_of(parse_frontmatter(text)[0].get("priority"))
+        changed = fm_set(text, "priority", value)
+        if changed != text:
+            path.write_text(changed, encoding="utf-8")
+        build_index(ctx)
+    print(f"PRIORITY={value}")
+    print(f"PREVIOUS={before}")
+    print(f"ITEM={path}")
 
 
 def cmd_sync(a):
@@ -886,9 +949,10 @@ def cmd_status(a):
         print("다른 브랜치 핸드오프: " + ", ".join(others))
     items = load_items(ctx.followups_dir)
     if items:
-        c = {k: sum(1 for i in items if i["status"] == k) for k in ("open", "pending", "idea", "resolved")}
-        print(f"followups: open {c['open']} · pending {c['pending']} · idea {c['idea']} · "
-              f"resolved {c['resolved']} → {tilde(ctx.index_file)}")
+        g = {k: [i for i in items if i["status"] == k] for k in ("open", "pending", "idea", "resolved")}
+        print(f"followups: open {len(g['open'])}{urgent_note(g['open'], ('P0',))} · "
+              f"pending {len(g['pending'])}{urgent_note(g['pending'], ('P0',))} · idea {len(g['idea'])} · "
+              f"resolved {len(g['resolved'])} → {tilde(ctx.index_file)}")
     else:
         print("followups: 없음")
 
@@ -1280,6 +1344,10 @@ def main(argv=None):
     sp.add_argument("--prune", action="store_true")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(fn=cmd_index)
+    sp = with_dir(sub.add_parser("set-priority"))
+    sp.add_argument("slug", help="항목 파일 이름 (.md 없이)")
+    sp.add_argument("priority", help="|".join(PRIORITIES))
+    sp.set_defaults(fn=cmd_set_priority)
     sp = with_dir(sub.add_parser("sync"))
     sp.add_argument("-m", "--message", default="")
     sp.set_defaults(fn=cmd_sync)

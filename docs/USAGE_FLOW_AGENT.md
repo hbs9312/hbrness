@@ -90,7 +90,8 @@ ghflow:chronicle-lookup <query>            → search past commit rationale
 ```
 handoff         /handoff [-m|-o] [msg]        → serialize in-flight context → HANDOFF.md (worktree-scoped). Resume in place next session.
 handoff-clear   /handoff-clear [-y] [--all]   → delete HANDOFF.md + MEMORY.md line
-followup        /followup [-m|-o] [msg]       → append later-TODO to followups/ (project-scoped, persistent)
+followup        /followup [-m|-o] [-p Pn] [msg] → append later-TODO to followups/ (project-scoped, persistent). priority P0..P3 in frontmatter, default P2; INDEX sorted P0→P3 → oldest discovered → title
+                "make <item> P0"               → sfstate.py set-priority <slug> <Pn> + sync (only that item)
 followup-clear  /followup-clear [-y]          → clear followups/
 phase-run       /phase-run <plan>             → split into phases; auto /clear + /phase-run continue at each boundary → fresh session reads HANDOFF.md and continues. No auto-commit. tmux required.
                 /phase-run continue|status|pause|resume|stop|reset

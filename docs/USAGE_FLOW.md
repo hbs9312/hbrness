@@ -168,7 +168,8 @@ hbrness 범위 밖. 직접 구현하거나 원하는 도구를 씁니다.
 /handoff-clear [-y] [--all]                ← HANDOFF.md + MEMORY.md 라인 정리
 
 # 나중에 처리할 일 (백로그)
-/followup [-m|-o] [메시지]                 ← 후속 조치 항목을 followups/ 에 누적 (프로젝트 단위·영속)
+/followup [-m|-o] [-p P0~P3] [메시지]      ← 후속 조치 항목을 followups/ 에 누적 (프로젝트 단위·영속). 우선순위 기본 P2
+"이 followup P0 으로"                      ← 기존 항목의 우선순위만 바꾸기 (INDEX 는 P0 → P3 순)
 /followup-clear [-y]                       ← followups/ 전체 비우기
 
 # 긴 작업을 페이즈로 쪼개 컨텍스트를 비우며 무인 진행

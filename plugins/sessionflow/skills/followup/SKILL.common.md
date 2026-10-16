@@ -1,6 +1,6 @@
 ---
 name: followup
-description: "현재 세션에서 발견했지만 처리하지 못한 후속 조치 항목을, 저장소 단위 followups 디렉토리(항목별 상세 파일 + 생성되는 INDEX.md)에 누적 기록하고, backend(S3 API 저장소)로 여러 PC 사이에 동기화한다. handoff(세션 인계)와 달리 '나중에 처리해야 할 일' 의 영속 리스트이며, 워크트리·세션·PC 와 무관하게 같은 저장소(origin remote)면 하나의 디렉토리를 공유한다. 사용자가 'followup', 'follow-up', 'followup 추가', '후속 조치', '나중에 처리할 일', '백로그 추가', '이번 세션 범위 밖', '미뤄둘 것', '/followup' 등을 말하면 트리거. 'followup 목록', '후속 조치 뭐 남았어' 처럼 현황을 물으면 list 로 동작. Usage: /followup [list | -m | -o] [메시지]"
+description: "현재 세션에서 발견했지만 처리하지 못한 후속 조치 항목을, 저장소 단위 followups 디렉토리(항목별 상세 파일 + 생성되는 INDEX.md)에 누적 기록하고, backend(S3 API 저장소)로 여러 PC 사이에 동기화한다. handoff(세션 인계)와 달리 '나중에 처리해야 할 일' 의 영속 리스트이며, 워크트리·세션·PC 와 무관하게 같은 저장소(origin remote)면 하나의 디렉토리를 공유한다. 사용자가 'followup', 'follow-up', 'followup 추가', '후속 조치', '나중에 처리할 일', '백로그 추가', '이번 세션 범위 밖', '미뤄둘 것', '/followup' 등을 말하면 트리거. 'followup 목록', '후속 조치 뭐 남았어' 처럼 현황을 물으면 list 로 동작. '이 followup P0 으로', '우선순위 낮춰' 처럼 항목의 우선순위(P0~P3)를 바꾸라고 하면 그 항목만 바꾼다. Usage: /followup [list | -m | -o] [-p P0|P1|P2|P3] [메시지]"
 model: sonnet
 ---
 
@@ -30,6 +30,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 - `SF prepare` — 로컬 state 를 원격과 맞추고(pull), 예전 경로 기준 데이터가 있으면 옮기고, `INDEX.md` 를 만든 뒤 경로를 `KEY=VALUE` 로 출력한다.
 - `SF sync -m "<메시지>"` — `INDEX.md` 를 다시 만들고(오래된 resolved 정리 포함) 이 저장소에서 바뀐 파일만 backend 에 올린다.
 - `SF status` — 이 저장소의 핸드오프·followup 현황을 짧게 보여준다.
+- `SF set-priority <slug> <P0|P1|P2|P3>` — 항목 frontmatter 의 `priority` 를 넣거나 바꾸고 `INDEX.md` 를 다시 만든다. 올리지는 않으므로 이어서 `SF sync` 한다. 없는 항목이나 P0~P3 가 아닌 값이면 exit 1.
 
 `prepare` 출력에서 쓰는 값:
 
@@ -53,6 +54,7 @@ python3 "${SKILL_DIR}/../../scripts/sfstate.py"
 - `list`: 현황만 보여주고 끝낸다 (아래 "list" 절).
 - `-m`: 기존 항목이 있으면 확인 없이 **merge** (기존 항목 유지 + 이번에 추가/갱신할 항목).
 - `-o`: 기존 항목이 있으면 확인 없이 **overwrite** (`followups/` 의 항목 파일을 비우고 이번에 추가할 항목만 남김).
+- `-p P0|P1|P2|P3`: 이번에 추가하는 항목의 우선순위. 없으면 사용자가 말한 우선순위를, 그것도 없으면 P2 를 쓴다.
 - 그 외 텍스트: 사용자가 함께 전달한 **추가 followup 컨텍스트** — 반영한다.
 
 기본 동작은 **merge** 이다 (followup 은 본질적으로 누적되는 리스트이므로). 플래그가 없어도 사용자에게 묻지 않고 merge 한다. 명시적으로 비우고 싶을 때만 `-o`.
@@ -84,6 +86,7 @@ remote 가 없는 프로젝트는 `~/.hbrness/state/_local/<경로키>/` 에 저
 title: {간결한 항목 제목}
 summary: "{INDEX 에 보일 한 줄 설명 — 에이전트가 열어볼지 판단할 단서}"
 status: open            # open | pending | idea | resolved
+priority: P2            # P0 | P1 | P2 | P3 — 없으면 P2
 discovered: {YYYY-MM-DD}
 resolved:               # resolved 일 때만 {YYYY-MM-DD}
 refs:                   # 관련 파일·이슈·PR (선택, 리스트)
@@ -105,6 +108,16 @@ refs:                   # 관련 파일·이슈·PR (선택, 리스트)
 - `summary` 는 **INDEX 의 '한 줄 설명' 칸**이 된다. 진행 상황이 바뀌면 INDEX 가 아니라 이 값을 고친다. 따옴표로 감싼다(콜론·`#` 이 들어가도 안전하게).
 - `status: pending` (결정 보류) 항목은 `## Action` 대신 `## Options` / `## Blocker` 를 쓴다.
 - `status: idea` 항목은 frontmatter 와 제목 한 줄이면 충분하다.
+- `priority` 는 아래 네 단계 중 하나다. 없거나 다른 값이면 P2 로 본다 (대소문자는 가리지 않는다).
+
+| 단계 | 뜻 |
+|---|---|
+| P0 | 지금 막혀 있거나 바로 해야 한다 |
+| P1 | 곧 (이번 작업 흐름 안에서) |
+| P2 | 보통 — 기본값 |
+| P3 | 언젠가 / 우선순위 낮음 |
+
+INDEX 는 Open · Decisions Pending · Ideas 를 각각 **우선순위(P0→P3) → 먼저 추가된 것 → 제목** 순으로 놓고, 표 맨 앞 `우선` 칸(Ideas 는 줄 앞 `[Pn]`)에 단계를 적는다. 머리말 개수 줄에는 P0·P1 이 있으면 그 개수가 붙는다 (예: `Open: 3 (P0 1 · P1 1)`).
 
 ## 실행 흐름
 
@@ -133,7 +146,7 @@ SF prepare
 
 - `MIGRATE=migrated` 가 보이면 이 PC 의 예전 경로 기준 followup·핸드오프를 저장소 기준으로 옮긴 것이다. 보고에 한 줄로 넣는다. 예전 파일은 지우지 않고 그대로 둔다.
 - `PULL=failed` 면 네트워크·인증 문제다. 로컬 사본으로 계속하고 보고에 남긴다.
-- `INDEX_FILE` 이 있으면 읽어서 현재 항목 목록을 파악한다. 갱신할 항목의 상세 파일도 필요한 만큼 읽는다.
+- `INDEX_FILE` 이 있으면 읽어서 현재 항목 목록을 파악한다. 갱신할 항목의 상세 파일도 필요한 만큼 읽는다. 무엇이 급한지는 `우선` 칸과 머리말의 P0·P1 개수를 먼저 본다.
 - `LEGACY_SINGLE` 이 비어 있지 않으면 — 아주 예전 단일 `FOLLOWUPS.md` 형식이다:
   - 그 파일을 읽어 `Open` / `Decisions Pending` 각 항목을 상세 파일(`<slug>.md`)로, `Ideas / Improvements` 한 줄 항목들을 `status: idea` 파일로 만든다. `Resolved` 항목은 버린다.
   - 다 옮기면 `LEGACY_SINGLE` 파일을 지운다.
@@ -150,7 +163,8 @@ rm -f "<FOLLOWUPS_DIR>/"*.md
 
 이번에 추가·갱신할 각 항목에 대해:
 
-- 신규 항목: 슬러그를 정하고 `<FOLLOWUPS_DIR>/<slug>.md` 를 위 형식으로 만든다. `discovered` 와 `summary` 는 반드시 채운다.
+- 신규 항목: 슬러그를 정하고 `<FOLLOWUPS_DIR>/<slug>.md` 를 위 형식으로 만든다. `discovered` 와 `summary` 는 반드시 채운다. `priority` 는 `-p` 나 사용자가 말한 단계를 쓰고, 없으면 P2 로 적는다. 에이전트가 짐작해서 P0·P1 로 올리지 않는다 — 급해 보이면 보고에 "P1 로 올릴까요?" 처럼 묻는다.
+- 기존 항목의 우선순위만 바꿀 때는 frontmatter 를 손으로 고치지 않고 「우선순위 바꾸기」 절에 적은 대로 `SF set-priority` 를 부른다.
 - 기존 항목 갱신(merge): 같은 항목이면 해당 상세 파일의 `## Notes` 에 덧붙이거나 본문·`summary` 를 갱신한다. 중복 신규 파일을 만들지 않는다.
 - 해결된 항목: frontmatter 를 `status: resolved` + `resolved: {YYYY-MM-DD}` 로 바꾸고, 본문 끝에 짧은 결과를 남긴다. 파일은 지우지 않는다 — 상한(기본 10, `_config.json` 의 `resolved_keep`)을 넘는 오래된 resolved 는 sync 가 정리한다.
 - 아이디어: `status: idea` 로 짧은 파일을 만든다. Open 으로 승격할 때는 status 를 바꾸고 본문을 채운다.
@@ -212,7 +226,21 @@ SF sync -m "followup: <추가·갱신한 슬러그 요약>"
 SF prepare
 ```
 
-`INDEX_FILE` 을 읽어 Open · Decisions Pending 을 제목 + 한 줄 설명으로 보여주고, Ideas 는 개수만 말한다. 항목이 없으면 "이 저장소에 남은 followup 이 없습니다" 라고 한다. 파일을 고치거나 sync 하지 않는다 (마이그레이션이 일어났다면 `prepare` 가 이미 sync 했다).
+`INDEX_FILE` 을 읽어 Open · Decisions Pending 을 INDEX 순서 그대로(P0 이 맨 위) 우선순위 + 제목 + 한 줄 설명으로 보여주고, Ideas 는 개수만 말한다. 항목이 없으면 "이 저장소에 남은 followup 이 없습니다" 라고 한다. 파일을 고치거나 sync 하지 않는다 (마이그레이션이 일어났다면 `prepare` 가 이미 sync 했다).
+
+## 우선순위 바꾸기
+
+"이거 P0 으로", "auth 쪽 followup 우선순위 낮춰" 처럼 기존 항목의 우선순위만 바꾸라고 하면 새 항목을 만들지 않고 그 항목만 바꾼다.
+
+```bash
+SF prepare                                   # INDEX 를 읽어 어느 항목인지 slug 를 찾는다
+SF set-priority <slug> <P0|P1|P2|P3>
+SF sync -m "followup: priority <slug> <Pn>"
+```
+
+- 어느 항목인지 INDEX 로 하나로 좁혀지지 않으면 후보를 보여 주고 묻는다.
+- "낮춰"·"올려" 처럼 단계를 말하지 않았으면 한 단계 옮긴다 (P2 → P3, P2 → P1). P0 을 더 올리거나 P3 를 더 낮추라고 하면 그대로 두고 알린다.
+- `set-priority` 출력의 `PREVIOUS=` → `PRIORITY=` 로 무엇에서 무엇으로 바꿨는지와 `SYNC` 결과를 보고한다. MEMORY.md 는 고치지 않는다 (항목 수가 그대로다).
 
 ## 가이드라인
 
